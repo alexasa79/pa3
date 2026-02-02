@@ -9,6 +9,13 @@
     activeEl: null,
     currentAudio: null,
     currentAudioUrl: null,
+    currentStreamPort: null,
+    currentMediaSource: null,
+    currentSourceBuffer: null,
+    streamQueue: [],
+    streamMimeType: "",
+    streamEnded: false,
+    streamPlaybackStarted: false,
     playbackId: 0,
     cancelRequested: false,
     observer: null,
@@ -187,18 +194,18 @@
     const playbackId = ++state.playbackId;
     state.cancelRequested = false;
 
-    startElevenLabsNarration(el, text, playbackId).then((started) => {
-      if (!started && state.playbackId === playbackId) {
-        console.error("Reedah: ElevenLabs narration failed to start.");
-        clearActiveNarration();
-      }
-    });
+    const started = startElevenLabsStreamNarration(el, text, playbackId);
+    if (!started && state.playbackId === playbackId) {
+      console.error("Reedah: ElevenLabs narration failed to start.");
+      clearActiveNarration();
+    }
   }
 
   function stopNarration() {
     state.cancelRequested = true;
     state.playbackId += 1;
 
+    stopStreaming();
     stopAudioPlayback();
 
     if (state.activeEl) {
@@ -207,77 +214,205 @@
     }
   }
 
-  function startElevenLabsNarration(el, text, playbackId) {
-    return new Promise((resolve) => {
-      try {
-        chrome.runtime.sendMessage({ type: "reedah-narrate", text }, (response) => {
-          if (state.playbackId !== playbackId) return resolve(true);
+  function startElevenLabsStreamNarration(el, text, playbackId) {
+    if (!("MediaSource" in window)) {
+      console.error("Reedah: MediaSource is not supported in this browser.");
+      return false;
+    }
 
-          if (chrome.runtime.lastError) {
-            console.error("Reedah: ElevenLabs request failed.", chrome.runtime.lastError);
-            return resolve(false);
-          }
+    const mediaSource = new MediaSource();
+    const audio = new Audio();
+    const url = URL.createObjectURL(mediaSource);
 
-          if (!response || !response.ok) {
-            if (response && response.error) {
-              console.error("Reedah: ElevenLabs unavailable.", response.error);
-            }
-            return resolve(false);
-          }
+    audio.src = url;
+    state.currentAudio = audio;
+    state.currentAudioUrl = url;
+    state.currentMediaSource = mediaSource;
+    state.currentSourceBuffer = null;
+    state.streamQueue = [];
+    state.streamMimeType = "";
+    state.streamEnded = false;
+    state.streamPlaybackStarted = false;
 
-          if (response.voiceId) {
-            console.info("Reedah: Using ElevenLabs voice:", response.voiceId);
-          }
+    audio.onended = () => {
+      if (state.playbackId !== playbackId) return;
+      handleNarrationEnded(el);
+    };
 
-          if (!response.audioBase64 || typeof response.audioBase64 !== "string") {
-            console.error("Reedah: Invalid ElevenLabs audio payload.", {
-              type: typeof response.audioBase64
-            });
-            return resolve(false);
-          }
+    audio.onerror = () => {
+      if (state.playbackId !== playbackId) return;
+      console.error("Reedah: ElevenLabs audio playback error.");
+      clearActiveNarration();
+    };
 
-          const audioBuffer = base64ToArrayBuffer(response.audioBase64);
-          const blob = new Blob([audioBuffer], { type: response.mimeType || "audio/mpeg" });
-          const url = URL.createObjectURL(blob);
-          const audio = new Audio(url);
+    mediaSource.addEventListener("sourceopen", () => {
+      if (state.playbackId !== playbackId) return;
+      ensureSourceBuffer(playbackId);
+    });
 
-          state.currentAudio = audio;
-          state.currentAudioUrl = url;
+    const port = chrome.runtime.connect({ name: "reedah-stream" });
+    state.currentStreamPort = port;
 
-          audio.onended = () => {
-            if (state.playbackId !== playbackId) return;
-            handleNarrationEnded(el);
-          };
+    port.onMessage.addListener((message) => {
+      if (state.playbackId !== playbackId) return;
+      if (!message || typeof message.type !== "string") return;
 
-          audio.onerror = () => {
-            if (state.playbackId !== playbackId) return;
-            handleNarrationEnded(el, { error: true });
-          };
+      if (message.type === "start") {
+        state.streamMimeType = message.mimeType || "audio/mpeg";
+        if (message.voiceId) {
+          console.info("Reedah: Using ElevenLabs voice:", message.voiceId);
+        }
+        ensureSourceBuffer(playbackId);
+        return;
+      }
 
-          audio
-            .play()
-            .then(() => resolve(true))
-            .catch((error) => {
-              console.error("Reedah: Failed to play ElevenLabs audio.", error);
-              stopAudioPlayback();
-              resolve(false);
-            });
-        });
-      } catch (error) {
-        console.error("Reedah: ElevenLabs message failed.", error);
-        resolve(false);
+      if (message.type === "chunk") {
+        if (!message.data || typeof message.data !== "string") {
+          console.error("Reedah: Invalid ElevenLabs audio chunk payload.");
+          clearActiveNarration();
+          return;
+        }
+        const chunk = base64ToUint8Array(message.data);
+        state.streamQueue.push(chunk);
+        pumpStreamQueue(playbackId);
+        return;
+      }
+
+      if (message.type === "end") {
+        state.streamEnded = true;
+        pumpStreamQueue(playbackId);
+        return;
+      }
+
+      if (message.type === "error") {
+        console.error("Reedah: ElevenLabs streaming error.", message.error || "unknown_error");
+        clearActiveNarration();
       }
     });
+
+    port.onDisconnect.addListener(() => {
+      if (state.playbackId !== playbackId) return;
+      if (!state.streamEnded && !state.cancelRequested) {
+        console.error("Reedah: ElevenLabs stream disconnected unexpectedly.");
+        clearActiveNarration();
+      }
+    });
+
+    try {
+      port.postMessage({ type: "start", text });
+    } catch (error) {
+      console.error("Reedah: Failed to start ElevenLabs stream.", error);
+      clearActiveNarration();
+      return false;
+    }
+
+    return true;
   }
 
-  function base64ToArrayBuffer(base64) {
+  function ensureSourceBuffer(playbackId) {
+    if (state.playbackId !== playbackId) return;
+    if (!state.currentMediaSource || state.currentSourceBuffer) return;
+    if (state.currentMediaSource.readyState !== "open") return;
+    if (!state.streamMimeType) return;
+
+    if (!MediaSource.isTypeSupported(state.streamMimeType)) {
+      console.error("Reedah: Unsupported audio MIME type.", state.streamMimeType);
+      clearActiveNarration();
+      return;
+    }
+
+    try {
+      const sourceBuffer = state.currentMediaSource.addSourceBuffer(state.streamMimeType);
+      sourceBuffer.mode = "sequence";
+      sourceBuffer.addEventListener("updateend", () => {
+        if (!state.streamPlaybackStarted) {
+          state.streamPlaybackStarted = true;
+          state.currentAudio
+            .play()
+            .catch((error) => {
+              console.error("Reedah: Failed to start audio playback.", error);
+              clearActiveNarration();
+            });
+        }
+        pumpStreamQueue(playbackId);
+      });
+      sourceBuffer.addEventListener("error", () => {
+        console.error("Reedah: SourceBuffer error during playback.");
+        clearActiveNarration();
+      });
+      state.currentSourceBuffer = sourceBuffer;
+      pumpStreamQueue(playbackId);
+    } catch (error) {
+      console.error("Reedah: Failed to create SourceBuffer.", error);
+      clearActiveNarration();
+    }
+  }
+
+  function pumpStreamQueue(playbackId) {
+    if (state.playbackId !== playbackId) return;
+    const sourceBuffer = state.currentSourceBuffer;
+    if (!sourceBuffer || sourceBuffer.updating) return;
+
+    if (state.streamQueue.length === 0) {
+      if (state.streamEnded && state.currentMediaSource?.readyState === "open") {
+        try {
+          state.currentMediaSource.endOfStream();
+        } catch (error) {
+          console.error("Reedah: Failed to finalize audio stream.", error);
+          clearActiveNarration();
+        }
+      }
+      return;
+    }
+
+    const chunk = state.streamQueue.shift();
+    try {
+      sourceBuffer.appendBuffer(chunk);
+    } catch (error) {
+      console.error("Reedah: Failed to append audio chunk.", error);
+      clearActiveNarration();
+    }
+  }
+
+  function stopStreaming() {
+    if (state.currentStreamPort) {
+      try {
+        state.currentStreamPort.postMessage({ type: "abort" });
+      } catch (error) {
+        // Ignore postMessage errors during cleanup.
+      }
+      try {
+        state.currentStreamPort.disconnect();
+      } catch (error) {
+        // Ignore disconnect errors during cleanup.
+      }
+      state.currentStreamPort = null;
+    }
+
+    state.streamQueue = [];
+    state.streamMimeType = "";
+    state.streamEnded = false;
+    state.streamPlaybackStarted = false;
+    state.currentSourceBuffer = null;
+
+    if (state.currentMediaSource && state.currentMediaSource.readyState === "open") {
+      try {
+        state.currentMediaSource.endOfStream();
+      } catch (error) {
+        // Ignore cleanup errors.
+      }
+    }
+    state.currentMediaSource = null;
+  }
+
+  function base64ToUint8Array(base64) {
     const binary = atob(base64);
     const len = binary.length;
     const bytes = new Uint8Array(len);
     for (let i = 0; i < len; i += 1) {
       bytes[i] = binary.charCodeAt(i);
     }
-    return bytes.buffer;
+    return bytes;
   }
 
   function stopAudioPlayback() {
@@ -401,6 +536,7 @@
   }
 
   function clearActiveNarration() {
+    stopStreaming();
     stopAudioPlayback();
 
     if (state.activeEl) {

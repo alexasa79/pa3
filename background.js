@@ -1,4 +1,5 @@
 const DEFAULT_VOICE_ID = "CwhRBWXzGAHq8TQ4Fs17";
+const STREAM_ENDPOINT = "https://api.elevenlabs.io/v1/text-to-speech";
 
 chrome.commands.onCommand.addListener((command) => {
   if (command !== "toggle-overlay") return;
@@ -15,55 +16,81 @@ chrome.commands.onCommand.addListener((command) => {
   });
 });
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message || message.type !== "reedah-narrate") return;
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "reedah-stream") return;
 
-  handleNarrationRequest(message)
-    .then((response) => sendResponse(response))
-    .catch((error) => {
-      sendResponse({ ok: false, error: error && error.message ? error.message : "request_failed" });
-    });
+  let abortController = null;
+  let streaming = false;
 
-  return true;
+  port.onMessage.addListener(async (message) => {
+    if (!message || typeof message.type !== "string") return;
+
+    if (message.type === "abort") {
+      if (abortController) {
+        abortController.abort();
+      }
+      return;
+    }
+
+    if (message.type !== "start" || streaming) return;
+
+    const text = typeof message.text === "string" ? message.text.trim() : "";
+    if (!text) {
+      port.postMessage({ type: "error", error: "empty_text" });
+      return;
+    }
+
+    const settings = await getSettings();
+    if (!settings.apiKey) {
+      port.postMessage({ type: "error", error: "missing_api_key" });
+      return;
+    }
+
+    const voiceId = settings.voiceId || DEFAULT_VOICE_ID;
+    if (!voiceId) {
+      port.postMessage({ type: "error", error: "missing_voice_id" });
+      return;
+    }
+
+    streaming = true;
+    abortController = new AbortController();
+
+    try {
+      console.log("Reedah: Using ElevenLabs voice:", voiceId);
+
+      await streamElevenLabsAudio({
+        apiKey: settings.apiKey,
+        voiceId,
+        modelId: settings.modelId,
+        text,
+        signal: abortController.signal,
+        onStart: (mimeType) => {
+          port.postMessage({ type: "start", mimeType, voiceId });
+        },
+        onChunk: (chunk) => {
+          port.postMessage({ type: "chunk", data: chunk });
+        },
+        onEnd: () => {
+          port.postMessage({ type: "end" });
+        }
+      });
+    } catch (error) {
+      if (!abortController.signal.aborted) {
+        console.error("Reedah: ElevenLabs streaming failed.", error);
+        port.postMessage({
+          type: "error",
+          error: error && error.message ? error.message : "streaming_failed"
+        });
+      }
+    }
+  });
+
+  port.onDisconnect.addListener(() => {
+    if (abortController) {
+      abortController.abort();
+    }
+  });
 });
-
-async function handleNarrationRequest(message) {
-  const text = typeof message.text === "string" ? message.text.trim() : "";
-  if (!text) {
-    return { ok: false, error: "empty_text" };
-  }
-
-  const settings = await getSettings();
-  if (!settings.apiKey) {
-    return { ok: false, error: "missing_api_key" };
-  }
-  const voiceId = settings.voiceId || DEFAULT_VOICE_ID;
-  if (!voiceId) {
-    return { ok: false, error: "missing_voice_id" };
-  }
-
-  let audioBuffer;
-  try {
-    audioBuffer = await fetchElevenLabsAudio({
-      apiKey: settings.apiKey,
-      voiceId,
-      modelId: settings.modelId,
-      text
-    });
-  } catch (error) {
-    console.error("Reedah: ElevenLabs TTS request failed.", error);
-    return { ok: false, error: error && error.message ? error.message : "tts_request_failed" };
-  }
-
-  console.log("Reedah: Using ElevenLabs voice:", voiceId);
-
-  return {
-    ok: true,
-    mimeType: "audio/mpeg",
-    audioBase64: arrayBufferToBase64(audioBuffer),
-    voiceId
-  };
-}
 
 function getSettings() {
   return new Promise((resolve) => {
@@ -80,8 +107,17 @@ function getSettings() {
   });
 }
 
-async function fetchElevenLabsAudio({ apiKey, voiceId, modelId, text }) {
-  const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`;
+async function streamElevenLabsAudio({
+  apiKey,
+  voiceId,
+  modelId,
+  text,
+  signal,
+  onStart,
+  onChunk,
+  onEnd
+}) {
+  const url = `${STREAM_ENDPOINT}/${encodeURIComponent(voiceId)}/stream`;
   const payload = { text };
   if (modelId) {
     payload.model_id = modelId;
@@ -94,7 +130,8 @@ async function fetchElevenLabsAudio({ apiKey, voiceId, modelId, text }) {
       Accept: "audio/mpeg",
       "xi-api-key": apiKey
     },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    signal
   });
 
   if (!response.ok) {
@@ -102,7 +139,24 @@ async function fetchElevenLabsAudio({ apiKey, voiceId, modelId, text }) {
     throw new Error(errorText || `elevenlabs_${response.status}`);
   }
 
-  return response.arrayBuffer();
+  const mimeType = response.headers.get("content-type") || "audio/mpeg";
+  if (onStart) onStart(mimeType);
+
+  if (!response.body) {
+    throw new Error("missing_stream_body");
+  }
+
+  const reader = response.body.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value && value.length) {
+      const chunk = uint8ToBase64(value);
+      if (onChunk) onChunk(chunk);
+    }
+  }
+
+  if (onEnd) onEnd();
 }
 
 async function safeReadText(response) {
@@ -113,8 +167,7 @@ async function safeReadText(response) {
   }
 }
 
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
+function uint8ToBase64(bytes) {
   const chunkSize = 0x8000;
   let binary = "";
   for (let i = 0; i < bytes.length; i += chunkSize) {
