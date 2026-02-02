@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Reedah",
+  "version": "0.1.0",
+  "description": "Overlay controls to narrate paragraph text on a page.",
+  "permissions": ["tabs", "storage"],
+  "host_permissions": ["https://api.elevenlabs.io/*"],
+  "commands": {
+    "toggle-overlay": {
+      "suggested_key": {
+        "default": "Alt+X",
+        "mac": "Alt+X"
+      },
+      "description": "Toggle Reedah overlays"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
