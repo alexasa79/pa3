@@ -1,4 +1,4 @@
-const DEFAULT_VOICE_ID = "CwhRBWXzGAHq8TQ4Fs17";
+const DEFAULT_VOICE_ID = "TX3LPaxmHKxFdv7VOQHJ";
 const STREAM_ENDPOINT = "https://api.elevenlabs.io/v1/text-to-speech";
 
 chrome.commands.onCommand.addListener((command) => {
@@ -46,7 +46,7 @@ chrome.runtime.onConnect.addListener((port) => {
       return;
     }
 
-    const voiceId = settings.voiceId || DEFAULT_VOICE_ID;
+    const voiceId = DEFAULT_VOICE_ID;
     if (!voiceId) {
       port.postMessage({ type: "error", error: "missing_voice_id" });
       return;
@@ -95,11 +95,10 @@ chrome.runtime.onConnect.addListener((port) => {
 function getSettings() {
   return new Promise((resolve) => {
     chrome.storage.local.get(
-      ["elevenlabsApiKey", "elevenlabsVoiceId", "elevenlabsModelId"],
+      ["elevenlabsApiKey", "elevenlabsModelId"],
       (items) => {
         resolve({
           apiKey: (items.elevenlabsApiKey || "").trim(),
-          voiceId: (items.elevenlabsVoiceId || "").trim(),
           modelId: (items.elevenlabsModelId || "").trim()
         });
       }

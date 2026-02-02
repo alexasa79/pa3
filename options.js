@@ -42,7 +42,6 @@ function saveSettings() {
   chrome.storage.local.set(
     {
       elevenlabsApiKey: apiKey,
-      elevenlabsVoiceId: "",
       elevenlabsModelId: modelId
     },
     () => {
@@ -58,7 +57,7 @@ function saveSettings() {
 
 function clearSettings() {
   chrome.storage.local.remove(
-    ["elevenlabsApiKey", "elevenlabsVoiceId", "elevenlabsModelId"],
+    ["elevenlabsApiKey", "elevenlabsModelId"],
     () => {
       if (chrome.runtime.lastError) {
         setStatus("Failed to clear settings.", true);
