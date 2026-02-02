@@ -152,7 +152,8 @@
     const overlay = document.createElement("button");
     overlay.type = "button";
     overlay.className = "reedah-overlay";
-    overlay.textContent = "▶";
+    const icon = createOverlayIcon();
+    overlay.appendChild(icon);
     overlay.setAttribute("aria-label", "Narrate paragraph");
     overlay.addEventListener("click", (event) => {
       event.preventDefault();
@@ -300,12 +301,40 @@
     const overlay = state.overlays.get(el);
     if (!overlay) return;
 
-    overlay.textContent = isActive ? "■" : "▶";
     overlay.classList.toggle("reedah-overlay-active", isActive);
     overlay.setAttribute(
       "aria-label",
       isActive ? "Stop narration" : "Narrate paragraph"
     );
+  }
+
+  function createOverlayIcon() {
+    const icon = document.createElement("span");
+    icon.className = "reedah-overlay__icon";
+
+    const play = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    play.setAttribute("viewBox", "0 0 24 24");
+    play.setAttribute("aria-hidden", "true");
+    play.classList.add("reedah-icon", "reedah-icon-play");
+    const playPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    playPath.setAttribute("d", "M8 5 L19 12 L8 19 Z");
+    play.appendChild(playPath);
+
+    const stop = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    stop.setAttribute("viewBox", "0 0 24 24");
+    stop.setAttribute("aria-hidden", "true");
+    stop.classList.add("reedah-icon", "reedah-icon-stop");
+    const stopRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    stopRect.setAttribute("x", "7");
+    stopRect.setAttribute("y", "7");
+    stopRect.setAttribute("width", "10");
+    stopRect.setAttribute("height", "10");
+    stop.appendChild(stopRect);
+
+    icon.appendChild(play);
+    icon.appendChild(stop);
+
+    return icon;
   }
 
   function cleanupOverlays() {
