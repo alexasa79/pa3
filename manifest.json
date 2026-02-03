@@ -3,8 +3,7 @@
   "name": "Reedah",
   "version": "0.1.0",
   "description": "Overlay controls to narrate paragraph text on a page.",
-  "permissions": ["tabs", "storage"],
-  "host_permissions": ["https://api.elevenlabs.io/*"],
+  "permissions": ["tabs", "storage", "nativeMessaging"],
   "commands": {
     "toggle-overlay": {
       "suggested_key": {

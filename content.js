@@ -3,26 +3,22 @@
 
   const MIN_TEXT_LENGTH = 20;
   const OVERLAY_OFFSET = 8;
+  const AUDIO_BUFFER_TARGET = 2;
   const state = {
     enabled: false,
     overlays: new Map(),
     activeEl: null,
+    currentNativePort: null,
+    currentUtteranceId: null,
+    nativeDisconnecting: false,
+    audioQueue: [],
     currentAudio: null,
     currentAudioUrl: null,
-    currentStreamPort: null,
-    currentMediaSource: null,
-    currentSourceBuffer: null,
-    streamQueue: [],
-    streamMimeType: "",
-    streamEnded: false,
-    streamPlaybackStarted: false,
+    nativeEnded: false,
+    playbackStarted: false,
     currentSentenceRanges: [],
     currentSentenceIndex: 0,
     currentHighlightSpan: null,
-    alignmentChars: [],
-    alignmentStarts: [],
-    alignmentEnds: [],
-    sentenceTimings: [],
     playbackId: 0,
     cancelRequested: false,
     observer: null,
@@ -168,7 +164,7 @@
       text += node.nodeValue || "";
       node = walker.nextNode();
     }
-    return text;
+    return text.replace(/[\r\n]/g, " ");
   }
 
   function buildSentenceRanges(fullText) {
@@ -211,109 +207,35 @@
     return sentences;
   }
 
-  function mergeAlignment(alignment) {
-    if (!alignment) return;
-    const chars = Array.isArray(alignment.characters) ? alignment.characters : [];
-    const starts = Array.isArray(alignment.character_start_times_seconds)
-      ? alignment.character_start_times_seconds
-      : [];
-    const ends = Array.isArray(alignment.character_end_times_seconds)
-      ? alignment.character_end_times_seconds
-      : [];
+  function findSentenceIndexForOffset(offset) {
+    const ranges = state.currentSentenceRanges;
+    if (!ranges.length) return -1;
 
-    for (let i = 0; i < chars.length; i += 1) {
-      state.alignmentChars.push(chars[i]);
-      state.alignmentStarts.push(starts[i] ?? null);
-      state.alignmentEnds.push(ends[i] ?? null);
-    }
-  }
-
-  function updateSentenceTimings() {
-    const chars = state.alignmentChars;
-    if (!chars.length) return;
-
-    const ranges = [];
-    let startIdx = 0;
-    const isDelimiter = (ch) => ch === "." || ch === "!" || ch === "?";
-
-    for (let i = 0; i < chars.length; i += 1) {
-      if (isDelimiter(chars[i])) {
-        ranges.push({ start: startIdx, end: i });
-        startIdx = i + 1;
+    for (let i = 0; i < ranges.length; i += 1) {
+      const range = ranges[i];
+      if (offset >= range.start && offset < range.end) {
+        return i;
       }
     }
 
-    if (startIdx < chars.length) {
-      ranges.push({ start: startIdx, end: chars.length - 1 });
+    if (offset >= ranges[ranges.length - 1].end) {
+      return ranges.length - 1;
     }
 
-    state.sentenceTimings = ranges.map((range) =>
-      sentenceTimeRange(range.start, range.end)
-    );
-
-    if (
-      state.currentSentenceRanges.length &&
-      state.sentenceTimings.length &&
-      state.sentenceTimings.length !== state.currentSentenceRanges.length
-    ) {
-      console.warn(
-        "Reedah: Sentence count mismatch.",
-        state.currentSentenceRanges.length,
-        state.sentenceTimings.length
-      );
-    }
+    return 0;
   }
 
-  function sentenceTimeRange(startIdx, endIdx) {
-    let startTime = null;
-    for (let i = startIdx; i <= endIdx; i += 1) {
-      if (state.alignmentStarts[i] != null) {
-        startTime = state.alignmentStarts[i];
-        break;
-      }
-    }
-
-    let endTime = null;
-    for (let i = endIdx; i >= startIdx; i -= 1) {
-      if (state.alignmentEnds[i] != null) {
-        endTime = state.alignmentEnds[i];
-        break;
-      }
-    }
-
-    if (startTime == null && endTime != null) startTime = endTime;
-    if (endTime == null && startTime != null) endTime = startTime;
-    if (startTime == null) startTime = 0;
-    if (endTime == null) endTime = startTime;
-
-    return { start: startTime, end: endTime };
-  }
-
-  function updateHighlightForTime(playbackId) {
+  function updateHighlightForIndex(playbackId, index, location) {
     if (state.playbackId !== playbackId) return;
-    if (!state.currentAudio) return;
     if (!state.activeEl) return;
-    if (!state.sentenceTimings.length) return;
     if (!state.currentSentenceRanges.length) return;
+    let idx = Number.isFinite(index) ? index : findSentenceIndexForOffset(location);
+    if (idx < 0 || idx >= state.currentSentenceRanges.length) return;
+    if (idx === state.currentSentenceIndex && state.currentHighlightSpan) return;
 
-    const maxIndex = Math.min(
-      state.currentSentenceRanges.length,
-      state.sentenceTimings.length
-    ) - 1;
-    if (maxIndex < 0) return;
-
-    const time = state.currentAudio.currentTime;
-    let idx = state.currentSentenceIndex;
-
-    while (idx < maxIndex && time >= state.sentenceTimings[idx].end - 0.01) {
-      idx += 1;
-    }
-
-    if (idx !== state.currentSentenceIndex) {
-      state.currentSentenceIndex = idx;
-      clearHighlight();
-      highlightSentence(state.activeEl, state.currentSentenceRanges[idx]);
-    }
+    state.currentSentenceIndex = idx;
+    clearHighlight();
+    highlightSentence(state.activeEl, state.currentSentenceRanges[idx]);
   }
 
   function highlightSentence(el, sentence) {
@@ -351,8 +273,7 @@
 
   function resetSentenceState() {
     state.currentSentenceRanges = [];
-    state.currentSentenceIndex = 0;
-    state.sentenceTimings = [];
+    state.currentSentenceIndex = -1;
   }
 
   function collectTextSegments(el) {
@@ -452,25 +373,21 @@
     }
 
     state.currentSentenceRanges = sentenceRanges;
-    state.currentSentenceIndex = 0;
-    state.alignmentChars = [];
-    state.alignmentStarts = [];
-    state.alignmentEnds = [];
-    state.sentenceTimings = [];
-
+    state.currentSentenceIndex = -1;
+    state.nativeEnded = false;
+    state.playbackStarted = false;
+    state.audioQueue = [];
+    stopAudioPlayback();
     clearHighlight();
-    highlightSentence(el, sentenceRanges[0]);
 
-    const started = startElevenLabsStreamNarration(fullText, playbackId, {
-      onAlignment: (alignment) => {
-        if (state.playbackId !== playbackId) return;
-        mergeAlignment(alignment);
-        updateSentenceTimings();
-        updateHighlightForTime(playbackId);
+    const started = startNativeNarration(fullText, sentenceRanges, playbackId, {
+      onAudio: (audioPayload) => {
+        enqueueAudio(playbackId, audioPayload);
       },
       onEnd: () => {
         if (state.playbackId !== playbackId) return;
-        handleNarrationEnded(el);
+        state.nativeEnded = true;
+        maybeStartPlayback(playbackId);
       },
       onError: () => {
         if (state.playbackId !== playbackId) return;
@@ -480,7 +397,7 @@
     });
 
     if (!started && state.playbackId === playbackId) {
-      console.error("Reedah: ElevenLabs narration failed to start.");
+      console.error("Reedah: Native narration failed to start.");
       clearActiveNarration();
     }
   }
@@ -489,13 +406,13 @@
     state.cancelRequested = true;
     state.playbackId += 1;
 
-    stopStreaming();
+    stopNativeNarration({ sendStop: true });
     stopAudioPlayback();
+    clearAudioQueue();
+    state.nativeEnded = false;
+    state.playbackStarted = false;
     clearHighlight();
     resetSentenceState();
-    state.alignmentChars = [];
-    state.alignmentStarts = [];
-    state.alignmentEnds = [];
 
     if (state.activeEl) {
       setOverlayActive(state.activeEl, false);
@@ -503,106 +420,71 @@
     }
   }
 
-  function startElevenLabsStreamNarration(text, playbackId, callbacks) {
-    if (!("MediaSource" in window)) {
-      console.error("Reedah: MediaSource is not supported in this browser.");
-      return false;
-    }
-
-    const mediaSource = new MediaSource();
-    const audio = new Audio();
-    const url = URL.createObjectURL(mediaSource);
-
-    audio.src = url;
-    state.currentAudio = audio;
-    state.currentAudioUrl = url;
-    state.currentMediaSource = mediaSource;
-    state.currentSourceBuffer = null;
-    state.streamQueue = [];
-    state.streamMimeType = "";
-    state.streamEnded = false;
-    state.streamPlaybackStarted = false;
-
-    audio.onended = () => {
-      if (state.playbackId !== playbackId) return;
-      if (callbacks && callbacks.onEnd) callbacks.onEnd();
-    };
-
-    audio.onerror = () => {
-      if (state.playbackId !== playbackId) return;
-      console.error("Reedah: ElevenLabs audio playback error.");
-      if (callbacks && callbacks.onError) callbacks.onError();
-    };
-
-    audio.ontimeupdate = () => {
-      if (state.playbackId !== playbackId) return;
-      updateHighlightForTime(playbackId);
-    };
-
-    mediaSource.addEventListener("sourceopen", () => {
-      if (state.playbackId !== playbackId) return;
-      ensureSourceBuffer(playbackId);
-    });
-
-    const port = chrome.runtime.connect({ name: "reedah-stream" });
-    state.currentStreamPort = port;
+  function startNativeNarration(text, sentenceRanges, playbackId, callbacks) {
+    const port = chrome.runtime.connect({ name: "reedah-native" });
+    state.currentNativePort = port;
+    const utteranceId = `${playbackId}`;
+    state.currentUtteranceId = utteranceId;
+    state.nativeDisconnecting = false;
 
     port.onMessage.addListener((message) => {
       if (state.playbackId !== playbackId) return;
       if (!message || typeof message.type !== "string") return;
+      if (message.utteranceId && message.utteranceId !== utteranceId) return;
 
-      if (message.type === "start") {
-        state.streamMimeType = message.mimeType || "audio/mpeg";
-        if (message.voiceId) {
-          console.info("Reedah: Using ElevenLabs voice:", message.voiceId);
-        }
-        ensureSourceBuffer(playbackId);
-        return;
-      }
-
-      if (message.type === "chunk") {
-        if (!message.data || typeof message.data !== "string") {
-          console.error("Reedah: Invalid ElevenLabs audio chunk payload.");
-          clearActiveNarration();
-          return;
-        }
-        const chunk = base64ToUint8Array(message.data);
-        state.streamQueue.push(chunk);
-        pumpStreamQueue(playbackId);
-        return;
-      }
-
-      if (message.type === "alignment") {
-        if (message.alignment && callbacks && callbacks.onAlignment) {
-          callbacks.onAlignment(message.alignment);
+      if (message.type === "started") {
+        if (message.voiceName || message.voiceIdentifier) {
+          console.info(
+            "Reedah: Using macOS voice:",
+            message.voiceName || message.voiceIdentifier
+          );
         }
         return;
       }
 
-      if (message.type === "end") {
-        state.streamEnded = true;
-        pumpStreamQueue(playbackId);
+      if (message.type === "audio") {
+        if (callbacks && callbacks.onAudio) {
+          callbacks.onAudio({
+            index: message.index,
+            audioBase64: message.audioBase64,
+            mimeType: message.mimeType,
+            location: message.location,
+            length: message.length
+          });
+        }
+        return;
+      }
+
+      if (message.type === "end" || message.type === "cancelled") {
+        if (callbacks && callbacks.onEnd) callbacks.onEnd();
         return;
       }
 
       if (message.type === "error") {
-        console.error("Reedah: ElevenLabs streaming error.", message.error || "unknown_error");
+        console.error(
+          "Reedah: Native narration error.",
+          message.error || "unknown_error"
+        );
         if (callbacks && callbacks.onError) callbacks.onError();
       }
     });
 
     port.onDisconnect.addListener(() => {
       if (state.playbackId !== playbackId) return;
-      if (!state.streamEnded && !state.cancelRequested) {
-        console.error("Reedah: ElevenLabs stream disconnected unexpectedly.");
+      if (state.nativeDisconnecting) {
+        state.nativeDisconnecting = false;
+        return;
+      }
+      if (!state.cancelRequested) {
+        console.error("Reedah: Native narration disconnected unexpectedly.");
         if (callbacks && callbacks.onError) callbacks.onError();
       }
     });
 
     try {
-      port.postMessage({ type: "start", text });
+      port.postMessage({ type: "start", text, utteranceId, sentenceRanges });
     } catch (error) {
-      console.error("Reedah: Failed to start ElevenLabs stream.", error);
+      console.error("Reedah: Failed to start native narration.", error);
       if (callbacks && callbacks.onError) callbacks.onError();
       return false;
     }
@@ -610,100 +492,141 @@
     return true;
   }
 
-  function ensureSourceBuffer(playbackId) {
-    if (state.playbackId !== playbackId) return;
-    if (!state.currentMediaSource || state.currentSourceBuffer) return;
-    if (state.currentMediaSource.readyState !== "open") return;
-    if (!state.streamMimeType) return;
-
-    if (!MediaSource.isTypeSupported(state.streamMimeType)) {
-      console.error("Reedah: Unsupported audio MIME type.", state.streamMimeType);
-      clearActiveNarration();
-      return;
-    }
-
-    try {
-      const sourceBuffer = state.currentMediaSource.addSourceBuffer(state.streamMimeType);
-      sourceBuffer.mode = "sequence";
-      sourceBuffer.addEventListener("updateend", () => {
-        if (!state.streamPlaybackStarted) {
-          state.streamPlaybackStarted = true;
-          state.currentAudio
-            .play()
-            .catch((error) => {
-              console.error("Reedah: Failed to start audio playback.", error);
-              clearActiveNarration();
-            });
-        }
-        pumpStreamQueue(playbackId);
-      });
-      sourceBuffer.addEventListener("error", () => {
-        console.error("Reedah: SourceBuffer error during playback.");
-        clearActiveNarration();
-      });
-      state.currentSourceBuffer = sourceBuffer;
-      pumpStreamQueue(playbackId);
-    } catch (error) {
-      console.error("Reedah: Failed to create SourceBuffer.", error);
-      clearActiveNarration();
-    }
-  }
-
-  function pumpStreamQueue(playbackId) {
-    if (state.playbackId !== playbackId) return;
-    const sourceBuffer = state.currentSourceBuffer;
-    if (!sourceBuffer || sourceBuffer.updating) return;
-
-    if (state.streamQueue.length === 0) {
-      if (state.streamEnded && state.currentMediaSource?.readyState === "open") {
+  function stopNativeNarration(options = {}) {
+    const shouldSendStop = options.sendStop !== false;
+    if (state.currentNativePort) {
+      state.nativeDisconnecting = true;
+      if (shouldSendStop) {
         try {
-          state.currentMediaSource.endOfStream();
+          state.currentNativePort.postMessage({
+            type: "stop",
+            utteranceId: state.currentUtteranceId
+          });
         } catch (error) {
-          console.error("Reedah: Failed to finalize audio stream.", error);
-          clearActiveNarration();
+          // Ignore postMessage errors during cleanup.
         }
       }
-      return;
-    }
-
-    const chunk = state.streamQueue.shift();
-    try {
-      sourceBuffer.appendBuffer(chunk);
-    } catch (error) {
-      console.error("Reedah: Failed to append audio chunk.", error);
-      clearActiveNarration();
-    }
-  }
-
-  function stopStreaming() {
-    if (state.currentStreamPort) {
       try {
-        state.currentStreamPort.postMessage({ type: "abort" });
-      } catch (error) {
-        // Ignore postMessage errors during cleanup.
-      }
-      try {
-        state.currentStreamPort.disconnect();
+        state.currentNativePort.disconnect();
       } catch (error) {
         // Ignore disconnect errors during cleanup.
       }
-      state.currentStreamPort = null;
+      state.currentNativePort = null;
+    }
+    state.currentUtteranceId = null;
+  }
+
+  function enqueueAudio(playbackId, payload) {
+    if (state.playbackId !== playbackId) return;
+    if (!payload || typeof payload.audioBase64 !== "string") {
+      console.error("Reedah: Invalid audio payload from native host.");
+      clearActiveNarration();
+      return;
     }
 
-    state.streamQueue = [];
-    state.streamMimeType = "";
-    state.streamEnded = false;
-    state.streamPlaybackStarted = false;
-    state.currentSourceBuffer = null;
+    const url = createAudioUrl(payload.audioBase64, payload.mimeType);
+    if (!url) {
+      console.error("Reedah: Failed to create audio URL.");
+      clearActiveNarration();
+      return;
+    }
 
-    if (state.currentMediaSource && state.currentMediaSource.readyState === "open") {
-      try {
-        state.currentMediaSource.endOfStream();
-      } catch (error) {
-        // Ignore cleanup errors.
+    const parsedIndex = Number(payload.index);
+    const index = Number.isFinite(parsedIndex)
+      ? parsedIndex
+      : findSentenceIndexForOffset(payload.location);
+
+    state.audioQueue.push({
+      url,
+      index,
+      location: payload.location
+    });
+
+    maybeStartPlayback(playbackId);
+  }
+
+  function maybeStartPlayback(playbackId) {
+    if (state.playbackId !== playbackId) return;
+    if (state.currentAudio) return;
+
+    const next = state.audioQueue.shift();
+    if (!next) {
+      if (state.nativeEnded && state.activeEl) {
+        handleNarrationEnded(state.activeEl);
       }
+      return;
     }
-    state.currentMediaSource = null;
+
+    if (!state.playbackStarted && !state.nativeEnded && state.audioQueue.length + 1 < AUDIO_BUFFER_TARGET) {
+      state.audioQueue.unshift(next);
+      return;
+    }
+
+    playNextAudio(playbackId, next);
+  }
+
+  function playNextAudio(playbackId, next) {
+    if (state.playbackId !== playbackId) return;
+
+    if (!next) {
+      next = state.audioQueue.shift();
+    }
+    if (!next) {
+      if (state.nativeEnded && state.activeEl) {
+        handleNarrationEnded(state.activeEl);
+      }
+      return;
+    }
+
+    if (state.activeEl) {
+      updateHighlightForIndex(playbackId, next.index, next.location);
+    }
+
+    const audio = new Audio();
+    const audioUrl = next.url;
+    state.currentAudio = audio;
+    state.currentAudioUrl = audioUrl;
+    state.playbackStarted = true;
+    audio.src = audioUrl;
+
+    audio.onended = () => {
+      if (state.playbackId !== playbackId) return;
+      if (state.currentAudio !== audio) return;
+      cleanupCurrentAudio();
+      maybeStartPlayback(playbackId);
+    };
+
+    audio.onerror = () => {
+      if (state.playbackId !== playbackId) return;
+      if (state.currentAudio !== audio) return;
+      if (state.cancelRequested) return;
+      const errorCode = audio.error ? audio.error.code : null;
+      console.error("Reedah: Audio playback failed.", errorCode);
+      cleanupCurrentAudio();
+      clearActiveNarration();
+    };
+
+    audio.play().catch((error) => {
+      if (state.playbackId !== playbackId) return;
+      if (state.currentAudio !== audio) return;
+      if (error && error.name === "AbortError") {
+        return;
+      }
+      console.error("Reedah: Failed to start audio playback.", error);
+      cleanupCurrentAudio();
+      clearActiveNarration();
+    });
+  }
+
+  function createAudioUrl(base64, mimeType) {
+    try {
+      const bytes = base64ToUint8Array(base64);
+      const blob = new Blob([bytes], { type: mimeType || "audio/mp4" });
+      return URL.createObjectURL(blob);
+    } catch (error) {
+      console.error("Reedah: Failed to decode audio payload.", error);
+      return null;
+    }
   }
 
   function base64ToUint8Array(base64) {
@@ -716,21 +639,33 @@
     return bytes;
   }
 
-  function stopAudioPlayback() {
-    if (state.currentAudio) {
-      try {
-        state.currentAudio.pause();
-        state.currentAudio.src = "";
-      } catch (error) {
-        // Ignore cleanup errors.
-      }
-      state.currentAudio = null;
+  function cleanupCurrentAudio() {
+    if (!state.currentAudio) return;
+    try {
+      state.currentAudio.pause();
+      state.currentAudio.src = "";
+    } catch (error) {
+      // Ignore cleanup errors.
     }
+    state.currentAudio = null;
 
     if (state.currentAudioUrl) {
       URL.revokeObjectURL(state.currentAudioUrl);
       state.currentAudioUrl = null;
     }
+  }
+
+  function stopAudioPlayback() {
+    cleanupCurrentAudio();
+  }
+
+  function clearAudioQueue() {
+    for (const item of state.audioQueue) {
+      if (item.url) {
+        URL.revokeObjectURL(item.url);
+      }
+    }
+    state.audioQueue = [];
   }
 
   function setOverlayActive(el, isActive) {
@@ -837,13 +772,13 @@
   }
 
   function clearActiveNarration() {
-    stopStreaming();
+    stopNativeNarration({ sendStop: false });
     stopAudioPlayback();
+    clearAudioQueue();
+    state.nativeEnded = false;
+    state.playbackStarted = false;
     clearHighlight();
     resetSentenceState();
-    state.alignmentChars = [];
-    state.alignmentStarts = [];
-    state.alignmentEnds = [];
 
     if (state.activeEl) {
       setOverlayActive(state.activeEl, false);

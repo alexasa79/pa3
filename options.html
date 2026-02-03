@@ -10,31 +10,34 @@
     <main class="panel">
       <header class="panel__header">
         <h1>Reedah Settings</h1>
-        <p>Configure ElevenLabs for cloud narration. Keys are stored locally in this browser.</p>
+        <p>Configure macOS narration settings for the native host.</p>
       </header>
 
       <section class="field">
-        <label for="api-key">ElevenLabs API key</label>
+        <label for="voice">Voice (optional)</label>
         <input
-          id="api-key"
-          type="password"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="Paste your API key"
-        />
-        <p class="hint">Stored in Chrome local storage. Not synced.</p>
-      </section>
-
-      <section class="field">
-        <label for="model-id">Model ID (optional)</label>
-        <input
-          id="model-id"
+          id="voice"
           type="text"
           autocomplete="off"
           spellcheck="false"
-          placeholder="eleven_flash_v2_5"
+          placeholder="e.g., Samantha or com.apple.speech.synthesis.voice.Alex"
         />
-        <p class="hint">Default voice ID: CwhRBWXzGAHq8TQ4Fs17.</p>
+        <p class="hint">Leave blank to use the system default voice.</p>
+      </section>
+
+      <section class="field">
+        <label for="rate">Speech rate (optional)</label>
+        <input
+          id="rate"
+          type="number"
+          min="0"
+          max="1"
+          step="0.05"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="0.5"
+        />
+        <p class="hint">Value between 0.0 and 1.0 mapped to speech rate. Leave blank for default.</p>
       </section>
 
       <div class="actions">

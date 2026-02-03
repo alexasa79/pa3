@@ -1,10 +1,8 @@
-const apiKeyInput = document.getElementById("api-key");
-const modelIdInput = document.getElementById("model-id");
+const voiceInput = document.getElementById("voice");
+const rateInput = document.getElementById("rate");
 const statusEl = document.getElementById("status");
 const saveButton = document.getElementById("save");
 const clearButton = document.getElementById("clear");
-
-const DEFAULT_MODEL_ID = "eleven_flash_v2_5";
 
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
@@ -18,31 +16,42 @@ function setStatus(message, isError = false) {
 }
 
 function loadSettings() {
-  chrome.storage.local.get(
-    ["elevenlabsApiKey", "elevenlabsModelId"],
-    (items) => {
-      if (chrome.runtime.lastError) {
-        setStatus("Failed to load settings.", true);
-        return;
-      }
-
-      apiKeyInput.value = items.elevenlabsApiKey || "";
-      modelIdInput.value = items.elevenlabsModelId || "";
-      if (!modelIdInput.value) {
-        modelIdInput.value = DEFAULT_MODEL_ID;
-      }
+  chrome.storage.local.get(["nativeVoice", "nativeRate"], (items) => {
+    if (chrome.runtime.lastError) {
+      setStatus("Failed to load settings.", true);
+      return;
     }
-  );
+
+    voiceInput.value = items.nativeVoice || "";
+    if (items.nativeRate == null) {
+      rateInput.value = "";
+    } else {
+      rateInput.value = String(items.nativeRate);
+    }
+  });
 }
 
 function saveSettings() {
-  const apiKey = apiKeyInput.value.trim();
-  const modelId = modelIdInput.value.trim();
+  const voice = voiceInput.value.trim();
+  const rateRaw = rateInput.value.trim();
+  let rate = null;
+
+  if (rateRaw) {
+    rate = Number(rateRaw);
+    if (!Number.isFinite(rate)) {
+      setStatus("Rate must be a number.", true);
+      return;
+    }
+    if (rate < 0 || rate > 1) {
+      setStatus("Rate must be between 0.0 and 1.0.", true);
+      return;
+    }
+  }
 
   chrome.storage.local.set(
     {
-      elevenlabsApiKey: apiKey,
-      elevenlabsModelId: modelId
+      nativeVoice: voice,
+      nativeRate: rate
     },
     () => {
       if (chrome.runtime.lastError) {
@@ -56,19 +65,16 @@ function saveSettings() {
 }
 
 function clearSettings() {
-  chrome.storage.local.remove(
-    ["elevenlabsApiKey", "elevenlabsModelId"],
-    () => {
-      if (chrome.runtime.lastError) {
-        setStatus("Failed to clear settings.", true);
-        return;
-      }
-
-      apiKeyInput.value = "";
-      modelIdInput.value = DEFAULT_MODEL_ID;
-      setStatus("Cleared.");
+  chrome.storage.local.remove(["nativeVoice", "nativeRate"], () => {
+    if (chrome.runtime.lastError) {
+      setStatus("Failed to clear settings.", true);
+      return;
     }
-  );
+
+    voiceInput.value = "";
+    rateInput.value = "";
+    setStatus("Cleared.");
+  });
 }
 
 saveButton.addEventListener("click", saveSettings);
