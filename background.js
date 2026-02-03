@@ -58,17 +58,24 @@ chrome.runtime.onConnect.addListener((port) => {
     try {
       console.log("Reedah: Using ElevenLabs voice:", voiceId);
 
-      await streamElevenLabsAudio({
+      await streamElevenLabsAudioWithTimestamps({
         apiKey: settings.apiKey,
         voiceId,
         modelId: settings.modelId,
         text,
         signal: abortController.signal,
-        onStart: (mimeType) => {
-          port.postMessage({ type: "start", mimeType, voiceId });
+        onStart: () => {
+          port.postMessage({ type: "start", mimeType: "audio/mpeg", voiceId });
         },
-        onChunk: (chunk) => {
+        onAudioChunk: (chunk) => {
           port.postMessage({ type: "chunk", data: chunk });
+        },
+        onAlignment: (alignment, normalizedAlignment) => {
+          port.postMessage({
+            type: "alignment",
+            alignment: alignment || null,
+            normalizedAlignment: normalizedAlignment || null
+          });
         },
         onEnd: () => {
           port.postMessage({ type: "end" });
@@ -82,6 +89,8 @@ chrome.runtime.onConnect.addListener((port) => {
           error: error && error.message ? error.message : "streaming_failed"
         });
       }
+    } finally {
+      streaming = false;
     }
   });
 
@@ -106,17 +115,18 @@ function getSettings() {
   });
 }
 
-async function streamElevenLabsAudio({
+async function streamElevenLabsAudioWithTimestamps({
   apiKey,
   voiceId,
   modelId,
   text,
   signal,
   onStart,
-  onChunk,
+  onAudioChunk,
+  onAlignment,
   onEnd
 }) {
-  const url = `${STREAM_ENDPOINT}/${encodeURIComponent(voiceId)}/stream`;
+  const url = `${STREAM_ENDPOINT}/${encodeURIComponent(voiceId)}/stream/with-timestamps`;
   const payload = { text };
   if (modelId) {
     payload.model_id = modelId;
@@ -126,7 +136,6 @@ async function streamElevenLabsAudio({
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Accept: "audio/mpeg",
       "xi-api-key": apiKey
     },
     body: JSON.stringify(payload),
@@ -138,20 +147,55 @@ async function streamElevenLabsAudio({
     throw new Error(errorText || `elevenlabs_${response.status}`);
   }
 
-  const mimeType = response.headers.get("content-type") || "audio/mpeg";
-  if (onStart) onStart(mimeType);
+  if (onStart) onStart();
 
   if (!response.body) {
     throw new Error("missing_stream_body");
   }
 
   const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    if (value && value.length) {
-      const chunk = uint8ToBase64(value);
-      if (onChunk) onChunk(chunk);
+    if (!value || !value.length) continue;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const payloadLine = trimmed.startsWith("data:")
+        ? trimmed.slice(5).trim()
+        : trimmed;
+      try {
+        const payload = JSON.parse(payloadLine);
+        if (payload.audio_base64 && onAudioChunk) {
+          onAudioChunk(payload.audio_base64);
+        }
+        if ((payload.alignment || payload.normalized_alignment) && onAlignment) {
+          onAlignment(payload.alignment, payload.normalized_alignment);
+        }
+      } catch (error) {
+        console.error("Reedah: Failed to parse streaming payload.", error);
+      }
+    }
+  }
+
+  const leftover = buffer.trim();
+  if (leftover) {
+    const payloadLine = leftover.startsWith("data:") ? leftover.slice(5).trim() : leftover;
+    try {
+      const payload = JSON.parse(payloadLine);
+      if (payload.audio_base64 && onAudioChunk) {
+        onAudioChunk(payload.audio_base64);
+      }
+      if ((payload.alignment || payload.normalized_alignment) && onAlignment) {
+        onAlignment(payload.alignment, payload.normalized_alignment);
+      }
+    } catch (error) {
+      console.error("Reedah: Failed to parse streaming payload.", error);
     }
   }
 
@@ -166,12 +210,4 @@ async function safeReadText(response) {
   }
 }
 
-function uint8ToBase64(bytes) {
-  const chunkSize = 0x8000;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-  return btoa(binary);
-}
+// Streaming with timestamps returns base64 audio directly in JSON payloads.

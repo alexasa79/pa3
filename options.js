@@ -4,7 +4,7 @@ const statusEl = document.getElementById("status");
 const saveButton = document.getElementById("save");
 const clearButton = document.getElementById("clear");
 
-const DEFAULT_MODEL_ID = "eleven_multilingual_v2";
+const DEFAULT_MODEL_ID = "eleven_flash_v2_5";
 
 function setStatus(message, isError = false) {
   statusEl.textContent = message;

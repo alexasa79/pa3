@@ -16,6 +16,13 @@
     streamMimeType: "",
     streamEnded: false,
     streamPlaybackStarted: false,
+    currentSentenceRanges: [],
+    currentSentenceIndex: 0,
+    currentHighlightSpan: null,
+    alignmentChars: [],
+    alignmentStarts: [],
+    alignmentEnds: [],
+    sentenceTimings: [],
     playbackId: 0,
     cancelRequested: false,
     observer: null,
@@ -153,6 +160,248 @@
     return (el.innerText || "").replace(/\s+/g, " ").trim();
   }
 
+  function getFullText(el) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let text = "";
+    let node = walker.nextNode();
+    while (node) {
+      text += node.nodeValue || "";
+      node = walker.nextNode();
+    }
+    return text;
+  }
+
+  function buildSentenceRanges(fullText) {
+    if (!fullText) return [];
+
+    const ranges = [];
+    let start = 0;
+    const len = fullText.length;
+    const isDelimiter = (ch) => ch === "." || ch === "!" || ch === "?";
+
+    for (let i = 0; i < len; i += 1) {
+      if (isDelimiter(fullText[i])) {
+        let end = i + 1;
+        while (end < len && isDelimiter(fullText[end])) {
+          end += 1;
+        }
+        ranges.push({ start, end });
+        start = end;
+        i = end - 1;
+      }
+    }
+
+    if (start < len) {
+      ranges.push({ start, end: len });
+    }
+
+    const sentences = [];
+    for (const range of ranges) {
+      let sStart = range.start;
+      let sEnd = range.end;
+      while (sStart < sEnd && /\s/.test(fullText[sStart])) sStart += 1;
+      while (sEnd > sStart && /\s/.test(fullText[sEnd - 1])) sEnd -= 1;
+      if (sEnd <= sStart) continue;
+      const raw = fullText.slice(sStart, sEnd);
+      const text = raw.replace(/\s+/g, " ").trim();
+      if (!text) continue;
+      sentences.push({ start: sStart, end: sEnd });
+    }
+
+    return sentences;
+  }
+
+  function mergeAlignment(alignment) {
+    if (!alignment) return;
+    const chars = Array.isArray(alignment.characters) ? alignment.characters : [];
+    const starts = Array.isArray(alignment.character_start_times_seconds)
+      ? alignment.character_start_times_seconds
+      : [];
+    const ends = Array.isArray(alignment.character_end_times_seconds)
+      ? alignment.character_end_times_seconds
+      : [];
+
+    for (let i = 0; i < chars.length; i += 1) {
+      state.alignmentChars.push(chars[i]);
+      state.alignmentStarts.push(starts[i] ?? null);
+      state.alignmentEnds.push(ends[i] ?? null);
+    }
+  }
+
+  function updateSentenceTimings() {
+    const chars = state.alignmentChars;
+    if (!chars.length) return;
+
+    const ranges = [];
+    let startIdx = 0;
+    const isDelimiter = (ch) => ch === "." || ch === "!" || ch === "?";
+
+    for (let i = 0; i < chars.length; i += 1) {
+      if (isDelimiter(chars[i])) {
+        ranges.push({ start: startIdx, end: i });
+        startIdx = i + 1;
+      }
+    }
+
+    if (startIdx < chars.length) {
+      ranges.push({ start: startIdx, end: chars.length - 1 });
+    }
+
+    state.sentenceTimings = ranges.map((range) =>
+      sentenceTimeRange(range.start, range.end)
+    );
+
+    if (
+      state.currentSentenceRanges.length &&
+      state.sentenceTimings.length &&
+      state.sentenceTimings.length !== state.currentSentenceRanges.length
+    ) {
+      console.warn(
+        "Reedah: Sentence count mismatch.",
+        state.currentSentenceRanges.length,
+        state.sentenceTimings.length
+      );
+    }
+  }
+
+  function sentenceTimeRange(startIdx, endIdx) {
+    let startTime = null;
+    for (let i = startIdx; i <= endIdx; i += 1) {
+      if (state.alignmentStarts[i] != null) {
+        startTime = state.alignmentStarts[i];
+        break;
+      }
+    }
+
+    let endTime = null;
+    for (let i = endIdx; i >= startIdx; i -= 1) {
+      if (state.alignmentEnds[i] != null) {
+        endTime = state.alignmentEnds[i];
+        break;
+      }
+    }
+
+    if (startTime == null && endTime != null) startTime = endTime;
+    if (endTime == null && startTime != null) endTime = startTime;
+    if (startTime == null) startTime = 0;
+    if (endTime == null) endTime = startTime;
+
+    return { start: startTime, end: endTime };
+  }
+
+  function updateHighlightForTime(playbackId) {
+    if (state.playbackId !== playbackId) return;
+    if (!state.currentAudio) return;
+    if (!state.activeEl) return;
+    if (!state.sentenceTimings.length) return;
+    if (!state.currentSentenceRanges.length) return;
+
+    const maxIndex = Math.min(
+      state.currentSentenceRanges.length,
+      state.sentenceTimings.length
+    ) - 1;
+    if (maxIndex < 0) return;
+
+    const time = state.currentAudio.currentTime;
+    let idx = state.currentSentenceIndex;
+
+    while (idx < maxIndex && time >= state.sentenceTimings[idx].end - 0.01) {
+      idx += 1;
+    }
+
+    if (idx !== state.currentSentenceIndex) {
+      state.currentSentenceIndex = idx;
+      clearHighlight();
+      highlightSentence(state.activeEl, state.currentSentenceRanges[idx]);
+    }
+  }
+
+  function highlightSentence(el, sentence) {
+    const segments = collectTextSegments(el);
+    if (!segments.length) return;
+    const range = rangeFromOffsets(segments, sentence.start, sentence.end);
+    if (!range || range.collapsed) return;
+
+    try {
+      const contents = range.extractContents();
+      const span = document.createElement("span");
+      span.className = "reedah-highlight";
+      span.appendChild(contents);
+      range.insertNode(span);
+      state.currentHighlightSpan = span;
+    } catch (error) {
+      console.error("Reedah: Failed to highlight sentence.", error);
+    }
+  }
+
+  function clearHighlight() {
+    const span = state.currentHighlightSpan;
+    if (!span || !span.parentNode) {
+      state.currentHighlightSpan = null;
+      return;
+    }
+
+    const parent = span.parentNode;
+    while (span.firstChild) {
+      parent.insertBefore(span.firstChild, span);
+    }
+    parent.removeChild(span);
+    state.currentHighlightSpan = null;
+  }
+
+  function resetSentenceState() {
+    state.currentSentenceRanges = [];
+    state.currentSentenceIndex = 0;
+    state.sentenceTimings = [];
+  }
+
+  function collectTextSegments(el) {
+    const segments = [];
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    let offset = 0;
+
+    while (node) {
+      const value = node.nodeValue || "";
+      if (value.length) {
+        const start = offset;
+        const end = offset + value.length;
+        segments.push({ node, start, end });
+        offset = end;
+      }
+      node = walker.nextNode();
+    }
+
+    return segments;
+  }
+
+  function rangeFromOffsets(segments, start, end) {
+    let startNode = null;
+    let startOffset = 0;
+    let endNode = null;
+    let endOffset = 0;
+
+    for (const segment of segments) {
+      if (!startNode && start >= segment.start && start <= segment.end) {
+        startNode = segment.node;
+        startOffset = Math.max(0, start - segment.start);
+      }
+
+      if (end >= segment.start && end <= segment.end) {
+        endNode = segment.node;
+        endOffset = Math.max(0, end - segment.start);
+        break;
+      }
+    }
+
+    if (!startNode || !endNode) return null;
+
+    const range = document.createRange();
+    range.setStart(startNode, startOffset);
+    range.setEnd(endNode, endOffset);
+    return range;
+  }
+
   function ensureOverlay(el) {
     if (state.overlays.has(el)) return;
 
@@ -181,10 +430,10 @@
     const text = getText(el);
     if (text.length < MIN_TEXT_LENGTH) return;
 
-    startNarration(el, text);
+    startNarration(el);
   }
 
-  function startNarration(el, text) {
+  function startNarration(el) {
     stopNarration();
 
     state.activeEl = el;
@@ -194,7 +443,42 @@
     const playbackId = ++state.playbackId;
     state.cancelRequested = false;
 
-    const started = startElevenLabsStreamNarration(el, text, playbackId);
+    const fullText = getFullText(el);
+    const sentenceRanges = buildSentenceRanges(fullText);
+    if (!sentenceRanges.length) {
+      console.error("Reedah: No sentences available for narration.");
+      clearActiveNarration();
+      return;
+    }
+
+    state.currentSentenceRanges = sentenceRanges;
+    state.currentSentenceIndex = 0;
+    state.alignmentChars = [];
+    state.alignmentStarts = [];
+    state.alignmentEnds = [];
+    state.sentenceTimings = [];
+
+    clearHighlight();
+    highlightSentence(el, sentenceRanges[0]);
+
+    const started = startElevenLabsStreamNarration(fullText, playbackId, {
+      onAlignment: (alignment) => {
+        if (state.playbackId !== playbackId) return;
+        mergeAlignment(alignment);
+        updateSentenceTimings();
+        updateHighlightForTime(playbackId);
+      },
+      onEnd: () => {
+        if (state.playbackId !== playbackId) return;
+        handleNarrationEnded(el);
+      },
+      onError: () => {
+        if (state.playbackId !== playbackId) return;
+        console.error("Reedah: Paragraph narration failed.");
+        clearActiveNarration();
+      }
+    });
+
     if (!started && state.playbackId === playbackId) {
       console.error("Reedah: ElevenLabs narration failed to start.");
       clearActiveNarration();
@@ -207,6 +491,11 @@
 
     stopStreaming();
     stopAudioPlayback();
+    clearHighlight();
+    resetSentenceState();
+    state.alignmentChars = [];
+    state.alignmentStarts = [];
+    state.alignmentEnds = [];
 
     if (state.activeEl) {
       setOverlayActive(state.activeEl, false);
@@ -214,7 +503,7 @@
     }
   }
 
-  function startElevenLabsStreamNarration(el, text, playbackId) {
+  function startElevenLabsStreamNarration(text, playbackId, callbacks) {
     if (!("MediaSource" in window)) {
       console.error("Reedah: MediaSource is not supported in this browser.");
       return false;
@@ -236,13 +525,18 @@
 
     audio.onended = () => {
       if (state.playbackId !== playbackId) return;
-      handleNarrationEnded(el);
+      if (callbacks && callbacks.onEnd) callbacks.onEnd();
     };
 
     audio.onerror = () => {
       if (state.playbackId !== playbackId) return;
       console.error("Reedah: ElevenLabs audio playback error.");
-      clearActiveNarration();
+      if (callbacks && callbacks.onError) callbacks.onError();
+    };
+
+    audio.ontimeupdate = () => {
+      if (state.playbackId !== playbackId) return;
+      updateHighlightForTime(playbackId);
     };
 
     mediaSource.addEventListener("sourceopen", () => {
@@ -278,6 +572,13 @@
         return;
       }
 
+      if (message.type === "alignment") {
+        if (message.alignment && callbacks && callbacks.onAlignment) {
+          callbacks.onAlignment(message.alignment);
+        }
+        return;
+      }
+
       if (message.type === "end") {
         state.streamEnded = true;
         pumpStreamQueue(playbackId);
@@ -286,7 +587,7 @@
 
       if (message.type === "error") {
         console.error("Reedah: ElevenLabs streaming error.", message.error || "unknown_error");
-        clearActiveNarration();
+        if (callbacks && callbacks.onError) callbacks.onError();
       }
     });
 
@@ -294,7 +595,7 @@
       if (state.playbackId !== playbackId) return;
       if (!state.streamEnded && !state.cancelRequested) {
         console.error("Reedah: ElevenLabs stream disconnected unexpectedly.");
-        clearActiveNarration();
+        if (callbacks && callbacks.onError) callbacks.onError();
       }
     });
 
@@ -302,7 +603,7 @@
       port.postMessage({ type: "start", text });
     } catch (error) {
       console.error("Reedah: Failed to start ElevenLabs stream.", error);
-      clearActiveNarration();
+      if (callbacks && callbacks.onError) callbacks.onError();
       return false;
     }
 
@@ -529,7 +830,7 @@
     if (next) {
       const text = getText(next);
       if (text.length >= MIN_TEXT_LENGTH) {
-        startNarration(next, text);
+        startNarration(next);
         return;
       }
     }
@@ -538,6 +839,11 @@
   function clearActiveNarration() {
     stopStreaming();
     stopAudioPlayback();
+    clearHighlight();
+    resetSentenceState();
+    state.alignmentChars = [];
+    state.alignmentStarts = [];
+    state.alignmentEnds = [];
 
     if (state.activeEl) {
       setOverlayActive(state.activeEl, false);
