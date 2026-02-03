@@ -4,13 +4,13 @@
   const MIN_TEXT_LENGTH = 20;
   const OVERLAY_OFFSET = 8;
   const AUDIO_BUFFER_TARGET = 2;
+  const SENTENCE_PAUSE_MS = 1000;
   const state = {
     enabled: false,
     overlays: new Map(),
     activeEl: null,
     currentNativePort: null,
     currentUtteranceId: null,
-    nativeDisconnecting: false,
     audioQueue: [],
     currentAudio: null,
     currentAudioUrl: null,
@@ -21,6 +21,9 @@
     currentHighlightSpan: null,
     playbackId: 0,
     cancelRequested: false,
+    activeSession: null,
+    prefetchSession: null,
+    prefetchId: 0,
     observer: null,
     scanScheduled: false,
     positionScheduled: false
@@ -372,34 +375,19 @@
       return;
     }
 
-    state.currentSentenceRanges = sentenceRanges;
-    state.currentSentenceIndex = -1;
-    state.nativeEnded = false;
-    state.playbackStarted = false;
-    state.audioQueue = [];
-    stopAudioPlayback();
-    clearHighlight();
-
-    const started = startNativeNarration(fullText, sentenceRanges, playbackId, {
-      onAudio: (audioPayload) => {
-        enqueueAudio(playbackId, audioPayload);
-      },
-      onEnd: () => {
-        if (state.playbackId !== playbackId) return;
-        state.nativeEnded = true;
-        maybeStartPlayback(playbackId);
-      },
-      onError: () => {
-        if (state.playbackId !== playbackId) return;
-        console.error("Reedah: Paragraph narration failed.");
-        clearActiveNarration();
-      }
+    const utteranceId = `${playbackId}`;
+    const session = createNativeSession(fullText, sentenceRanges, utteranceId, {
+      logVoice: true
     });
-
-    if (!started && state.playbackId === playbackId) {
+    if (!session) {
       console.error("Reedah: Native narration failed to start.");
       clearActiveNarration();
+      return;
     }
+
+    session.el = el;
+    activateSession(session, playbackId, el);
+    startPrefetch(el);
   }
 
   function stopNarration() {
@@ -413,6 +401,7 @@
     state.playbackStarted = false;
     clearHighlight();
     resetSentenceState();
+    clearPrefetch();
 
     if (state.activeEl) {
       setOverlayActive(state.activeEl, false);
@@ -420,114 +409,263 @@
     }
   }
 
-  function startNativeNarration(text, sentenceRanges, playbackId, callbacks) {
+  function createNativeSession(text, sentenceRanges, utteranceId, options = {}) {
     const port = chrome.runtime.connect({ name: "reedah-native" });
-    state.currentNativePort = port;
-    const utteranceId = `${playbackId}`;
-    state.currentUtteranceId = utteranceId;
-    state.nativeDisconnecting = false;
+    const session = {
+      port,
+      utteranceId,
+      sentenceRanges,
+      audioQueue: [],
+      nativeEnded: false,
+      disconnecting: false,
+      active: false,
+      playbackId: null,
+      logVoice: options.logVoice === true,
+      el: null
+    };
 
     port.onMessage.addListener((message) => {
-      if (state.playbackId !== playbackId) return;
-      if (!message || typeof message.type !== "string") return;
-      if (message.utteranceId && message.utteranceId !== utteranceId) return;
-
-      if (message.type === "started") {
-        if (message.voiceName || message.voiceIdentifier) {
-          console.info(
-            "Reedah: Using macOS voice:",
-            message.voiceName || message.voiceIdentifier
-          );
-        }
-        return;
-      }
-
-      if (message.type === "audio") {
-        if (callbacks && callbacks.onAudio) {
-          callbacks.onAudio({
-            index: message.index,
-            audioBase64: message.audioBase64,
-            mimeType: message.mimeType,
-            location: message.location,
-            length: message.length
-          });
-        }
-        return;
-      }
-
-      if (message.type === "end" || message.type === "cancelled") {
-        if (callbacks && callbacks.onEnd) callbacks.onEnd();
-        return;
-      }
-
-      if (message.type === "error") {
-        console.error(
-          "Reedah: Native narration error.",
-          message.error || "unknown_error"
-        );
-        if (callbacks && callbacks.onError) callbacks.onError();
-      }
+      handleSessionMessage(session, message);
     });
 
     port.onDisconnect.addListener(() => {
-      if (state.playbackId !== playbackId) return;
-      if (state.nativeDisconnecting) {
-        state.nativeDisconnecting = false;
-        return;
-      }
-      if (!state.cancelRequested) {
-        console.error("Reedah: Native narration disconnected unexpectedly.");
-        if (callbacks && callbacks.onError) callbacks.onError();
-      }
+      handleSessionDisconnect(session);
     });
 
     try {
       port.postMessage({ type: "start", text, utteranceId, sentenceRanges });
     } catch (error) {
       console.error("Reedah: Failed to start native narration.", error);
-      if (callbacks && callbacks.onError) callbacks.onError();
-      return false;
+      try {
+        port.disconnect();
+      } catch (disconnectError) {
+        // Ignore disconnect errors after start failure.
+      }
+      return null;
     }
 
-    return true;
+    return session;
+  }
+
+  function handleSessionMessage(session, message) {
+    if (!message || typeof message.type !== "string") return;
+    if (message.utteranceId && message.utteranceId !== session.utteranceId) return;
+
+    if (message.type === "started") {
+      if (session.logVoice && (message.voiceName || message.voiceIdentifier)) {
+        console.info(
+          "Reedah: Using macOS voice:",
+          message.voiceName || message.voiceIdentifier
+        );
+      }
+      return;
+    }
+
+    if (message.type === "audio") {
+      enqueueAudio(session, {
+        index: message.index,
+        audioBase64: message.audioBase64,
+        mimeType: message.mimeType,
+        location: message.location,
+        length: message.length
+      });
+      return;
+    }
+
+    if (message.type === "end" || message.type === "cancelled") {
+      session.nativeEnded = true;
+      if (session.active && session.playbackId === state.playbackId) {
+        state.nativeEnded = true;
+        maybeStartPlayback(session.playbackId);
+      }
+      return;
+    }
+
+    if (message.type === "error") {
+      if (session.active && state.cancelRequested) return;
+      console.error(
+        "Reedah: Native narration error.",
+        message.error || "unknown_error"
+      );
+      if (session.active) {
+        clearActiveNarration();
+      } else {
+        discardPrefetchSession(session);
+      }
+    }
+  }
+
+  function handleSessionDisconnect(session) {
+    if (session.disconnecting) {
+      session.disconnecting = false;
+      return;
+    }
+
+    if (session.active) {
+      if (state.cancelRequested) return;
+      console.error("Reedah: Native narration disconnected unexpectedly.");
+      clearActiveNarration();
+      return;
+    }
+
+    console.error("Reedah: Prefetch narration disconnected unexpectedly.");
+    discardPrefetchSession(session);
+  }
+
+  function activateSession(session, playbackId, el) {
+    session.active = true;
+    session.playbackId = playbackId;
+    state.activeSession = session;
+    state.currentNativePort = session.port;
+    state.currentUtteranceId = session.utteranceId;
+    state.activeEl = el;
+
+    state.currentSentenceRanges = session.sentenceRanges;
+    state.currentSentenceIndex = -1;
+    state.nativeEnded = session.nativeEnded;
+    state.playbackStarted = false;
+    state.audioQueue = session.audioQueue;
+
+    stopAudioPlayback();
+    clearHighlight();
+  }
+
+  function startPrefetch(el) {
+    if (!state.enabled) return;
+    const next = getNextCandidate(el);
+    if (!next) {
+      clearPrefetch();
+      return;
+    }
+
+    if (state.prefetchSession && state.prefetchSession.el === next) return;
+
+    clearPrefetch();
+
+    const text = getText(next);
+    if (text.length < MIN_TEXT_LENGTH) return;
+
+    const fullText = getFullText(next);
+    const sentenceRanges = buildSentenceRanges(fullText);
+    if (!sentenceRanges.length) return;
+
+    const prefetchId = ++state.prefetchId;
+    const utteranceId = `prefetch-${prefetchId}`;
+    const session = createNativeSession(fullText, sentenceRanges, utteranceId);
+    if (!session) return;
+    session.el = next;
+    state.prefetchSession = session;
+  }
+
+  function startPrefetchedNarration(el) {
+    const session = state.prefetchSession;
+    if (!session || session.el !== el) {
+      startNarration(el);
+      return;
+    }
+
+    state.prefetchSession = null;
+    state.cancelRequested = false;
+    const playbackId = ++state.playbackId;
+
+    setOverlayActive(el, true);
+    ensureVisible(el, { behavior: "smooth" });
+
+    activateSession(session, playbackId, el);
+    maybeStartPlayback(playbackId);
+    startPrefetch(el);
   }
 
   function stopNativeNarration(options = {}) {
     const shouldSendStop = options.sendStop !== false;
-    if (state.currentNativePort) {
-      state.nativeDisconnecting = true;
+    const session = state.activeSession;
+    if (session && session.port) {
+      session.disconnecting = true;
+      session.active = false;
       if (shouldSendStop) {
         try {
-          state.currentNativePort.postMessage({
+          session.port.postMessage({
             type: "stop",
-            utteranceId: state.currentUtteranceId
+            utteranceId: session.utteranceId
           });
         } catch (error) {
           // Ignore postMessage errors during cleanup.
         }
       }
       try {
-        state.currentNativePort.disconnect();
+        session.port.disconnect();
       } catch (error) {
         // Ignore disconnect errors during cleanup.
       }
-      state.currentNativePort = null;
     }
+    state.activeSession = null;
+    state.currentNativePort = null;
     state.currentUtteranceId = null;
   }
 
-  function enqueueAudio(playbackId, payload) {
-    if (state.playbackId !== playbackId) return;
+  function clearPrefetch() {
+    if (!state.prefetchSession) return;
+    discardPrefetchSession(state.prefetchSession);
+  }
+
+  function discardPrefetchSession(session) {
+    if (!session) return;
+
+    if (state.prefetchSession === session) {
+      state.prefetchSession = null;
+    }
+
+    session.active = false;
+    session.disconnecting = true;
+    if (session.port) {
+      try {
+        session.port.postMessage({
+          type: "stop",
+          utteranceId: session.utteranceId
+        });
+      } catch (error) {
+        // Ignore postMessage errors during cleanup.
+      }
+      try {
+        session.port.disconnect();
+      } catch (error) {
+        // Ignore disconnect errors during cleanup.
+      }
+    }
+
+    clearSessionQueue(session);
+  }
+
+  function clearSessionQueue(session) {
+    if (!session || !session.audioQueue) return;
+    for (const item of session.audioQueue) {
+      if (item.url) {
+        URL.revokeObjectURL(item.url);
+      }
+    }
+    session.audioQueue.length = 0;
+  }
+
+  function enqueueAudio(session, payload) {
+    if (session.active && session.playbackId !== state.playbackId) return;
     if (!payload || typeof payload.audioBase64 !== "string") {
       console.error("Reedah: Invalid audio payload from native host.");
-      clearActiveNarration();
+      if (session.active) {
+        clearActiveNarration();
+      } else {
+        discardPrefetchSession(session);
+      }
       return;
     }
 
     const url = createAudioUrl(payload.audioBase64, payload.mimeType);
     if (!url) {
       console.error("Reedah: Failed to create audio URL.");
-      clearActiveNarration();
+      if (session.active) {
+        clearActiveNarration();
+      } else {
+        discardPrefetchSession(session);
+      }
       return;
     }
 
@@ -536,13 +674,15 @@
       ? parsedIndex
       : findSentenceIndexForOffset(payload.location);
 
-    state.audioQueue.push({
+    session.audioQueue.push({
       url,
       index,
       location: payload.location
     });
 
-    maybeStartPlayback(playbackId);
+    if (session.active && session.playbackId === state.playbackId) {
+      maybeStartPlayback(session.playbackId);
+    }
   }
 
   function maybeStartPlayback(playbackId) {
@@ -593,6 +733,14 @@
       if (state.playbackId !== playbackId) return;
       if (state.currentAudio !== audio) return;
       cleanupCurrentAudio();
+      if (SENTENCE_PAUSE_MS > 0) {
+        setTimeout(() => {
+          if (state.playbackId !== playbackId) return;
+          if (state.currentAudio) return;
+          maybeStartPlayback(playbackId);
+        }, SENTENCE_PAUSE_MS);
+        return;
+      }
       maybeStartPlayback(playbackId);
     };
 
@@ -660,12 +808,17 @@
   }
 
   function clearAudioQueue() {
+    if (state.activeSession) {
+      clearSessionQueue(state.activeSession);
+      return;
+    }
+
     for (const item of state.audioQueue) {
       if (item.url) {
         URL.revokeObjectURL(item.url);
       }
     }
-    state.audioQueue = [];
+    state.audioQueue.length = 0;
   }
 
   function setOverlayActive(el, isActive) {
@@ -757,21 +910,29 @@
 
   function handleNarrationEnded(el, options = {}) {
     const shouldAdvance = !options.error && !state.cancelRequested;
-    clearActiveNarration();
+    const next = shouldAdvance ? getNextCandidate(el) : null;
+    const usePrefetch = !!(
+      next &&
+      state.prefetchSession &&
+      state.prefetchSession.el === next
+    );
 
-    if (!state.enabled || !shouldAdvance) return;
+    clearActiveNarration({ keepPrefetch: usePrefetch });
 
-    const next = getNextCandidate(el);
-    if (next) {
-      const text = getText(next);
-      if (text.length >= MIN_TEXT_LENGTH) {
-        startNarration(next);
-        return;
-      }
+    if (!state.enabled || !shouldAdvance || !next) return;
+
+    if (usePrefetch) {
+      startPrefetchedNarration(next);
+      return;
+    }
+
+    const text = getText(next);
+    if (text.length >= MIN_TEXT_LENGTH) {
+      startNarration(next);
     }
   }
 
-  function clearActiveNarration() {
+  function clearActiveNarration(options = {}) {
     stopNativeNarration({ sendStop: false });
     stopAudioPlayback();
     clearAudioQueue();
@@ -783,6 +944,10 @@
     if (state.activeEl) {
       setOverlayActive(state.activeEl, false);
       state.activeEl = null;
+    }
+
+    if (!options.keepPrefetch) {
+      clearPrefetch();
     }
   }
 
