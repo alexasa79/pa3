@@ -9,6 +9,7 @@
   const PARAGRAPH_LEAD_IN_MS = 400;
   const PARAGRAPH_LEAD_OUT_MS = 400;
   const CANDIDATE_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6";
+  const HOVER_BOX_PADDING = 24;
   const state = {
     enabled: false,
     overlays: new Map(),
@@ -40,12 +41,16 @@
     positionScheduled: false
   };
 
-  chrome.runtime.onMessage.addListener((message) => {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message && message.type === "reedah-toggle") {
       toggle();
     }
     if (message && message.type === "reedah-pause") {
       togglePause();
+    }
+    if (message && message.type === "reedah-state-request") {
+      sendResponse({ enabled: state.enabled });
+      return true;
     }
   });
 
@@ -69,6 +74,7 @@
 
     state.enabled = true;
     document.documentElement.classList.add("reedah-enabled");
+    notifyState();
 
     scanParagraphs();
     attachObservers();
@@ -79,6 +85,7 @@
 
     state.enabled = false;
     document.documentElement.classList.remove("reedah-enabled");
+    notifyState();
 
     stopNarration();
     detachObservers();
@@ -88,6 +95,14 @@
       overlay.remove();
     }
     state.overlays.clear();
+  }
+
+  function notifyState() {
+    try {
+      chrome.runtime.sendMessage({ type: "reedah-state", enabled: state.enabled });
+    } catch (error) {
+      // Ignore send errors (e.g. no background yet).
+    }
   }
 
   function attachObservers() {
@@ -1119,11 +1134,48 @@
       candidate = null;
     }
 
+    if (!candidate) {
+      candidate = findCandidateByHoverBox(x, y);
+    }
+
     if (candidate === state.hoveredEl) return;
     state.hoveredEl = candidate;
     if (!options.skipSchedule) {
       schedulePositionUpdate();
     }
+  }
+
+  function findCandidateByHoverBox(x, y) {
+    if (!state.overlays.size) return null;
+    let best = null;
+    let bestDistance = Infinity;
+
+    for (const el of state.overlays.keys()) {
+      if (!isCandidate(el)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+
+      const left = rect.left - HOVER_BOX_PADDING;
+      const right = rect.right + HOVER_BOX_PADDING;
+      const top = rect.top - HOVER_BOX_PADDING;
+      const bottom = rect.bottom + HOVER_BOX_PADDING;
+
+      if (x < left || x > right || y < top || y > bottom) continue;
+
+      const distance = distanceToRect(x, y, rect);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = el;
+      }
+    }
+
+    return best;
+  }
+
+  function distanceToRect(x, y, rect) {
+    const dx = Math.max(rect.left - x, 0, x - rect.right);
+    const dy = Math.max(rect.top - y, 0, y - rect.bottom);
+    return Math.hypot(dx, dy);
   }
 
   function isPointNearOverlay(overlay, x, y, margin) {
