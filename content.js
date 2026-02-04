@@ -2,9 +2,13 @@
   if (window.top !== window) return;
 
   const MIN_TEXT_LENGTH = 20;
+  const MIN_HEADING_LENGTH = 3;
   const OVERLAY_OFFSET = 8;
   const AUDIO_BUFFER_TARGET = 2;
   const SENTENCE_PAUSE_MS = 1000;
+  const PARAGRAPH_LEAD_IN_MS = 400;
+  const PARAGRAPH_LEAD_OUT_MS = 400;
+  const CANDIDATE_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6";
   const state = {
     enabled: false,
     overlays: new Map(),
@@ -21,9 +25,17 @@
     currentHighlightSpan: null,
     playbackId: 0,
     cancelRequested: false,
+    isPaused: false,
     activeSession: null,
     prefetchSession: null,
     prefetchId: 0,
+    forcedNextEl: null,
+    pendingLeadIn: false,
+    pendingLeadOut: false,
+    hoveredEl: null,
+    hoverScheduled: false,
+    lastMouseX: null,
+    lastMouseY: null,
     observer: null,
     scanScheduled: false,
     positionScheduled: false
@@ -32,6 +44,9 @@
   chrome.runtime.onMessage.addListener((message) => {
     if (message && message.type === "reedah-toggle") {
       toggle();
+    }
+    if (message && message.type === "reedah-pause") {
+      togglePause();
     }
   });
 
@@ -62,6 +77,7 @@
 
     stopNarration();
     detachObservers();
+    state.hoveredEl = null;
 
     for (const overlay of state.overlays.values()) {
       overlay.remove();
@@ -85,6 +101,8 @@
     window.addEventListener("scroll", schedulePositionUpdate, { passive: true });
     document.addEventListener("scroll", schedulePositionUpdate, true);
     window.addEventListener("resize", schedulePositionUpdate);
+    document.addEventListener("mousemove", handleMouseMove, { passive: true });
+    window.addEventListener("blur", clearHover);
   }
 
   function detachObservers() {
@@ -96,6 +114,8 @@
     window.removeEventListener("scroll", schedulePositionUpdate);
     document.removeEventListener("scroll", schedulePositionUpdate, true);
     window.removeEventListener("resize", schedulePositionUpdate);
+    document.removeEventListener("mousemove", handleMouseMove);
+    window.removeEventListener("blur", clearHover);
   }
 
   function scheduleScan() {
@@ -114,6 +134,9 @@
     state.positionScheduled = true;
     requestAnimationFrame(() => {
       state.positionScheduled = false;
+      if (state.lastMouseX != null && state.lastMouseY != null) {
+        updateHoverFromPoint(state.lastMouseX, state.lastMouseY, { skipSchedule: true });
+      }
       updatePositions();
     });
   }
@@ -121,7 +144,7 @@
   function scanParagraphs() {
     if (!state.enabled) return;
 
-    const candidates = document.querySelectorAll("p, li, blockquote");
+    const candidates = document.querySelectorAll(CANDIDATE_SELECTOR);
     for (const el of candidates) {
       if (isCandidate(el)) {
         ensureOverlay(el);
@@ -142,7 +165,8 @@
     }
 
     const text = getText(el);
-    if (text.length < MIN_TEXT_LENGTH) return false;
+    const minLength = isHeading(el) ? MIN_HEADING_LENGTH : MIN_TEXT_LENGTH;
+    if (text.length < minLength) return false;
 
     const style = window.getComputedStyle(el);
     if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) {
@@ -153,6 +177,12 @@
     if (rect.width === 0 || rect.height === 0) return false;
 
     return true;
+  }
+
+  function isHeading(el) {
+    if (!el || !el.tagName) return false;
+    const tag = el.tagName.toUpperCase();
+    return tag === "H1" || tag === "H2" || tag === "H3" || tag === "H4" || tag === "H5" || tag === "H6";
   }
 
   function getText(el) {
@@ -332,6 +362,7 @@
     const overlay = document.createElement("button");
     overlay.type = "button";
     overlay.className = "reedah-overlay";
+    overlay.__reedahTarget = el;
     const icon = createOverlayIcon();
     overlay.appendChild(icon);
     overlay.setAttribute("aria-label", "Narrate paragraph");
@@ -351,21 +382,36 @@
       return;
     }
 
-    const text = getText(el);
-    if (text.length < MIN_TEXT_LENGTH) return;
+    if (!isCandidate(el)) return;
 
     startNarration(el);
   }
 
   function startNarration(el) {
+    startNarrationInternal(el, {});
+  }
+
+  function startNarrationInternal(el, options) {
+    if (!options || !options.skipPreface) {
+      if (!isHeading(el)) {
+        const heading = findPreviousHeading(el);
+        if (heading && heading !== el) {
+          startNarrationInternal(heading, { skipPreface: true, forcedNextEl: el });
+          return;
+        }
+      }
+    }
+
     stopNarration();
 
+    state.forcedNextEl = (options && options.forcedNextEl) || null;
     state.activeEl = el;
     setOverlayActive(el, true);
     ensureVisible(el, { behavior: "smooth" });
 
     const playbackId = ++state.playbackId;
     state.cancelRequested = false;
+    state.isPaused = false;
 
     const fullText = getFullText(el);
     const sentenceRanges = buildSentenceRanges(fullText);
@@ -393,6 +439,10 @@
   function stopNarration() {
     state.cancelRequested = true;
     state.playbackId += 1;
+    state.isPaused = false;
+    state.forcedNextEl = null;
+    state.pendingLeadIn = false;
+    state.pendingLeadOut = false;
 
     stopNativeNarration({ sendStop: true });
     stopAudioPlayback();
@@ -524,7 +574,10 @@
     state.currentSentenceIndex = -1;
     state.nativeEnded = session.nativeEnded;
     state.playbackStarted = false;
+    state.isPaused = false;
     state.audioQueue = session.audioQueue;
+    state.pendingLeadIn = shouldApplyParagraphDelays(el);
+    state.pendingLeadOut = shouldApplyParagraphDelays(el);
 
     stopAudioPlayback();
     clearHighlight();
@@ -532,7 +585,7 @@
 
   function startPrefetch(el) {
     if (!state.enabled) return;
-    const next = getNextCandidate(el);
+    const next = state.forcedNextEl || getNextCandidate(el);
     if (!next) {
       clearPrefetch();
       return;
@@ -542,8 +595,7 @@
 
     clearPrefetch();
 
-    const text = getText(next);
-    if (text.length < MIN_TEXT_LENGTH) return;
+    if (!isCandidate(next)) return;
 
     const fullText = getFullText(next);
     const sentenceRanges = buildSentenceRanges(fullText);
@@ -688,10 +740,33 @@
   function maybeStartPlayback(playbackId) {
     if (state.playbackId !== playbackId) return;
     if (state.currentAudio) return;
+    if (state.isPaused) return;
+
+    if (!state.playbackStarted && state.pendingLeadIn && state.audioQueue.length > 0) {
+      state.pendingLeadIn = false;
+      if (PARAGRAPH_LEAD_IN_MS > 0) {
+        setTimeout(() => {
+          if (state.playbackId !== playbackId) return;
+          if (state.isPaused) return;
+          if (state.currentAudio) return;
+          maybeStartPlayback(playbackId);
+        }, PARAGRAPH_LEAD_IN_MS);
+        return;
+      }
+    }
 
     const next = state.audioQueue.shift();
     if (!next) {
       if (state.nativeEnded && state.activeEl) {
+        if (state.pendingLeadOut && PARAGRAPH_LEAD_OUT_MS > 0) {
+          state.pendingLeadOut = false;
+          setTimeout(() => {
+            if (state.playbackId !== playbackId) return;
+            if (state.isPaused) return;
+            handleNarrationEnded(state.activeEl);
+          }, PARAGRAPH_LEAD_OUT_MS);
+          return;
+        }
         handleNarrationEnded(state.activeEl);
       }
       return;
@@ -717,6 +792,10 @@
       }
       return;
     }
+    if (state.isPaused) {
+      state.audioQueue.unshift(next);
+      return;
+    }
 
     if (state.activeEl) {
       updateHighlightForIndex(playbackId, next.index, next.location);
@@ -736,6 +815,7 @@
       if (SENTENCE_PAUSE_MS > 0) {
         setTimeout(() => {
           if (state.playbackId !== playbackId) return;
+          if (state.isPaused) return;
           if (state.currentAudio) return;
           maybeStartPlayback(playbackId);
         }, SENTENCE_PAUSE_MS);
@@ -757,6 +837,9 @@
     audio.play().catch((error) => {
       if (state.playbackId !== playbackId) return;
       if (state.currentAudio !== audio) return;
+      if (state.isPaused && error && error.name === "AbortError") {
+        return;
+      }
       if (error && error.name === "AbortError") {
         return;
       }
@@ -873,6 +956,9 @@
       if (state.activeEl === el) {
         stopNarration();
       }
+      if (state.hoveredEl === el) {
+        state.hoveredEl = null;
+      }
       const overlay = state.overlays.get(el);
       if (overlay) overlay.remove();
       state.overlays.delete(el);
@@ -888,7 +974,9 @@
       const rect = el.getBoundingClientRect();
       const anchorVisible = isAnchorVisible(el, rect);
 
-      if (!anchorVisible) {
+      const shouldShow = el === state.activeEl || el === state.hoveredEl;
+
+      if (!anchorVisible || !shouldShow) {
         overlay.style.display = "none";
         continue;
       }
@@ -910,7 +998,9 @@
 
   function handleNarrationEnded(el, options = {}) {
     const shouldAdvance = !options.error && !state.cancelRequested;
-    const next = shouldAdvance ? getNextCandidate(el) : null;
+    const forcedNext = state.forcedNextEl;
+    state.forcedNextEl = null;
+    const next = shouldAdvance ? (forcedNext || getNextCandidate(el)) : null;
     const usePrefetch = !!(
       next &&
       state.prefetchSession &&
@@ -926,8 +1016,7 @@
       return;
     }
 
-    const text = getText(next);
-    if (text.length >= MIN_TEXT_LENGTH) {
+    if (isCandidate(next)) {
       startNarration(next);
     }
   }
@@ -938,6 +1027,10 @@
     clearAudioQueue();
     state.nativeEnded = false;
     state.playbackStarted = false;
+    state.isPaused = false;
+    state.forcedNextEl = null;
+    state.pendingLeadIn = false;
+    state.pendingLeadOut = false;
     clearHighlight();
     resetSentenceState();
 
@@ -951,8 +1044,101 @@
     }
   }
 
+  function handleMouseMove(event) {
+    if (!state.enabled) return;
+    state.lastMouseX = event.clientX;
+    state.lastMouseY = event.clientY;
+    if (state.hoverScheduled) return;
+
+    state.hoverScheduled = true;
+    requestAnimationFrame(() => {
+      state.hoverScheduled = false;
+      updateHoverFromPoint(state.lastMouseX, state.lastMouseY);
+    });
+  }
+
+  function clearHover() {
+    if (!state.hoveredEl) return;
+    state.hoveredEl = null;
+    schedulePositionUpdate();
+  }
+
+  function updateHoverFromPoint(x, y, options = {}) {
+    if (state.hoveredEl) {
+      const hoveredOverlay = state.overlays.get(state.hoveredEl);
+      if (hoveredOverlay && isPointNearOverlay(hoveredOverlay, x, y, OVERLAY_OFFSET + 6)) {
+        if (!options.skipSchedule) {
+          schedulePositionUpdate();
+        }
+        return;
+      }
+    }
+
+    const element = document.elementFromPoint(x, y);
+    let candidate = null;
+
+    if (element) {
+      const overlay = element.closest ? element.closest(".reedah-overlay") : null;
+      if (overlay && overlay.__reedahTarget) {
+        candidate = overlay.__reedahTarget;
+      } else if (element.closest) {
+        candidate = element.closest(CANDIDATE_SELECTOR);
+      }
+    }
+
+    if (candidate && !isCandidate(candidate)) {
+      candidate = null;
+    }
+
+    if (candidate === state.hoveredEl) return;
+    state.hoveredEl = candidate;
+    if (!options.skipSchedule) {
+      schedulePositionUpdate();
+    }
+  }
+
+  function isPointNearOverlay(overlay, x, y, margin) {
+    if (!overlay || overlay.style.display === "none") return false;
+    const rect = overlay.getBoundingClientRect();
+    const left = rect.left - margin;
+    const right = rect.right + margin;
+    const top = rect.top - margin;
+    const bottom = rect.bottom + margin;
+    return x >= left && x <= right && y >= top && y <= bottom;
+  }
+
   function getCandidates() {
-    return Array.from(document.querySelectorAll("p, li, blockquote")).filter(isCandidate);
+    return Array.from(document.querySelectorAll(CANDIDATE_SELECTOR)).filter(isCandidate);
+  }
+
+  function togglePause() {
+    if (!state.activeEl) return;
+
+    if (!state.isPaused) {
+      state.isPaused = true;
+      if (state.currentAudio) {
+        try {
+          state.currentAudio.pause();
+        } catch (error) {
+          // Ignore pause errors.
+        }
+      }
+      return;
+    }
+
+    state.isPaused = false;
+    if (state.currentAudio) {
+      state.currentAudio.play().catch((error) => {
+        if (error && error.name === "AbortError") {
+          return;
+        }
+        console.error("Reedah: Failed to resume audio playback.", error);
+        clearActiveNarration();
+      });
+      return;
+    }
+
+    maybeStartPlayback(state.playbackId);
   }
 
   function getNextCandidate(current) {
@@ -972,6 +1158,28 @@
     }
 
     return null;
+  }
+
+  function findPreviousHeading(el) {
+    if (!document.body || !el) return null;
+    const walker = document.createTreeWalker(
+      document.body,
+      NodeFilter.SHOW_ELEMENT
+    );
+    let node = walker.nextNode();
+    let lastHeading = null;
+    while (node) {
+      if (node === el) break;
+      if (isHeading(node) && isCandidate(node)) {
+        lastHeading = node;
+      }
+      node = walker.nextNode();
+    }
+    return lastHeading;
+  }
+
+  function shouldApplyParagraphDelays(el) {
+    return !!el && !isHeading(el);
   }
 
   function ensureVisible(el, options = {}) {
