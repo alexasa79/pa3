@@ -948,9 +948,17 @@
     if (!overlay) return;
 
     overlay.classList.toggle("reedah-overlay-active", isActive);
+    overlay.classList.toggle(
+      "reedah-overlay-paused",
+      isActive && state.isPaused
+    );
     overlay.setAttribute(
       "aria-label",
-      isActive ? "Stop narration" : "Narrate paragraph"
+      isActive
+        ? state.isPaused
+          ? "Resume narration"
+          : "Stop narration"
+        : "Narrate paragraph"
     );
   }
 
@@ -977,8 +985,26 @@
     stopRect.setAttribute("height", "10");
     stop.appendChild(stopRect);
 
+    const pause = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    pause.setAttribute("viewBox", "0 0 24 24");
+    pause.setAttribute("aria-hidden", "true");
+    pause.classList.add("reedah-icon", "reedah-icon-pause");
+    const pauseLeft = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    pauseLeft.setAttribute("x", "7");
+    pauseLeft.setAttribute("y", "6");
+    pauseLeft.setAttribute("width", "3");
+    pauseLeft.setAttribute("height", "12");
+    const pauseRight = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    pauseRight.setAttribute("x", "14");
+    pauseRight.setAttribute("y", "6");
+    pauseRight.setAttribute("width", "3");
+    pauseRight.setAttribute("height", "12");
+    pause.appendChild(pauseLeft);
+    pause.appendChild(pauseRight);
+
     icon.appendChild(play);
     icon.appendChild(stop);
+    icon.appendChild(pause);
 
     return icon;
   }
@@ -1197,6 +1223,7 @@
 
     if (!state.isPaused) {
       state.isPaused = true;
+      setOverlayActive(state.activeEl, true);
       if (state.currentAudio) {
         try {
           state.currentAudio.pause();
@@ -1208,6 +1235,7 @@
     }
 
     state.isPaused = false;
+    setOverlayActive(state.activeEl, true);
     if (state.currentAudio) {
       state.currentAudio.play().catch((error) => {
         if (error && error.name === "AbortError") {

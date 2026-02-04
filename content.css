@@ -32,6 +32,11 @@
   border-color: #7a0016;
 }
 
+.reedah-overlay.reedah-overlay-paused {
+  background: #f9a825;
+  border-color: #c17900;
+}
+
 .reedah-highlight {
   background: rgba(255, 230, 140, 0.45);
   box-decoration-break: clone;
@@ -60,7 +65,15 @@
   display: none;
 }
 
-.reedah-overlay.reedah-overlay-active .reedah-icon-stop {
+.reedah-overlay.reedah-overlay-active:not(.reedah-overlay-paused) .reedah-icon-stop {
+  display: block;
+}
+
+.reedah-icon-pause {
+  display: none;
+}
+
+.reedah-overlay.reedah-overlay-active.reedah-overlay-paused .reedah-icon-pause {
   display: block;
 }
 
