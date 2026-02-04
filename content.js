@@ -191,6 +191,41 @@
     return tag === "H1" || tag === "H2" || tag === "H3" || tag === "H4" || tag === "H5" || tag === "H6";
   }
 
+  function isListItem(el) {
+    return !!el && el.tagName === "LI";
+  }
+
+  function getListContainerRect(el) {
+    if (!el || !el.closest) return null;
+    const list = el.closest("ul, ol");
+    return list ? list.getBoundingClientRect() : null;
+  }
+
+  function getAnchorRect(el) {
+    try {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node) {
+        const value = node.nodeValue || "";
+        const index = value.search(/\S/);
+        if (index !== -1) {
+          const range = document.createRange();
+          range.setStart(node, index);
+          range.setEnd(node, Math.min(index + 1, value.length));
+          const rects = range.getClientRects();
+          if (rects.length) {
+            return rects[0];
+          }
+        }
+        node = walker.nextNode();
+      }
+    } catch (error) {
+      // Ignore anchor calculation errors.
+    }
+
+    return el.getBoundingClientRect();
+  }
+
   function getText(el) {
     return (el.innerText || "").replace(/\s+/g, " ").trim();
   }
@@ -978,6 +1013,7 @@
       if (!isCandidate(el)) continue;
 
       const rect = el.getBoundingClientRect();
+      const anchorRect = getAnchorRect(el) || rect;
       const anchorVisible = isAnchorVisible(el, rect);
 
       const shouldShow = el === state.activeEl || el === state.hoveredEl;
@@ -989,12 +1025,19 @@
 
       overlay.style.display = "inline-flex";
 
-      const top = rect.top;
+      const top = anchorRect.top;
       const overlayWidth = overlay.offsetWidth || 14;
-      let left = rect.left - OVERLAY_OFFSET - overlayWidth;
+      let left = anchorRect.left - OVERLAY_OFFSET - overlayWidth;
+
+      if (isListItem(el)) {
+        const listRect = getListContainerRect(el);
+        if (listRect) {
+          left = listRect.left - OVERLAY_OFFSET - overlayWidth;
+        }
+      }
 
       if (left < 8) {
-        left = rect.right + OVERLAY_OFFSET;
+        left = anchorRect.right + OVERLAY_OFFSET;
       }
 
       overlay.style.top = `${top}px`;
