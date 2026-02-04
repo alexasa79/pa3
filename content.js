@@ -502,7 +502,11 @@
 
   function handleOverlayClick(el) {
     if (state.activeEl === el) {
-      stopNarration();
+      if (state.isPaused) {
+        togglePause();
+      } else {
+        stopNarration();
+      }
       return;
     }
 
