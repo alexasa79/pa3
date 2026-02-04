@@ -1,8 +1,9 @@
 (() => {
   if (window.top !== window) return;
 
-  const MIN_TEXT_LENGTH = 20;
+  const MIN_TEXT_LENGTH = 5;
   const MIN_HEADING_LENGTH = 3;
+  const MIN_SENTENCE_LENGTH = 20;
   const OVERLAY_OFFSET = 8;
   const AUDIO_BUFFER_TARGET = 2;
   const SENTENCE_PAUSE_MS = 1000;
@@ -289,10 +290,55 @@
       const raw = fullText.slice(sStart, sEnd);
       const text = raw.replace(/\s+/g, " ").trim();
       if (!text) continue;
-      sentences.push({ start: sStart, end: sEnd });
+      sentences.push({ start: sStart, end: sEnd, length: text.length });
     }
 
-    return sentences;
+    return mergeShortSentences(sentences, fullText);
+  }
+
+  function mergeShortSentences(sentences, fullText) {
+    if (!sentences.length) return sentences;
+
+    const merged = sentences.map((sentence) => ({ ...sentence }));
+    const minLength = MIN_SENTENCE_LENGTH;
+
+    const normalize = (index) => {
+      const item = merged[index];
+      if (!item) return;
+      item.length = getSentenceLength(fullText, item.start, item.end);
+    };
+
+    for (let i = 0; i < merged.length; i += 1) {
+      const current = merged[i];
+      if (!current) continue;
+      if (current.length >= minLength) continue;
+
+      if (i === 0) {
+        const next = merged[i + 1];
+        if (next) {
+          next.start = current.start;
+          merged.splice(i, 1);
+          normalize(i);
+          i -= 1;
+        }
+        continue;
+      }
+
+      const previous = merged[i - 1];
+      if (previous) {
+        previous.end = current.end;
+        merged.splice(i, 1);
+        normalize(i - 1);
+        i -= 1;
+      }
+    }
+
+    return merged.map(({ start, end }) => ({ start, end }));
+  }
+
+  function getSentenceLength(fullText, start, end) {
+    const raw = fullText.slice(start, end);
+    return raw.replace(/\s+/g, " ").trim().length;
   }
 
   function findSentenceIndexForOffset(offset) {
