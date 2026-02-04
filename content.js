@@ -50,6 +50,12 @@
     }
   });
 
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", enable, { once: true });
+  } else {
+    enable();
+  }
+
   function toggle() {
     if (state.enabled) {
       disable();
