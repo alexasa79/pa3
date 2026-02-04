@@ -10,7 +10,8 @@
   const PARAGRAPH_LEAD_IN_MS = 400;
   const PARAGRAPH_LEAD_OUT_MS = 400;
   const CANDIDATE_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6";
-  const HOVER_BOX_PADDING = 24;
+  const HOVER_BOX_PADDING = 32;
+  const LIST_OVERLAY_MAX_GAP = 32;
   const state = {
     enabled: false,
     overlays: new Map(),
@@ -56,9 +57,9 @@
   });
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", enable, { once: true });
+    document.addEventListener("DOMContentLoaded", notifyState, { once: true });
   } else {
-    enable();
+    notifyState();
   }
 
   function toggle() {
@@ -185,6 +186,8 @@
       return false;
     }
 
+    if (isLinkOnly(el)) return false;
+
     const text = getText(el);
     const minLength = isHeading(el) ? MIN_HEADING_LENGTH : MIN_TEXT_LENGTH;
     if (text.length < minLength) return false;
@@ -196,6 +199,26 @@
 
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return false;
+
+    return true;
+  }
+
+  function isLinkOnly(el) {
+    if (!el) return false;
+    if (el.tagName === "A") return true;
+    const anchors = el.querySelectorAll("a");
+    if (!anchors.length) return false;
+
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      if (node.nodeValue && node.nodeValue.trim().length) {
+        if (!node.parentElement || !node.parentElement.closest("a")) {
+          return false;
+        }
+      }
+      node = walker.nextNode();
+    }
 
     return true;
   }
@@ -1097,12 +1120,15 @@
 
       const top = anchorRect.top;
       const overlayWidth = overlay.offsetWidth || 14;
-      let left = anchorRect.left - OVERLAY_OFFSET - overlayWidth;
+      const maxLeft = anchorRect.left - OVERLAY_OFFSET - overlayWidth;
+      let left = maxLeft;
 
       if (isListItem(el)) {
         const listRect = getListContainerRect(el);
         if (listRect) {
-          left = listRect.left - OVERLAY_OFFSET - overlayWidth;
+          const listLeft = listRect.left - OVERLAY_OFFSET - overlayWidth;
+          const cappedLeft = anchorRect.left - overlayWidth - LIST_OVERLAY_MAX_GAP;
+          left = Math.min(maxLeft, Math.max(listLeft, cappedLeft));
         }
       }
 
