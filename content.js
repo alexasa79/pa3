@@ -29,7 +29,6 @@
     activeSession: null,
     prefetchSession: null,
     prefetchId: 0,
-    forcedNextEl: null,
     pendingLeadIn: false,
     pendingLeadOut: false,
     hoveredEl: null,
@@ -429,23 +428,8 @@
   }
 
   function startNarration(el) {
-    startNarrationInternal(el, {});
-  }
-
-  function startNarrationInternal(el, options) {
-    if (!options || !options.skipPreface) {
-      if (!isHeading(el)) {
-        const heading = findPreviousHeading(el);
-        if (heading && heading !== el) {
-          startNarrationInternal(heading, { skipPreface: true, forcedNextEl: el });
-          return;
-        }
-      }
-    }
-
     stopNarration();
 
-    state.forcedNextEl = (options && options.forcedNextEl) || null;
     state.activeEl = el;
     setOverlayActive(el, true);
     ensureVisible(el, { behavior: "smooth" });
@@ -481,7 +465,6 @@
     state.cancelRequested = true;
     state.playbackId += 1;
     state.isPaused = false;
-    state.forcedNextEl = null;
     state.pendingLeadIn = false;
     state.pendingLeadOut = false;
 
@@ -626,7 +609,7 @@
 
   function startPrefetch(el) {
     if (!state.enabled) return;
-    const next = state.forcedNextEl || getNextCandidate(el);
+    const next = getNextCandidate(el);
     if (!next) {
       clearPrefetch();
       return;
@@ -1047,9 +1030,7 @@
 
   function handleNarrationEnded(el, options = {}) {
     const shouldAdvance = !options.error && !state.cancelRequested;
-    const forcedNext = state.forcedNextEl;
-    state.forcedNextEl = null;
-    const next = shouldAdvance ? (forcedNext || getNextCandidate(el)) : null;
+    const next = shouldAdvance ? getNextCandidate(el) : null;
     const usePrefetch = !!(
       next &&
       state.prefetchSession &&
@@ -1077,7 +1058,6 @@
     state.nativeEnded = false;
     state.playbackStarted = false;
     state.isPaused = false;
-    state.forcedNextEl = null;
     state.pendingLeadIn = false;
     state.pendingLeadOut = false;
     clearHighlight();
@@ -1207,24 +1187,6 @@
     }
 
     return null;
-  }
-
-  function findPreviousHeading(el) {
-    if (!document.body || !el) return null;
-    const walker = document.createTreeWalker(
-      document.body,
-      NodeFilter.SHOW_ELEMENT
-    );
-    let node = walker.nextNode();
-    let lastHeading = null;
-    while (node) {
-      if (node === el) break;
-      if (isHeading(node) && isCandidate(node)) {
-        lastHeading = node;
-      }
-      node = walker.nextNode();
-    }
-    return lastHeading;
   }
 
   function shouldApplyParagraphDelays(el) {
