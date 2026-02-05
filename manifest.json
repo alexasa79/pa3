@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "description": "Overlay controls to narrate paragraph text on a page.",
   "permissions": ["tabs", "storage", "nativeMessaging"],
+  "action": {
+    "default_title": "Reedah"
+  },
   "commands": {
     "toggle-overlay": {
       "suggested_key": {
@@ -11,6 +14,13 @@
         "mac": "Alt+X"
       },
       "description": "Toggle Reedah overlays"
+    },
+    "pause-playback": {
+      "suggested_key": {
+        "default": "Alt+D",
+        "mac": "Alt+D"
+      },
+      "description": "Pause or resume narration"
     }
   },
   "background": {
