@@ -13,6 +13,7 @@
   const HOVER_BOX_PADDING = 32;
   const LIST_OVERLAY_MAX_GAP = 32;
   const HISTORY_LIMIT = 3;
+  const ABBREVIATIONS = ["e.g.", "i.e."];
   const state = {
     enabled: false,
     overlays: new Map(),
@@ -292,9 +293,21 @@
     let start = 0;
     const len = fullText.length;
     const isDelimiter = (ch) => ch === "." || ch === "!" || ch === "?";
+    const abbrevRanges = buildAbbreviationRanges(fullText);
+    let abbrevIndex = 0;
 
     for (let i = 0; i < len; i += 1) {
       if (isDelimiter(fullText[i])) {
+        while (abbrevIndex < abbrevRanges.length && i > abbrevRanges[abbrevIndex].end) {
+          abbrevIndex += 1;
+        }
+        const inAbbrev = abbrevIndex < abbrevRanges.length &&
+          i >= abbrevRanges[abbrevIndex].start &&
+          i <= abbrevRanges[abbrevIndex].end;
+
+        if (fullText[i] === "." && inAbbrev) {
+          continue;
+        }
         let end = i + 1;
         while (end < len && isDelimiter(fullText[end])) {
           end += 1;
@@ -323,6 +336,25 @@
     }
 
     return mergeShortSentences(sentences, fullText);
+  }
+
+  function buildAbbreviationRanges(fullText) {
+    if (!ABBREVIATIONS.length) return [];
+    const lower = fullText.toLowerCase();
+    const ranges = [];
+
+    for (const abbr of ABBREVIATIONS) {
+      let index = 0;
+      while (index < lower.length) {
+        const found = lower.indexOf(abbr, index);
+        if (found === -1) break;
+        ranges.push({ start: found, end: found + abbr.length - 1 });
+        index = found + abbr.length;
+      }
+    }
+
+    ranges.sort((a, b) => a.start - b.start);
+    return ranges;
   }
 
   function mergeShortSentences(sentences, fullText) {
