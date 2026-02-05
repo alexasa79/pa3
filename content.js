@@ -6,7 +6,7 @@
   const MIN_SENTENCE_LENGTH = 20;
   const OVERLAY_OFFSET = 8;
   const AUDIO_BUFFER_TARGET = 2;
-  const SENTENCE_PAUSE_MS = 1000;
+  const SENTENCE_PAUSE_MS = 500;
   const PARAGRAPH_LEAD_IN_MS = 400;
   const PARAGRAPH_LEAD_OUT_MS = 400;
   const CANDIDATE_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6";
