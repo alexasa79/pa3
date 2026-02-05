@@ -12,6 +12,7 @@
   const CANDIDATE_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6";
   const HOVER_BOX_PADDING = 32;
   const LIST_OVERLAY_MAX_GAP = 32;
+  const HISTORY_LIMIT = 3;
   const state = {
     enabled: false,
     overlays: new Map(),
@@ -21,6 +22,7 @@
     audioQueue: [],
     currentAudio: null,
     currentAudioUrl: null,
+    currentAudioItem: null,
     nativeEnded: false,
     playbackStarted: false,
     currentSentenceRanges: [],
@@ -32,12 +34,14 @@
     activeSession: null,
     prefetchSession: null,
     prefetchId: 0,
+    playedHistory: [],
     pendingLeadIn: false,
     pendingLeadOut: false,
     hoveredEl: null,
     hoverScheduled: false,
     lastMouseX: null,
     lastMouseY: null,
+    controls: null,
     observer: null,
     scanScheduled: false,
     positionScheduled: false
@@ -77,6 +81,7 @@
     state.enabled = true;
     document.documentElement.classList.add("reedah-enabled");
     notifyState();
+    ensureControls();
 
     scanParagraphs();
     attachObservers();
@@ -91,6 +96,7 @@
 
     stopNarration();
     detachObservers();
+    removeControls();
     state.hoveredEl = null;
 
     for (const overlay of state.overlays.values()) {
@@ -181,7 +187,7 @@
     if (!el || !el.isConnected) return false;
 
     if (el.closest(
-      "nav, footer, header, aside, form, button, input, textarea, select, option, pre, code, script, style, [contenteditable='true'], .reedah-overlay"
+      "nav, footer, header, aside, form, button, input, textarea, select, option, pre, code, script, style, [contenteditable='true'], .reedah-overlay, .reedah-controls"
     )) {
       return false;
     }
@@ -547,6 +553,7 @@
     session.el = el;
     activateSession(session, playbackId, el);
     startPrefetch(el);
+    updateControls();
   }
 
   function stopNarration() {
@@ -559,6 +566,7 @@
     stopNativeNarration({ sendStop: true });
     stopAudioPlayback();
     clearAudioQueue();
+    clearPlayedHistory();
     state.nativeEnded = false;
     state.playbackStarted = false;
     clearHighlight();
@@ -569,6 +577,7 @@
       setOverlayActive(state.activeEl, false);
       state.activeEl = null;
     }
+    updateControls();
   }
 
   function createNativeSession(text, sentenceRanges, utteranceId, options = {}) {
@@ -693,6 +702,7 @@
 
     stopAudioPlayback();
     clearHighlight();
+    updateControls();
   }
 
   function startPrefetch(el) {
@@ -803,7 +813,7 @@
   function clearSessionQueue(session) {
     if (!session || !session.audioQueue) return;
     for (const item of session.audioQueue) {
-      if (item.url) {
+      if (item.url && !isUrlInHistory(item.url)) {
         URL.revokeObjectURL(item.url);
       }
     }
@@ -846,6 +856,9 @@
 
     if (session.active && session.playbackId === state.playbackId) {
       maybeStartPlayback(session.playbackId);
+    }
+    if (session.active && session.playbackId === state.playbackId) {
+      updateControls();
     }
   }
 
@@ -912,9 +925,11 @@
     if (state.activeEl) {
       updateHighlightForIndex(playbackId, next.index, next.location);
     }
+    updateControls();
 
     const audio = new Audio();
     const audioUrl = next.url;
+    state.currentAudioItem = next;
     state.currentAudio = audio;
     state.currentAudioUrl = audioUrl;
     state.playbackStarted = true;
@@ -923,6 +938,7 @@
     audio.onended = () => {
       if (state.playbackId !== playbackId) return;
       if (state.currentAudio !== audio) return;
+      rememberPlayed(next);
       cleanupCurrentAudio();
       if (SENTENCE_PAUSE_MS > 0) {
         setTimeout(() => {
@@ -982,6 +998,30 @@
     return bytes;
   }
 
+  function rememberPlayed(item) {
+    if (!item || !item.url) return;
+    state.playedHistory.push(item);
+    while (state.playedHistory.length > HISTORY_LIMIT) {
+      const removed = state.playedHistory.shift();
+      if (removed && removed.url) {
+        URL.revokeObjectURL(removed.url);
+      }
+    }
+  }
+
+  function isUrlInHistory(url) {
+    return state.playedHistory.some((item) => item.url === url);
+  }
+
+  function clearPlayedHistory() {
+    for (const item of state.playedHistory) {
+      if (item.url) {
+        URL.revokeObjectURL(item.url);
+      }
+    }
+    state.playedHistory.length = 0;
+  }
+
   function cleanupCurrentAudio() {
     if (!state.currentAudio) return;
     try {
@@ -991,9 +1031,12 @@
       // Ignore cleanup errors.
     }
     state.currentAudio = null;
+    state.currentAudioItem = null;
 
     if (state.currentAudioUrl) {
-      URL.revokeObjectURL(state.currentAudioUrl);
+      if (!isUrlInHistory(state.currentAudioUrl)) {
+        URL.revokeObjectURL(state.currentAudioUrl);
+      }
       state.currentAudioUrl = null;
     }
   }
@@ -1009,7 +1052,7 @@
     }
 
     for (const item of state.audioQueue) {
-      if (item.url) {
+      if (item.url && !isUrlInHistory(item.url)) {
         URL.revokeObjectURL(item.url);
       }
     }
@@ -1172,6 +1215,7 @@
     stopNativeNarration({ sendStop: false });
     stopAudioPlayback();
     clearAudioQueue();
+    clearPlayedHistory();
     state.nativeEnded = false;
     state.playbackStarted = false;
     state.isPaused = false;
@@ -1188,6 +1232,7 @@
     if (!options.keepPrefetch) {
       clearPrefetch();
     }
+    updateControls();
   }
 
   function handleMouseMove(event) {
@@ -1307,6 +1352,7 @@
           // Ignore pause errors.
         }
       }
+      updateControls();
       return;
     }
 
@@ -1320,10 +1366,12 @@
         console.error("Reedah: Failed to resume audio playback.", error);
         clearActiveNarration();
       });
+      updateControls();
       return;
     }
 
     maybeStartPlayback(state.playbackId);
+    updateControls();
   }
 
   function getNextCandidate(current) {
@@ -1347,6 +1395,244 @@
 
   function shouldApplyParagraphDelays(el) {
     return !!el && !isHeading(el);
+  }
+
+  function ensureControls() {
+    if (state.controls && state.controls.el) return;
+    const controls = createControls();
+    state.controls = controls;
+    document.body.appendChild(controls.el);
+    updateControls();
+  }
+
+  function removeControls() {
+    if (!state.controls) return;
+    if (state.controls.el && state.controls.el.parentNode) {
+      state.controls.el.parentNode.removeChild(state.controls.el);
+    }
+    state.controls = null;
+  }
+
+  function createControls() {
+    const panel = document.createElement("div");
+    panel.className = "reedah-controls";
+
+    const dragHandle = document.createElement("button");
+    dragHandle.type = "button";
+    dragHandle.className = "reedah-controls__drag";
+    dragHandle.setAttribute("aria-label", "Move controls");
+    dragHandle.textContent = "⠿";
+    dragHandle.setAttribute("title", "Drag to move");
+
+    const buttons = document.createElement("div");
+    buttons.className = "reedah-controls__buttons";
+
+    const prevSentence = document.createElement("button");
+    prevSentence.type = "button";
+    prevSentence.className = "reedah-controls__btn";
+    prevSentence.dataset.action = "prev-sentence";
+    prevSentence.textContent = "‹";
+    prevSentence.setAttribute("title", "Previous sentence");
+
+    const playPause = document.createElement("button");
+    playPause.type = "button";
+    playPause.className = "reedah-controls__btn";
+    playPause.dataset.action = "playpause";
+    playPause.textContent = "❚❚";
+    playPause.setAttribute("title", "Play/Pause");
+
+    const skipSentence = document.createElement("button");
+    skipSentence.type = "button";
+    skipSentence.className = "reedah-controls__btn";
+    skipSentence.dataset.action = "skip-sentence";
+    skipSentence.textContent = "›";
+    skipSentence.setAttribute("title", "Next sentence");
+
+    const skipParagraph = document.createElement("button");
+    skipParagraph.type = "button";
+    skipParagraph.className = "reedah-controls__btn";
+    skipParagraph.dataset.action = "skip-paragraph";
+    skipParagraph.textContent = "»";
+    skipParagraph.setAttribute("title", "Next paragraph");
+
+    buttons.appendChild(prevSentence);
+    buttons.appendChild(playPause);
+    buttons.appendChild(skipSentence);
+    buttons.appendChild(skipParagraph);
+
+    const meta = document.createElement("div");
+    meta.className = "reedah-controls__meta";
+
+    const sentence = document.createElement("div");
+    sentence.className = "reedah-controls__line";
+
+    const queue = document.createElement("div");
+    queue.className = "reedah-controls__line";
+
+    meta.appendChild(sentence);
+    meta.appendChild(queue);
+
+    panel.appendChild(dragHandle);
+    panel.appendChild(buttons);
+    panel.appendChild(meta);
+
+    panel.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const button = target.closest("[data-action]");
+      if (!button) return;
+      const action = button.dataset.action;
+      if (!action) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (action === "playpause") {
+        if (!state.activeEl) return;
+        togglePause();
+      } else if (action === "prev-sentence") {
+        playPreviousSentence();
+      } else if (action === "skip-sentence") {
+        skipSentence();
+      } else if (action === "skip-paragraph") {
+        skipParagraph();
+      }
+    });
+
+    enableDrag(panel, dragHandle);
+
+    return {
+      el: panel,
+      playPause,
+      prevSentence,
+      sentence,
+      queue
+    };
+  }
+
+  function updateControls() {
+    if (!state.controls) return;
+
+    const { playPause, prevSentence, sentence, queue } = state.controls;
+    const active = !!state.activeEl;
+    const totalSentences = state.currentSentenceRanges.length;
+    const currentSentence = state.currentSentenceIndex >= 0
+      ? state.currentSentenceIndex + 1
+      : active && totalSentences > 0
+        ? 1
+        : 0;
+    const queued = state.audioQueue.length;
+
+    playPause.disabled = !active;
+    playPause.textContent = state.isPaused ? "▶" : "❚❚";
+    if (prevSentence) {
+      prevSentence.disabled = !active || state.playedHistory.length === 0;
+    }
+    const metaText = active
+      ? `S ${currentSentence}/${totalSentences || 0} • Q ${queued}`
+      : "";
+    sentence.textContent = metaText;
+    queue.textContent = "";
+  }
+
+  function playPreviousSentence() {
+    if (!state.activeEl) return;
+    if (!state.playedHistory.length) return;
+
+    const previous = state.playedHistory.pop();
+    if (!previous) return;
+
+    if (state.currentAudioItem) {
+      state.audioQueue.unshift(state.currentAudioItem);
+    }
+
+    if (state.currentAudio) {
+      try {
+        state.currentAudio.pause();
+      } catch (error) {
+        // Ignore pause errors.
+      }
+    }
+    cleanupCurrentAudio();
+
+    if (state.isPaused) {
+      state.isPaused = false;
+      setOverlayActive(state.activeEl, true);
+    }
+
+    playNextAudio(state.playbackId, previous);
+    updateControls();
+  }
+
+  function skipSentence() {
+    if (!state.activeEl) return;
+    state.pendingLeadOut = false;
+    if (state.currentAudio) {
+      try {
+        state.currentAudio.pause();
+      } catch (error) {
+        // Ignore pause errors.
+      }
+    }
+    cleanupCurrentAudio();
+    if (state.isPaused) {
+      state.isPaused = false;
+      setOverlayActive(state.activeEl, true);
+    }
+    maybeStartPlayback(state.playbackId);
+    updateControls();
+  }
+
+  function skipParagraph() {
+    if (!state.activeEl) return;
+    state.pendingLeadOut = false;
+    stopNativeNarration({ sendStop: true });
+    stopAudioPlayback();
+    clearAudioQueue();
+    clearPlayedHistory();
+    state.nativeEnded = true;
+    state.playbackStarted = false;
+    state.isPaused = false;
+    clearHighlight();
+    resetSentenceState();
+    handleNarrationEnded(state.activeEl);
+    updateControls();
+  }
+
+  function enableDrag(panel, handle) {
+    let dragging = false;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    const onMove = (event) => {
+      if (!dragging) return;
+      const x = event.clientX - offsetX;
+      const y = event.clientY - offsetY;
+      const maxX = window.innerWidth - panel.offsetWidth - 8;
+      const maxY = window.innerHeight - panel.offsetHeight - 8;
+      const clampedX = Math.max(8, Math.min(x, maxX));
+      const clampedY = Math.max(8, Math.min(y, maxY));
+      panel.style.left = `${clampedX}px`;
+      panel.style.top = `${clampedY}px`;
+      panel.style.right = "auto";
+      panel.style.bottom = "auto";
+    };
+
+    const onUp = () => {
+      if (!dragging) return;
+      dragging = false;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+
+    handle.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      dragging = true;
+      const rect = panel.getBoundingClientRect();
+      offsetX = event.clientX - rect.left;
+      offsetY = event.clientY - rect.top;
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
   }
 
   function ensureVisible(el, options = {}) {
