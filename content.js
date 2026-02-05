@@ -3,7 +3,6 @@
 
   const MIN_TEXT_LENGTH = 5;
   const MIN_HEADING_LENGTH = 3;
-  const MIN_SENTENCE_LENGTH = 20;
   const OVERLAY_OFFSET = 8;
   const AUDIO_BUFFER_TARGET = 2;
   const SENTENCE_PAUSE_MS = 500;
@@ -13,7 +12,6 @@
   const HOVER_BOX_PADDING = 32;
   const LIST_OVERLAY_MAX_GAP = 32;
   const HISTORY_LIMIT = 3;
-  const ABBREVIATIONS = ["e.g.", "i.e."];
   const state = {
     enabled: false,
     overlays: new Map(),
@@ -47,6 +45,11 @@
     scanScheduled: false,
     positionScheduled: false
   };
+  const sentence = window.ReedahSentence;
+  if (!sentence || typeof sentence.buildSentenceRanges !== "function") {
+    console.error("Reedah: Sentence helpers unavailable.");
+    return;
+  }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message && message.type === "reedah-toggle") {
@@ -286,122 +289,6 @@
     return text.replace(/[\r\n]/g, " ");
   }
 
-  function buildSentenceRanges(fullText) {
-    if (!fullText) return [];
-
-    const ranges = [];
-    let start = 0;
-    const len = fullText.length;
-    const isDelimiter = (ch) => ch === "." || ch === "!" || ch === "?";
-    const abbrevRanges = buildAbbreviationRanges(fullText);
-    let abbrevIndex = 0;
-
-    for (let i = 0; i < len; i += 1) {
-      if (isDelimiter(fullText[i])) {
-        while (abbrevIndex < abbrevRanges.length && i > abbrevRanges[abbrevIndex].end) {
-          abbrevIndex += 1;
-        }
-        const inAbbrev = abbrevIndex < abbrevRanges.length &&
-          i >= abbrevRanges[abbrevIndex].start &&
-          i <= abbrevRanges[abbrevIndex].end;
-
-        if (fullText[i] === "." && inAbbrev) {
-          continue;
-        }
-        let end = i + 1;
-        while (end < len && isDelimiter(fullText[end])) {
-          end += 1;
-        }
-        ranges.push({ start, end });
-        start = end;
-        i = end - 1;
-      }
-    }
-
-    if (start < len) {
-      ranges.push({ start, end: len });
-    }
-
-    const sentences = [];
-    for (const range of ranges) {
-      let sStart = range.start;
-      let sEnd = range.end;
-      while (sStart < sEnd && /\s/.test(fullText[sStart])) sStart += 1;
-      while (sEnd > sStart && /\s/.test(fullText[sEnd - 1])) sEnd -= 1;
-      if (sEnd <= sStart) continue;
-      const raw = fullText.slice(sStart, sEnd);
-      const text = raw.replace(/\s+/g, " ").trim();
-      if (!text) continue;
-      sentences.push({ start: sStart, end: sEnd, length: text.length });
-    }
-
-    return mergeShortSentences(sentences, fullText);
-  }
-
-  function buildAbbreviationRanges(fullText) {
-    if (!ABBREVIATIONS.length) return [];
-    const lower = fullText.toLowerCase();
-    const ranges = [];
-
-    for (const abbr of ABBREVIATIONS) {
-      let index = 0;
-      while (index < lower.length) {
-        const found = lower.indexOf(abbr, index);
-        if (found === -1) break;
-        ranges.push({ start: found, end: found + abbr.length - 1 });
-        index = found + abbr.length;
-      }
-    }
-
-    ranges.sort((a, b) => a.start - b.start);
-    return ranges;
-  }
-
-  function mergeShortSentences(sentences, fullText) {
-    if (!sentences.length) return sentences;
-
-    const merged = sentences.map((sentence) => ({ ...sentence }));
-    const minLength = MIN_SENTENCE_LENGTH;
-
-    const normalize = (index) => {
-      const item = merged[index];
-      if (!item) return;
-      item.length = getSentenceLength(fullText, item.start, item.end);
-    };
-
-    for (let i = 0; i < merged.length; i += 1) {
-      const current = merged[i];
-      if (!current) continue;
-      if (current.length >= minLength) continue;
-
-      if (i === 0) {
-        const next = merged[i + 1];
-        if (next) {
-          next.start = current.start;
-          merged.splice(i, 1);
-          normalize(i);
-          i -= 1;
-        }
-        continue;
-      }
-
-      const previous = merged[i - 1];
-      if (previous) {
-        previous.end = current.end;
-        merged.splice(i, 1);
-        normalize(i - 1);
-        i -= 1;
-      }
-    }
-
-    return merged.map(({ start, end }) => ({ start, end }));
-  }
-
-  function getSentenceLength(fullText, start, end) {
-    const raw = fullText.slice(start, end);
-    return raw.replace(/\s+/g, " ").trim().length;
-  }
-
   function findSentenceIndexForOffset(offset) {
     const ranges = state.currentSentenceRanges;
     if (!ranges.length) return -1;
@@ -565,7 +452,7 @@
     state.isPaused = false;
 
     const fullText = getFullText(el);
-    const sentenceRanges = buildSentenceRanges(fullText);
+    const sentenceRanges = sentence.buildSentenceRanges(fullText);
     if (!sentenceRanges.length) {
       console.error("Reedah: No sentences available for narration.");
       clearActiveNarration();
@@ -752,7 +639,7 @@
     if (!isCandidate(next)) return;
 
     const fullText = getFullText(next);
-    const sentenceRanges = buildSentenceRanges(fullText);
+    const sentenceRanges = sentence.buildSentenceRanges(fullText);
     if (!sentenceRanges.length) return;
 
     const prefetchId = ++state.prefetchId;
