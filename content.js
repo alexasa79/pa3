@@ -12,6 +12,8 @@
   const HOVER_BOX_PADDING = 32;
   const LIST_OVERLAY_MAX_GAP = 32;
   const HISTORY_LIMIT = 3;
+  const HIDDEN_TEXT_SELECTOR =
+    "[hidden], [aria-hidden='true'], .sr-only, .sr-only-focusable, .visually-hidden, .screen-reader-text";
   const state = {
     enabled: false,
     overlays: new Map(),
@@ -48,6 +50,16 @@
   const sentence = window.ReedahSentence;
   if (!sentence || typeof sentence.buildSentenceRanges !== "function") {
     console.error("Reedah: Sentence helpers unavailable.");
+    return;
+  }
+  const overlayGeometry = window.ReedahOverlayGeometry;
+  if (!overlayGeometry || typeof overlayGeometry.computeOverlayPosition !== "function") {
+    console.error("Reedah: Overlay geometry helpers unavailable.");
+    return;
+  }
+  const hoverBounds = window.ReedahHoverBounds;
+  if (!hoverBounds || typeof hoverBounds.computeHoverBounds !== "function") {
+    console.error("Reedah: Hover bounds helpers unavailable.");
     return;
   }
 
@@ -1084,26 +1096,21 @@
 
       overlay.style.display = "inline-flex";
 
-      const top = anchorRect.top;
       const overlayWidth = overlay.offsetWidth || 14;
-      const maxLeft = anchorRect.left - OVERLAY_OFFSET - overlayWidth;
-      let left = maxLeft;
+      const listItem = isListItem(el);
+      const listRect = listItem ? getListContainerRect(el) : null;
+      const position = overlayGeometry.computeOverlayPosition({
+        anchorRect,
+        overlayWidth,
+        overlayOffset: OVERLAY_OFFSET,
+        isListItem: listItem,
+        listRect,
+        listOverlayMaxGap: LIST_OVERLAY_MAX_GAP,
+        viewportPadding: 8
+      });
 
-      if (isListItem(el)) {
-        const listRect = getListContainerRect(el);
-        if (listRect) {
-          const listLeft = listRect.left - OVERLAY_OFFSET - overlayWidth;
-          const cappedLeft = anchorRect.left - overlayWidth - LIST_OVERLAY_MAX_GAP;
-          left = Math.min(maxLeft, Math.max(listLeft, cappedLeft));
-        }
-      }
-
-      if (left < 8) {
-        left = anchorRect.right + OVERLAY_OFFSET;
-      }
-
-      overlay.style.top = `${top}px`;
-      overlay.style.left = `${left}px`;
+      overlay.style.top = `${position.top}px`;
+      overlay.style.left = `${position.left}px`;
     }
   }
 
@@ -1216,17 +1223,21 @@
     let best = null;
     let bestDistance = Infinity;
 
-    for (const el of state.overlays.keys()) {
+    for (const [el, overlay] of state.overlays) {
       if (!isCandidate(el)) continue;
       const rect = el.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) continue;
 
-      const left = rect.left - HOVER_BOX_PADDING;
-      const right = rect.right + HOVER_BOX_PADDING;
-      const top = rect.top - HOVER_BOX_PADDING;
-      const bottom = rect.bottom + HOVER_BOX_PADDING;
+      const overlayRect = overlay && overlay.style.display !== "none"
+        ? overlay.getBoundingClientRect()
+        : null;
+      const bounds = hoverBounds.computeHoverBounds({
+        targetRect: rect,
+        overlayRect,
+        padding: HOVER_BOX_PADDING
+      });
 
-      if (x < left || x > right || y < top || y > bottom) continue;
+      if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) continue;
 
       const distance = distanceToRect(x, y, rect);
       if (distance < bestDistance) {
