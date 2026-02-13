@@ -30,7 +30,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["sentence.js", "overlay_geometry.js", "hover_bounds.js", "highlight_ranges.js", "playback_history.js", "controls_navigation.js", "content.js"],
+      "js": ["sentence.js", "overlay_geometry.js", "hover_bounds.js", "highlight_ranges.js", "highlight_progress.js", "playback_history.js", "controls_navigation.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }
