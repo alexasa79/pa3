@@ -28,7 +28,7 @@
     playbackStarted: false,
     currentSentenceRanges: [],
     currentSentenceIndex: 0,
-    currentHighlightSpan: null,
+    currentHighlightSpans: [],
     playbackId: 0,
     cancelRequested: false,
     isPaused: false,
@@ -60,6 +60,11 @@
   const hoverBounds = window.ReedahHoverBounds;
   if (!hoverBounds || typeof hoverBounds.computeHoverBounds !== "function") {
     console.error("Reedah: Hover bounds helpers unavailable.");
+    return;
+  }
+  const highlightRanges = window.ReedahHighlightRanges;
+  if (!highlightRanges || typeof highlightRanges.computeHighlightSlices !== "function") {
+    console.error("Reedah: Highlight range helpers unavailable.");
     return;
   }
 
@@ -290,15 +295,39 @@
     return (el.innerText || "").replace(/\s+/g, " ").trim();
   }
 
+  function normalizeNarrationText(value) {
+    return value.replace(/[\r\n]/g, " ");
+  }
+
+  function shouldIncludeTextNode(targetEl, node) {
+    if (!targetEl || !node) return false;
+    const parent = node.parentElement;
+    if (!parent) return true;
+    if (parent.closest(HIDDEN_TEXT_SELECTOR)) return false;
+
+    if (isListItem(targetEl)) {
+      const ownerListItem = parent.closest("li");
+      if (ownerListItem && ownerListItem !== targetEl) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   function getFullText(el) {
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     let text = "";
     let node = walker.nextNode();
     while (node) {
-      text += node.nodeValue || "";
+      if (!shouldIncludeTextNode(el, node)) {
+        node = walker.nextNode();
+        continue;
+      }
+      text += normalizeNarrationText(node.nodeValue || "");
       node = walker.nextNode();
     }
-    return text.replace(/[\r\n]/g, " ");
+    return text;
   }
 
   function findSentenceIndexForOffset(offset) {
@@ -325,7 +354,7 @@
     if (!state.currentSentenceRanges.length) return;
     let idx = Number.isFinite(index) ? index : findSentenceIndexForOffset(location);
     if (idx < 0 || idx >= state.currentSentenceRanges.length) return;
-    if (idx === state.currentSentenceIndex && state.currentHighlightSpan) return;
+    if (idx === state.currentSentenceIndex && state.currentHighlightSpans.length) return;
 
     state.currentSentenceIndex = idx;
     clearHighlight();
@@ -335,34 +364,46 @@
   function highlightSentence(el, sentence) {
     const segments = collectTextSegments(el);
     if (!segments.length) return;
-    const range = rangeFromOffsets(segments, sentence.start, sentence.end);
-    if (!range || range.collapsed) return;
+    const slices = highlightRanges.computeHighlightSlices(
+      segments,
+      sentence.start,
+      sentence.end
+    );
+    if (!slices.length) return;
 
-    try {
-      const contents = range.extractContents();
-      const span = document.createElement("span");
-      span.className = "reedah-highlight";
-      span.appendChild(contents);
-      range.insertNode(span);
-      state.currentHighlightSpan = span;
-    } catch (error) {
-      console.error("Reedah: Failed to highlight sentence.", error);
+    const spans = [];
+    for (const slice of slices) {
+      const span = wrapTextSlice(slice.segment.node, slice.startOffset, slice.endOffset);
+      if (span) spans.push(span);
     }
+    state.currentHighlightSpans = spans;
   }
 
   function clearHighlight() {
-    const span = state.currentHighlightSpan;
-    if (!span || !span.parentNode) {
-      state.currentHighlightSpan = null;
+    const spans = state.currentHighlightSpans;
+    if (!spans.length) {
+      state.currentHighlightSpans = [];
       return;
     }
 
-    const parent = span.parentNode;
-    while (span.firstChild) {
-      parent.insertBefore(span.firstChild, span);
+    const parents = new Set();
+    for (const span of spans) {
+      if (!span || !span.parentNode) continue;
+      const parent = span.parentNode;
+      parents.add(parent);
+      while (span.firstChild) {
+        parent.insertBefore(span.firstChild, span);
+      }
+      parent.removeChild(span);
     }
-    parent.removeChild(span);
-    state.currentHighlightSpan = null;
+    for (const parent of parents) {
+      try {
+        parent.normalize();
+      } catch (error) {
+        console.error("Reedah: Failed to normalize highlighted text nodes.", error);
+      }
+    }
+    state.currentHighlightSpans = [];
   }
 
   function resetSentenceState() {
@@ -377,7 +418,11 @@
     let offset = 0;
 
     while (node) {
-      const value = node.nodeValue || "";
+      if (!shouldIncludeTextNode(el, node)) {
+        node = walker.nextNode();
+        continue;
+      }
+      const value = normalizeNarrationText(node.nodeValue || "");
       if (value.length) {
         const start = offset;
         const end = offset + value.length;
@@ -390,31 +435,38 @@
     return segments;
   }
 
-  function rangeFromOffsets(segments, start, end) {
-    let startNode = null;
-    let startOffset = 0;
-    let endNode = null;
-    let endOffset = 0;
-
-    for (const segment of segments) {
-      if (!startNode && start >= segment.start && start <= segment.end) {
-        startNode = segment.node;
-        startOffset = Math.max(0, start - segment.start);
-      }
-
-      if (end >= segment.start && end <= segment.end) {
-        endNode = segment.node;
-        endOffset = Math.max(0, end - segment.start);
-        break;
-      }
+  function wrapTextSlice(node, startOffset, endOffset) {
+    if (!node || node.nodeType !== Node.TEXT_NODE || !node.parentNode) {
+      return null;
     }
 
-    if (!startNode || !endNode) return null;
+    const length = (node.nodeValue || "").length;
+    if (length === 0) return null;
 
-    const range = document.createRange();
-    range.setStart(startNode, startOffset);
-    range.setEnd(endNode, endOffset);
-    return range;
+    const start = Math.max(0, Math.min(length, startOffset));
+    const end = Math.max(start, Math.min(length, endOffset));
+    if (end <= start) return null;
+
+    try {
+      let target = node;
+      if (start > 0) {
+        target = target.splitText(start);
+      }
+      const targetLength = (target.nodeValue || "").length;
+      const sliceLength = end - start;
+      if (sliceLength < targetLength) {
+        target.splitText(sliceLength);
+      }
+
+      const span = document.createElement("span");
+      span.className = "reedah-highlight";
+      target.parentNode.insertBefore(span, target);
+      span.appendChild(target);
+      return span;
+    } catch (error) {
+      console.error("Reedah: Failed to wrap sentence highlight slice.", error);
+      return null;
+    }
   }
 
   function ensureOverlay(el) {
