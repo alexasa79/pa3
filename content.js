@@ -11,7 +11,6 @@
   const CANDIDATE_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6";
   const HOVER_BOX_PADDING = 32;
   const LIST_OVERLAY_MAX_GAP = 32;
-  const HISTORY_LIMIT = 3;
   const HIDDEN_TEXT_SELECTOR =
     "[hidden], [aria-hidden='true'], .sr-only, .sr-only-focusable, .visually-hidden, .screen-reader-text";
   const state = {
@@ -65,6 +64,19 @@
   const highlightRanges = window.ReedahHighlightRanges;
   if (!highlightRanges || typeof highlightRanges.computeHighlightSlices !== "function") {
     console.error("Reedah: Highlight range helpers unavailable.");
+    return;
+  }
+  const playbackHistory = window.ReedahPlaybackHistory;
+  if (!playbackHistory ||
+    typeof playbackHistory.addPlayedItem !== "function" ||
+    typeof playbackHistory.shouldRevokeUrl !== "function" ||
+    typeof playbackHistory.takeSkippedItem !== "function") {
+    console.error("Reedah: Playback history helpers unavailable.");
+    return;
+  }
+  const controlsNavigation = window.ReedahControlsNavigation;
+  if (!controlsNavigation || typeof controlsNavigation.getAdjacentItem !== "function") {
+    console.error("Reedah: Controls navigation helpers unavailable.");
     return;
   }
 
@@ -982,14 +994,7 @@
   }
 
   function rememberPlayed(item) {
-    if (!item || !item.url) return;
-    state.playedHistory.push(item);
-    while (state.playedHistory.length > HISTORY_LIMIT) {
-      const removed = state.playedHistory.shift();
-      if (removed && removed.url) {
-        URL.revokeObjectURL(removed.url);
-      }
-    }
+    playbackHistory.addPlayedItem(state.playedHistory, item);
   }
 
   function isUrlInHistory(url) {
@@ -1017,7 +1022,11 @@
     state.currentAudioItem = null;
 
     if (state.currentAudioUrl) {
-      if (!isUrlInHistory(state.currentAudioUrl)) {
+      if (playbackHistory.shouldRevokeUrl(
+        state.currentAudioUrl,
+        state.playedHistory,
+        state.audioQueue
+      )) {
         URL.revokeObjectURL(state.currentAudioUrl);
       }
       state.currentAudioUrl = null;
@@ -1358,16 +1367,32 @@
 
   function getNextCandidate(current) {
     const candidates = getCandidates();
-    const index = candidates.indexOf(current);
-    if (index >= 0 && index < candidates.length - 1) {
-      return candidates[index + 1];
-    }
+    const adjacent = controlsNavigation.getAdjacentItem(candidates, current, 1);
+    if (adjacent) return adjacent;
 
     if (!current) return null;
 
     for (const candidate of candidates) {
       const position = current.compareDocumentPosition(candidate);
       if (position & Node.DOCUMENT_POSITION_FOLLOWING) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  function getPreviousCandidate(current) {
+    const candidates = getCandidates();
+    const adjacent = controlsNavigation.getAdjacentItem(candidates, current, -1);
+    if (adjacent) return adjacent;
+
+    if (!current) return null;
+
+    for (let i = candidates.length - 1; i >= 0; i -= 1) {
+      const candidate = candidates[i];
+      const position = current.compareDocumentPosition(candidate);
+      if (position & Node.DOCUMENT_POSITION_PRECEDING) {
         return candidate;
       }
     }
@@ -1409,6 +1434,13 @@
     const buttons = document.createElement("div");
     buttons.className = "reedah-controls__buttons";
 
+    const prevParagraph = document.createElement("button");
+    prevParagraph.type = "button";
+    prevParagraph.className = "reedah-controls__btn";
+    prevParagraph.dataset.action = "prev-paragraph";
+    prevParagraph.textContent = "«";
+    prevParagraph.setAttribute("title", "Previous paragraph");
+
     const prevSentence = document.createElement("button");
     prevSentence.type = "button";
     prevSentence.className = "reedah-controls__btn";
@@ -1437,6 +1469,7 @@
     skipParagraph.textContent = "»";
     skipParagraph.setAttribute("title", "Next paragraph");
 
+    buttons.appendChild(prevParagraph);
     buttons.appendChild(prevSentence);
     buttons.appendChild(playPause);
     buttons.appendChild(skipSentence);
@@ -1471,6 +1504,8 @@
       if (action === "playpause") {
         if (!state.activeEl) return;
         togglePause();
+      } else if (action === "prev-paragraph") {
+        previousParagraph();
       } else if (action === "prev-sentence") {
         playPreviousSentence();
       } else if (action === "skip-sentence") {
@@ -1485,7 +1520,10 @@
     return {
       el: panel,
       playPause,
+      prevParagraph,
       prevSentence,
+      skipSentence,
+      skipParagraph,
       sentence,
       queue
     };
@@ -1494,7 +1532,15 @@
   function updateControls() {
     if (!state.controls) return;
 
-    const { playPause, prevSentence, sentence, queue } = state.controls;
+    const {
+      playPause,
+      prevParagraph,
+      prevSentence,
+      skipSentence,
+      skipParagraph,
+      sentence,
+      queue
+    } = state.controls;
     const active = !!state.activeEl;
     const totalSentences = state.currentSentenceRanges.length;
     const currentSentence = state.currentSentenceIndex >= 0
@@ -1503,11 +1549,22 @@
         ? 1
         : 0;
     const queued = state.audioQueue.length;
+    const hasPreviousParagraph = active && !!getPreviousCandidate(state.activeEl);
+    const hasNextParagraph = active && !!getNextCandidate(state.activeEl);
 
     playPause.disabled = !active;
     playPause.textContent = state.isPaused ? "▶" : "❚❚";
+    if (prevParagraph) {
+      prevParagraph.disabled = !hasPreviousParagraph;
+    }
     if (prevSentence) {
       prevSentence.disabled = !active || state.playedHistory.length === 0;
+    }
+    if (skipSentence) {
+      skipSentence.disabled = !active;
+    }
+    if (skipParagraph) {
+      skipParagraph.disabled = !hasNextParagraph;
     }
     const metaText = active
       ? `S ${currentSentence}/${totalSentences || 0} • Q ${queued}`
@@ -1548,6 +1605,14 @@
   function skipSentence() {
     if (!state.activeEl) return;
     state.pendingLeadOut = false;
+
+    const skipped = playbackHistory.takeSkippedItem(state.currentAudioItem, state.audioQueue);
+    if (!skipped) {
+      console.error("Reedah: No sentence available to skip.");
+      return;
+    }
+    rememberPlayed(skipped);
+
     if (state.currentAudio) {
       try {
         state.currentAudio.pause();
@@ -1577,6 +1642,21 @@
     clearHighlight();
     resetSentenceState();
     handleNarrationEnded(state.activeEl);
+    updateControls();
+  }
+
+  function previousParagraph() {
+    if (!state.activeEl) return;
+    const previous = getPreviousCandidate(state.activeEl);
+    if (!previous) {
+      console.error("Reedah: No previous paragraph available.");
+      return;
+    }
+    if (!isCandidate(previous)) {
+      console.error("Reedah: Previous paragraph is not narratable.");
+      return;
+    }
+    startNarration(previous);
     updateControls();
   }
 
