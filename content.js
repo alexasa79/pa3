@@ -11,6 +11,8 @@
   const WORD_FOCUS_WIDTH_RATIO = 0.82;
   const WORD_FOCUS_CORE_RATIO = 0.48;
   const WORD_FOCUS_CORE_MIN_PERCENT = 6;
+  const HIGHLIGHT_MODE_LIGHT = "light";
+  const HIGHLIGHT_MODE_DARK = "dark";
   const CANDIDATE_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6";
   const HOVER_BOX_PADDING = 32;
   const LIST_OVERLAY_MAX_GAP = 32;
@@ -74,6 +76,11 @@
   const highlightProgress = window.ReedahHighlightProgress;
   if (!highlightProgress || typeof highlightProgress.computeFocusStops !== "function") {
     console.error("Reedah: Highlight progress helpers unavailable.");
+    return;
+  }
+  const highlightTheme = window.ReedahHighlightTheme;
+  if (!highlightTheme || typeof highlightTheme.detectHighlightMode !== "function") {
+    console.error("Reedah: Highlight theme helpers unavailable.");
     return;
   }
   const playbackHistory = window.ReedahPlaybackHistory;
@@ -386,6 +393,11 @@
   function highlightSentence(el, sentence) {
     const segments = collectTextSegments(el);
     if (!segments.length) return;
+    const highlightMode = highlightTheme.detectHighlightMode(el);
+    if (highlightMode !== HIGHLIGHT_MODE_LIGHT && highlightMode !== HIGHLIGHT_MODE_DARK) {
+      console.error("Reedah: Failed to detect highlight mode.");
+      return;
+    }
 
     const sentenceLength = sentence.end - sentence.start;
     if (!Number.isFinite(sentenceLength) || sentenceLength <= 0) {
@@ -403,7 +415,12 @@
     const spans = [];
     const entries = [];
     for (const slice of slices) {
-      const span = wrapTextSlice(slice.segment.node, slice.startOffset, slice.endOffset);
+      const span = wrapTextSlice(
+        slice.segment.node,
+        slice.startOffset,
+        slice.endOffset,
+        highlightMode
+      );
       if (!span) continue;
 
       const sliceStart = Math.max(sentence.start, slice.segment.start) - sentence.start;
@@ -425,6 +442,12 @@
       console.error("Reedah: Failed to create sentence highlight spans.");
       return;
     }
+
+    for (const span of spans) {
+      span.classList.remove("reedah-highlight-start", "reedah-highlight-end");
+    }
+    spans[0].classList.add("reedah-highlight-start");
+    spans[spans.length - 1].classList.add("reedah-highlight-end");
 
     state.currentHighlightSpans = spans;
     state.currentHighlightEntries = entries;
@@ -490,8 +513,12 @@
     return segments;
   }
 
-  function wrapTextSlice(node, startOffset, endOffset) {
+  function wrapTextSlice(node, startOffset, endOffset, highlightMode) {
     if (!node || node.nodeType !== Node.TEXT_NODE || !node.parentNode) {
+      return null;
+    }
+    if (highlightMode !== HIGHLIGHT_MODE_LIGHT && highlightMode !== HIGHLIGHT_MODE_DARK) {
+      console.error("Reedah: Invalid highlight mode.");
       return null;
     }
 
@@ -515,6 +542,11 @@
 
       const span = document.createElement("span");
       span.className = "reedah-highlight";
+      span.classList.add(
+        highlightMode === HIGHLIGHT_MODE_DARK
+          ? "reedah-highlight-on-dark"
+          : "reedah-highlight-on-light"
+      );
       target.parentNode.insertBefore(span, target);
       span.appendChild(target);
       return span;
@@ -526,7 +558,11 @@
 
   function clearWordFocusStyles(span) {
     if (!span) return;
-    span.classList.remove("reedah-highlight-focus");
+    span.classList.remove(
+      "reedah-highlight-focus",
+      "reedah-highlight-focus-core",
+      "reedah-highlight-focus-edge"
+    );
     span.style.removeProperty("--reedah-focus-start");
     span.style.removeProperty("--reedah-focus-core-start");
     span.style.removeProperty("--reedah-focus-center");
@@ -538,33 +574,78 @@
     const entries = state.currentHighlightEntries;
     if (!entries.length) return;
     const clampedProgress = Math.max(0, Math.min(1, progress));
+    const stops = highlightProgress.computeFocusStops(
+      0,
+      1,
+      clampedProgress,
+      WORD_FOCUS_WIDTH_RATIO
+    );
+    if (!stops) {
+      for (const entry of entries) {
+        if (!entry || !entry.span) continue;
+        clearWordFocusStyles(entry.span);
+      }
+      return;
+    }
+
+    const globalStart = stops.startPercent / 100;
+    const globalEnd = stops.endPercent / 100;
 
     for (const entry of entries) {
       if (!entry || !entry.span) continue;
-      const stops = highlightProgress.computeFocusStops(
+      if (entry.endFraction <= globalStart || entry.startFraction >= globalEnd) {
+        clearWordFocusStyles(entry.span);
+        continue;
+      }
+
+      const localStops = highlightProgress.computeFocusStops(
         entry.startFraction,
         entry.endFraction,
         clampedProgress,
         WORD_FOCUS_WIDTH_RATIO
       );
-      if (!stops) {
+      if (!localStops) {
         clearWordFocusStyles(entry.span);
         continue;
       }
-      const focusWidth = Math.max(0, stops.endPercent - stops.startPercent);
+
+      const focusWidth = Math.max(0, localStops.endPercent - localStops.startPercent);
       const coreHalfWidth = Math.max(
         WORD_FOCUS_CORE_MIN_PERCENT,
         focusWidth * WORD_FOCUS_CORE_RATIO * 0.5
       );
-      const coreStart = Math.max(stops.startPercent, stops.centerPercent - coreHalfWidth);
-      const coreEnd = Math.min(stops.endPercent, stops.centerPercent + coreHalfWidth);
+      const coreStart = Math.max(
+        localStops.startPercent,
+        localStops.centerPercent - coreHalfWidth
+      );
+      const coreEnd = Math.min(
+        localStops.endPercent,
+        localStops.centerPercent + coreHalfWidth
+      );
+      const containsCenter =
+        clampedProgress >= entry.startFraction &&
+        clampedProgress <= entry.endFraction;
 
-      entry.span.classList.add("reedah-highlight-focus");
-      entry.span.style.setProperty("--reedah-focus-start", `${stops.startPercent}%`);
+      entry.span.classList.remove(
+        "reedah-highlight-focus",
+        "reedah-highlight-focus-core",
+        "reedah-highlight-focus-edge"
+      );
+      entry.span.style.setProperty("--reedah-focus-start", `${localStops.startPercent}%`);
+      entry.span.style.setProperty("--reedah-focus-end", `${localStops.endPercent}%`);
+
+      if (!containsCenter) {
+        entry.span.classList.add("reedah-highlight-focus-edge");
+        entry.span.style.removeProperty("--reedah-focus-core-start");
+        entry.span.style.removeProperty("--reedah-focus-center");
+        entry.span.style.removeProperty("--reedah-focus-core-end");
+        continue;
+      }
+
+      entry.span.classList.add("reedah-highlight-focus-core");
       entry.span.style.setProperty("--reedah-focus-core-start", `${coreStart}%`);
-      entry.span.style.setProperty("--reedah-focus-center", `${stops.centerPercent}%`);
+      entry.span.style.setProperty("--reedah-focus-center", `${localStops.centerPercent}%`);
       entry.span.style.setProperty("--reedah-focus-core-end", `${coreEnd}%`);
-      entry.span.style.setProperty("--reedah-focus-end", `${stops.endPercent}%`);
     }
   }
 

@@ -40,18 +40,43 @@
 .reedah-highlight {
   display: inline;
   list-style: none;
-  --reedah-highlight-base: rgba(236, 253, 240, 0.9);
-  --reedah-highlight-focus-edge: rgba(199, 243, 208, 0.96);
-  --reedah-highlight-focus-core: rgba(154, 224, 171, 0.97);
   background: var(--reedah-highlight-base);
-  box-shadow: inset 0 0 0 1px rgba(74, 152, 94, 0.3);
+  box-shadow: none;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
-  border-radius: 4px;
+  border-radius: 0;
   transition: background 90ms linear;
 }
 
-.reedah-highlight.reedah-highlight-focus {
+.reedah-highlight.reedah-highlight-on-light {
+  --reedah-highlight-base: rgba(236, 253, 240, 0.9);
+  --reedah-highlight-focus-edge: rgba(199, 243, 208, 0.96);
+  --reedah-highlight-focus-core: rgba(154, 224, 171, 0.97);
+}
+
+.reedah-highlight.reedah-highlight-on-dark {
+  --reedah-highlight-base: rgba(24, 62, 43, 0.86);
+  --reedah-highlight-focus-edge: rgba(36, 89, 62, 0.91);
+  --reedah-highlight-focus-core: rgba(49, 116, 78, 0.95);
+}
+
+.reedah-highlight.reedah-highlight-start {
+  border-top-left-radius: 4px;
+  border-bottom-left-radius: 4px;
+}
+
+.reedah-highlight.reedah-highlight-end {
+  border-top-right-radius: 4px;
+  border-bottom-right-radius: 4px;
+}
+
+.reedah-highlight.reedah-highlight-focus-edge {
+  background: var(--reedah-highlight-focus-edge);
+  box-decoration-break: slice;
+  -webkit-box-decoration-break: slice;
+}
+
+.reedah-highlight.reedah-highlight-focus-core {
   background-image: linear-gradient(
     90deg,
     var(--reedah-highlight-base) 0%,
