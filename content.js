@@ -13,6 +13,7 @@
   const WORD_FOCUS_CORE_MIN_PERCENT = 6;
   const HIGHLIGHT_MODE_LIGHT = "light";
   const HIGHLIGHT_MODE_DARK = "dark";
+  const DEFAULT_OL_START = 1;
   const CANDIDATE_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6";
   const HOVER_BOX_PADDING = 32;
   const LIST_OVERLAY_MAX_GAP = 32;
@@ -38,6 +39,7 @@
     playbackId: 0,
     cancelRequested: false,
     isPaused: false,
+    currentHighlightTextOffset: 0,
     activeSession: null,
     prefetchSession: null,
     prefetchId: 0,
@@ -81,6 +83,14 @@
   const highlightTheme = window.ReedahHighlightTheme;
   if (!highlightTheme || typeof highlightTheme.detectHighlightMode !== "function") {
     console.error("Reedah: Highlight theme helpers unavailable.");
+    return;
+  }
+  const orderedListNarration = window.ReedahOrderedListNarration;
+  if (!orderedListNarration ||
+    typeof orderedListNarration.parseIntegerAttribute !== "function" ||
+    typeof orderedListNarration.resolveOrderedListItemNumber !== "function" ||
+    typeof orderedListNarration.buildOrderedListNarrationPrefix !== "function") {
+    console.error("Reedah: Ordered list narration helpers unavailable.");
     return;
   }
   const playbackHistory = window.ReedahPlaybackHistory;
@@ -359,6 +369,92 @@
     return text;
   }
 
+  function buildNarrationPayload(el) {
+    const fullText = getFullText(el);
+    if (!fullText) {
+      console.error("Reedah: Empty narration text.");
+      return null;
+    }
+
+    const prefix = getOrderedListNarrationPrefix(el);
+    if (prefix == null) return null;
+    if (!prefix) {
+      return {
+        text: fullText,
+        highlightTextOffset: 0
+      };
+    }
+
+    return {
+      text: `${prefix}${fullText}`,
+      highlightTextOffset: prefix.length
+    };
+  }
+
+  function getOrderedListNarrationPrefix(el) {
+    if (!isListItem(el)) return "";
+    if (!el.parentElement || el.parentElement.tagName !== "OL") return "";
+
+    const list = el.parentElement;
+    const items = [];
+    for (const child of list.children) {
+      if (child && child.tagName === "LI") {
+        items.push(child);
+      }
+    }
+
+    const targetIndex = items.indexOf(el);
+    if (targetIndex === -1) {
+      console.error("Reedah: Failed to find ordered list item index.");
+      return null;
+    }
+
+    let start = DEFAULT_OL_START;
+    if (list.hasAttribute("start")) {
+      const parsedStart = orderedListNarration.parseIntegerAttribute(list.getAttribute("start"));
+      if (!Number.isSafeInteger(parsedStart)) {
+        console.error("Reedah: Invalid ordered list start value.");
+        return null;
+      }
+      start = parsedStart;
+    } else if (list.reversed) {
+      start = items.length;
+    }
+
+    const itemValues = [];
+    for (const item of items) {
+      if (!item.hasAttribute("value")) {
+        itemValues.push(null);
+        continue;
+      }
+
+      const parsedValue = orderedListNarration.parseIntegerAttribute(item.getAttribute("value"));
+      if (!Number.isSafeInteger(parsedValue)) {
+        console.error("Reedah: Invalid ordered list item value.");
+        return null;
+      }
+      itemValues.push(parsedValue);
+    }
+
+    const itemNumber = orderedListNarration.resolveOrderedListItemNumber(
+      itemValues,
+      start,
+      list.reversed === true,
+      targetIndex
+    );
+    if (!Number.isSafeInteger(itemNumber)) {
+      console.error("Reedah: Failed to resolve ordered list item number.");
+      return null;
+    }
+
+    const prefix = orderedListNarration.buildOrderedListNarrationPrefix(itemNumber);
+    if (!prefix) {
+      console.error("Reedah: Failed to build ordered list narration prefix.");
+      return null;
+    }
+    return prefix;
+  }
+
   function findSentenceIndexForOffset(offset) {
     const ranges = state.currentSentenceRanges;
     if (!ranges.length) return -1;
@@ -391,7 +487,7 @@
   }
 
   function highlightSentence(el, sentence) {
-    const segments = collectTextSegments(el);
+    const segments = collectTextSegments(el, state.currentHighlightTextOffset);
     if (!segments.length) return;
     const highlightMode = highlightTheme.detectHighlightMode(el);
     if (highlightMode !== HIGHLIGHT_MODE_LIGHT && highlightMode !== HIGHLIGHT_MODE_DARK) {
@@ -487,13 +583,18 @@
   function resetSentenceState() {
     state.currentSentenceRanges = [];
     state.currentSentenceIndex = -1;
+    state.currentHighlightTextOffset = 0;
   }
 
-  function collectTextSegments(el) {
+  function collectTextSegments(el, textOffset = 0) {
+    if (!Number.isSafeInteger(textOffset) || textOffset < 0) {
+      console.error("Reedah: Invalid highlight text offset.");
+      return [];
+    }
     const segments = [];
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     let node = walker.nextNode();
-    let offset = 0;
+    let offset = textOffset;
 
     while (node) {
       if (!shouldIncludeTextNode(el, node)) {
@@ -731,8 +832,14 @@
     state.cancelRequested = false;
     state.isPaused = false;
 
-    const fullText = getFullText(el);
-    const sentenceRanges = sentence.buildSentenceRanges(fullText);
+    const narration = buildNarrationPayload(el);
+    if (!narration) {
+      console.error("Reedah: Failed to build narration payload.");
+      clearActiveNarration();
+      return;
+    }
+
+    const sentenceRanges = sentence.buildSentenceRanges(narration.text);
     if (!sentenceRanges.length) {
       console.error("Reedah: No sentences available for narration.");
       clearActiveNarration();
@@ -740,8 +847,9 @@
     }
 
     const utteranceId = `${playbackId}`;
-    const session = createNativeSession(fullText, sentenceRanges, utteranceId, {
-      logVoice: true
+    const session = createNativeSession(narration.text, sentenceRanges, utteranceId, {
+      logVoice: true,
+      highlightTextOffset: narration.highlightTextOffset
     });
     if (!session) {
       console.error("Reedah: Native narration failed to start.");
@@ -780,11 +888,20 @@
   }
 
   function createNativeSession(text, sentenceRanges, utteranceId, options = {}) {
+    const highlightTextOffset = options.highlightTextOffset == null
+      ? 0
+      : options.highlightTextOffset;
+    if (!Number.isSafeInteger(highlightTextOffset) || highlightTextOffset < 0) {
+      console.error("Reedah: Invalid native session highlight offset.");
+      return null;
+    }
+
     const port = chrome.runtime.connect({ name: "reedah-native" });
     const session = {
       port,
       utteranceId,
       sentenceRanges,
+      highlightTextOffset,
       audioQueue: [],
       nativeEnded: false,
       disconnecting: false,
@@ -892,6 +1009,7 @@
 
     state.currentSentenceRanges = session.sentenceRanges;
     state.currentSentenceIndex = -1;
+    state.currentHighlightTextOffset = session.highlightTextOffset;
     state.nativeEnded = session.nativeEnded;
     state.playbackStarted = false;
     state.isPaused = false;
@@ -918,13 +1036,17 @@
 
     if (!isCandidate(next)) return;
 
-    const fullText = getFullText(next);
-    const sentenceRanges = sentence.buildSentenceRanges(fullText);
+    const narration = buildNarrationPayload(next);
+    if (!narration) return;
+
+    const sentenceRanges = sentence.buildSentenceRanges(narration.text);
     if (!sentenceRanges.length) return;
 
     const prefetchId = ++state.prefetchId;
     const utteranceId = `prefetch-${prefetchId}`;
-    const session = createNativeSession(fullText, sentenceRanges, utteranceId);
+    const session = createNativeSession(narration.text, sentenceRanges, utteranceId, {
+      highlightTextOffset: narration.highlightTextOffset
+    });
     if (!session) return;
     session.el = next;
     state.prefetchSession = session;
