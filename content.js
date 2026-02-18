@@ -1784,25 +1784,25 @@
     playPause.textContent = "❚❚";
     playPause.setAttribute("title", "Play/Pause");
 
-    const skipSentence = document.createElement("button");
-    skipSentence.type = "button";
-    skipSentence.className = "reedah-controls__btn";
-    skipSentence.dataset.action = "skip-sentence";
-    skipSentence.textContent = "›";
-    skipSentence.setAttribute("title", "Next sentence");
+    const skipSentenceButton = document.createElement("button");
+    skipSentenceButton.type = "button";
+    skipSentenceButton.className = "reedah-controls__btn";
+    skipSentenceButton.dataset.action = "skip-sentence";
+    skipSentenceButton.textContent = "›";
+    skipSentenceButton.setAttribute("title", "Next sentence");
 
-    const skipParagraph = document.createElement("button");
-    skipParagraph.type = "button";
-    skipParagraph.className = "reedah-controls__btn";
-    skipParagraph.dataset.action = "skip-paragraph";
-    skipParagraph.textContent = "»";
-    skipParagraph.setAttribute("title", "Next paragraph");
+    const skipParagraphButton = document.createElement("button");
+    skipParagraphButton.type = "button";
+    skipParagraphButton.className = "reedah-controls__btn";
+    skipParagraphButton.dataset.action = "skip-paragraph";
+    skipParagraphButton.textContent = "»";
+    skipParagraphButton.setAttribute("title", "Next paragraph");
 
     buttons.appendChild(prevParagraph);
     buttons.appendChild(prevSentence);
     buttons.appendChild(playPause);
-    buttons.appendChild(skipSentence);
-    buttons.appendChild(skipParagraph);
+    buttons.appendChild(skipSentenceButton);
+    buttons.appendChild(skipParagraphButton);
 
     const meta = document.createElement("div");
     meta.className = "reedah-controls__meta";
@@ -1851,8 +1851,8 @@
       playPause,
       prevParagraph,
       prevSentence,
-      skipSentence,
-      skipParagraph,
+      skipSentence: skipSentenceButton,
+      skipParagraph: skipParagraphButton,
       sentence,
       queue
     };
