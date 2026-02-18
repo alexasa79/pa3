@@ -29,7 +29,44 @@
     };
   }
 
-  const api = { computeFocusStops };
+  function computeWordFocusStrength(
+    wordStart,
+    wordEnd,
+    focusStart,
+    focusEnd,
+    edgeSize = 8
+  ) {
+    if (!Number.isFinite(wordStart) ||
+      !Number.isFinite(wordEnd) ||
+      !Number.isFinite(focusStart) ||
+      !Number.isFinite(focusEnd)) {
+      return null;
+    }
+    if (!Number.isFinite(edgeSize)) return null;
+    if (wordEnd <= wordStart) return null;
+    if (focusEnd <= focusStart) return null;
+    if (edgeSize < 0) return null;
+
+    if (wordEnd > focusStart && wordStart < focusEnd) {
+      return 1;
+    }
+    if (edgeSize === 0) return 0;
+
+    const distance = wordEnd <= focusStart
+      ? focusStart - wordEnd
+      : wordStart - focusEnd;
+    if (!Number.isFinite(distance) || distance < 0) {
+      return null;
+    }
+    if (distance >= edgeSize) {
+      return 0;
+    }
+
+    const t = 1 - (distance / edgeSize);
+    return t * t;
+  }
+
+  const api = { computeFocusStops, computeWordFocusStrength };
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

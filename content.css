@@ -49,15 +49,15 @@
 }
 
 .reedah-highlight.reedah-highlight-on-light {
-  --reedah-highlight-base: rgba(236, 253, 240, 0.9);
-  --reedah-highlight-focus-edge: rgba(199, 243, 208, 0.96);
-  --reedah-highlight-focus-core: rgba(154, 224, 171, 0.97);
+  --reedah-highlight-base: rgba(219, 244, 226, 0.93);
+  --reedah-word-underline: rgba(38, 128, 74, 0.62);
+  --reedah-word-underline-strong: rgba(29, 110, 62, 0.95);
 }
 
 .reedah-highlight.reedah-highlight-on-dark {
-  --reedah-highlight-base: rgba(24, 62, 43, 0.86);
-  --reedah-highlight-focus-edge: rgba(36, 89, 62, 0.91);
-  --reedah-highlight-focus-core: rgba(49, 116, 78, 0.95);
+  --reedah-highlight-base: rgba(18, 52, 35, 0.91);
+  --reedah-word-underline: rgba(134, 236, 173, 0.7);
+  --reedah-word-underline-strong: rgba(189, 255, 214, 0.98);
 }
 
 .reedah-highlight.reedah-highlight-start {
@@ -70,25 +70,32 @@
   border-bottom-right-radius: 4px;
 }
 
-.reedah-highlight.reedah-highlight-focus-edge {
-  background: var(--reedah-highlight-focus-edge);
-  box-decoration-break: slice;
-  -webkit-box-decoration-break: slice;
+.reedah-highlight-word {
+  position: relative;
+  --reedah-word-focus: 0;
 }
 
-.reedah-highlight.reedah-highlight-focus-core {
-  background-image: linear-gradient(
+.reedah-highlight-word::after {
+  content: "";
+  position: absolute;
+  left: -0.16em;
+  right: -0.16em;
+  bottom: 0.01em;
+  height: calc(0.06em + (var(--reedah-word-focus) * 0.08em));
+  border-radius: 999px;
+  opacity: var(--reedah-word-focus);
+  transform: scaleX(calc(0.72 + (var(--reedah-word-focus) * 0.5)));
+  transform-origin: center;
+  pointer-events: none;
+  background: linear-gradient(
     90deg,
-    var(--reedah-highlight-base) 0%,
-    var(--reedah-highlight-base) var(--reedah-focus-start),
-    var(--reedah-highlight-focus-edge) var(--reedah-focus-core-start),
-    var(--reedah-highlight-focus-core) var(--reedah-focus-center),
-    var(--reedah-highlight-focus-edge) var(--reedah-focus-core-end),
-    var(--reedah-highlight-base) var(--reedah-focus-end),
-    var(--reedah-highlight-base) 100%
+    rgba(0, 0, 0, 0) 0%,
+    var(--reedah-word-underline) 18%,
+    var(--reedah-word-underline-strong) 50%,
+    var(--reedah-word-underline) 82%,
+    rgba(0, 0, 0, 0) 100%
   );
-  box-decoration-break: slice;
-  -webkit-box-decoration-break: slice;
+  transition: opacity 70ms linear, transform 70ms linear, height 70ms linear;
 }
 
 .reedah-overlay__icon {
