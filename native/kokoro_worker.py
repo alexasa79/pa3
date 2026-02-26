@@ -7,7 +7,6 @@ import argparse
 import contextlib
 import json
 import sys
-import types
 from pathlib import Path
 from typing import Any, Callable
 
@@ -37,44 +36,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--voice", default=DEFAULT_VOICE, help="Kokoro voice preset.")
     parser.add_argument("--speed", type=float, default=DEFAULT_SPEED, help="Speech speed multiplier.")
     parser.add_argument("--lang-code", default=DEFAULT_LANG_CODE, help="Kokoro language code.")
-    parser.add_argument(
-        "--enable-espeak",
-        action="store_true",
-        help="Enable misaki espeak backend (may trigger macOS Gatekeeper prompts).",
-    )
     return parser.parse_args(argv)
-
-
-def install_espeak_stub() -> None:
-    if "misaki.espeak" not in sys.modules:
-        module = types.ModuleType("misaki.espeak")
-
-        class EspeakFallback:
-            def __init__(self, *args: Any, **kwargs: Any):
-                del args, kwargs
-                raise RuntimeError("Reedah disables misaki espeak backend for this environment.")
-
-        class EspeakG2P:
-            def __init__(self, *args: Any, **kwargs: Any):
-                del args, kwargs
-                raise RuntimeError("Reedah disables misaki espeak backend for this environment.")
-
-        module.EspeakFallback = EspeakFallback
-        module.EspeakG2P = EspeakG2P
-        sys.modules["misaki.espeak"] = module
-
-    if "espeakng_loader" not in sys.modules:
-        loader_module = types.ModuleType("espeakng_loader")
-
-        def _blocked(*args: Any, **kwargs: Any) -> Any:
-            del args, kwargs
-            raise RuntimeError("Reedah disables espeakng_loader for this environment.")
-
-        loader_module.get_library_path = _blocked
-        loader_module.get_data_path = _blocked
-        loader_module.load_library = _blocked
-        loader_module.make_library_available = _blocked
-        sys.modules["espeakng_loader"] = loader_module
 
 
 def _parse_int(value: Any, field_name: str, entry_index: int) -> int:
@@ -207,9 +169,7 @@ def main(argv: list[str] | None = None) -> int:
         emit_error("invalid_speed", message)
         return 1
 
-    if not args.enable_espeak:
-        install_espeak_stub()
-        log_error("espeak backend disabled for this run.")
+    log_error("espeak backend enabled for this run.")
 
     try:
         from mlx_audio.tts import load as load_tts_model

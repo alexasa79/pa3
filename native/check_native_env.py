@@ -15,6 +15,7 @@ REQUIRED_MODULES = (
     "mlx_audio.tts.generate",
     "misaki",
     "misaki.en",
+    "misaki.espeak",
     "num2words",
     "spacy",
     "phonemizer",

@@ -41,37 +41,6 @@ class NormalizeJobsTests(unittest.TestCase):
             KOKORO_WORKER.normalize_jobs({"index": 0})
 
 
-class EspeakStubTests(unittest.TestCase):
-    def test_install_espeak_stub_injects_blocking_modules(self):
-        original_misaki_espeak = sys.modules.get("misaki.espeak")
-        original_espeak_loader = sys.modules.get("espeakng_loader")
-        try:
-            sys.modules.pop("misaki.espeak", None)
-            sys.modules.pop("espeakng_loader", None)
-
-            KOKORO_WORKER.install_espeak_stub()
-
-            misaki_espeak = sys.modules.get("misaki.espeak")
-            espeak_loader = sys.modules.get("espeakng_loader")
-
-            self.assertIsNotNone(misaki_espeak)
-            self.assertIsNotNone(espeak_loader)
-            with self.assertRaisesRegex(RuntimeError, "disables misaki espeak backend"):
-                misaki_espeak.EspeakFallback()
-            with self.assertRaisesRegex(RuntimeError, "disables espeakng_loader"):
-                espeak_loader.get_library_path()
-        finally:
-            if original_misaki_espeak is None:
-                sys.modules.pop("misaki.espeak", None)
-            else:
-                sys.modules["misaki.espeak"] = original_misaki_espeak
-
-            if original_espeak_loader is None:
-                sys.modules.pop("espeakng_loader", None)
-            else:
-                sys.modules["espeakng_loader"] = original_espeak_loader
-
-
 class ProcessJobsTests(unittest.TestCase):
     def test_process_jobs_emits_audio_ready_event(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -121,8 +90,8 @@ class ProcessJobsTests(unittest.TestCase):
                 )
 
 
-class MainEspeakBehaviorTests(unittest.TestCase):
-    def test_main_disables_espeak_modules_by_default(self):
+class MainTests(unittest.TestCase):
+    def test_main_runs_with_mocked_mlx_audio(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             jobs_file = Path(temp_dir) / "jobs.json"
             output_dir = Path(temp_dir) / "audio"
@@ -135,13 +104,8 @@ class MainEspeakBehaviorTests(unittest.TestCase):
                 "mlx_audio",
                 "mlx_audio.tts",
                 "mlx_audio.tts.generate",
-                "misaki.espeak",
-                "espeakng_loader",
             )}
             try:
-                sys.modules.pop("misaki.espeak", None)
-                sys.modules.pop("espeakng_loader", None)
-
                 fake_mlx_audio = types.ModuleType("mlx_audio")
                 fake_tts = types.ModuleType("mlx_audio.tts")
                 fake_generate_module = types.ModuleType("mlx_audio.tts.generate")
@@ -175,71 +139,6 @@ class MainEspeakBehaviorTests(unittest.TestCase):
                     )
 
                 self.assertEqual(0, exit_code)
-                self.assertIn("misaki.espeak", sys.modules)
-                self.assertIn("espeakng_loader", sys.modules)
-            finally:
-                for name, module in original_modules.items():
-                    if module is None:
-                        sys.modules.pop(name, None)
-                    else:
-                        sys.modules[name] = module
-
-    def test_main_does_not_install_espeak_stubs_when_enabled(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            jobs_file = Path(temp_dir) / "jobs.json"
-            output_dir = Path(temp_dir) / "audio"
-            jobs_file.write_text(
-                json.dumps([{"index": 0, "location": 0, "length": 5, "text": "hello"}]),
-                encoding="utf-8",
-            )
-
-            original_modules = {name: sys.modules.get(name) for name in (
-                "mlx_audio",
-                "mlx_audio.tts",
-                "mlx_audio.tts.generate",
-                "misaki.espeak",
-                "espeakng_loader",
-            )}
-            try:
-                sys.modules.pop("misaki.espeak", None)
-                sys.modules.pop("espeakng_loader", None)
-
-                fake_mlx_audio = types.ModuleType("mlx_audio")
-                fake_tts = types.ModuleType("mlx_audio.tts")
-                fake_generate_module = types.ModuleType("mlx_audio.tts.generate")
-
-                def fake_load(model_id):
-                    del model_id
-                    return object()
-
-                def fake_generate_audio(**kwargs):
-                    output_path = Path(kwargs["output_path"])
-                    output_path.mkdir(parents=True, exist_ok=True)
-                    output_file = output_path / f"{kwargs['file_prefix']}.wav"
-                    output_file.write_bytes(b"wav")
-
-                fake_tts.load = fake_load
-                fake_generate_module.generate_audio = fake_generate_audio
-                fake_mlx_audio.tts = fake_tts
-
-                sys.modules["mlx_audio"] = fake_mlx_audio
-                sys.modules["mlx_audio.tts"] = fake_tts
-                sys.modules["mlx_audio.tts.generate"] = fake_generate_module
-
-                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                    exit_code = KOKORO_WORKER.main(
-                        [
-                            "--jobs-file",
-                            str(jobs_file),
-                            "--output-dir",
-                            str(output_dir),
-                            "--enable-espeak",
-                        ]
-                    )
-
-                self.assertEqual(0, exit_code)
-                self.assertNotIn("misaki.espeak", sys.modules)
-                self.assertNotIn("espeakng_loader", sys.modules)
             finally:
                 for name, module in original_modules.items():
                     if module is None:

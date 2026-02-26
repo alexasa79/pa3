@@ -3,7 +3,8 @@
   "name": "Reedah",
   "version": "0.1.0",
   "description": "Overlay controls to narrate paragraph text on a page.",
-  "permissions": ["tabs", "storage", "nativeMessaging"],
+  "permissions": ["tabs", "storage"],
+  "host_permissions": ["http://127.0.0.1:7865/*"],
   "action": {
     "default_title": "Reedah"
   },

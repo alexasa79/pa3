@@ -1,6 +1,6 @@
 importScripts("native_request_builder.js");
 
-const NATIVE_HOST_NAME = "com.reedah.sayer";
+const TTS_SERVER_URL = "http://127.0.0.1:7865";
 const ICON_SIZES = [16, 32, 48];
 const tabState = new Map();
 let iconCache = null;
@@ -133,117 +133,96 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   updateTabState(tabId, !!message.enabled);
 });
 
+function relayServerEvent(port, event) {
+  if (!event || typeof event.event !== "string") return;
+
+  if (event.event === "started") {
+    port.postMessage({
+      type: "started",
+      utteranceId: event.utteranceId || null,
+      voiceName: event.voiceName || null,
+      voiceIdentifier: event.voiceIdentifier || null
+    });
+    return;
+  }
+
+  if (event.event === "audio") {
+    port.postMessage({
+      type: "audio",
+      utteranceId: event.utteranceId || null,
+      index: event.index,
+      audioBase64: event.audioBase64,
+      mimeType: event.mimeType || "audio/wav",
+      location: event.location,
+      length: event.length
+    });
+    return;
+  }
+
+  if (event.event === "finished") {
+    port.postMessage({
+      type: "end",
+      utteranceId: event.utteranceId || null
+    });
+    return;
+  }
+
+  if (event.event === "error") {
+    port.postMessage({
+      type: "error",
+      utteranceId: event.utteranceId || null,
+      error: event.message || "server_error",
+      details: event.details || null
+    });
+  }
+}
+
+async function streamTTSResponse(port, response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          relayServerEvent(port, JSON.parse(trimmed));
+        } catch (parseError) {
+          console.error("Reedah: Failed to parse server event.", parseError);
+        }
+      }
+    }
+    if (buffer.trim()) {
+      try {
+        relayServerEvent(port, JSON.parse(buffer.trim()));
+      } catch (parseError) {
+        console.error("Reedah: Failed to parse final server event.", parseError);
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "reedah-native") return;
 
-  let nativePort = null;
-  let closing = false;
-
-  const attachNativeHandlers = () => {
-    if (!nativePort) return;
-
-    nativePort.onMessage.addListener((message) => {
-      if (!message || typeof message.event !== "string") return;
-
-      if (message.event === "started") {
-        port.postMessage({
-          type: "started",
-          utteranceId: message.utteranceId || null,
-          voiceName: message.voiceName || null,
-          voiceIdentifier: message.voiceIdentifier || null
-        });
-        return;
-      }
-
-      if (message.event === "range") {
-        port.postMessage({
-          type: "range",
-          utteranceId: message.utteranceId || null,
-          location: message.location,
-          length: message.length
-        });
-        return;
-      }
-
-      if (message.event === "audio") {
-        port.postMessage({
-          type: "audio",
-          utteranceId: message.utteranceId || null,
-          index: message.index,
-          audioBase64: message.audioBase64,
-          mimeType: message.mimeType || "audio/wav",
-          location: message.location,
-          length: message.length
-        });
-        return;
-      }
-
-      if (message.event === "finished") {
-        port.postMessage({
-          type: "end",
-          utteranceId: message.utteranceId || null
-        });
-        return;
-      }
-
-      if (message.event === "cancelled") {
-        port.postMessage({
-          type: "cancelled",
-          utteranceId: message.utteranceId || null
-        });
-        return;
-      }
-
-      if (message.event === "error") {
-        port.postMessage({
-          type: "error",
-          utteranceId: message.utteranceId || null,
-          error: message.message || "native_error",
-          details: message.details || null
-        });
-      }
-    });
-
-    nativePort.onDisconnect.addListener(() => {
-      const lastError = chrome.runtime.lastError;
-      if (!closing && lastError) {
-        console.error("Reedah: Native host disconnected.", lastError.message);
-        port.postMessage({
-          type: "error",
-          error: lastError.message || "native_disconnected"
-        });
-      }
-      nativePort = null;
-    });
-  };
-
-  const ensureNativePort = () => {
-    if (nativePort) return nativePort;
-    try {
-      nativePort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
-    } catch (error) {
-      console.error("Reedah: Unable to connect to native host.", error);
-      port.postMessage({ type: "error", error: "native_connect_failed" });
-      return null;
-    }
-    attachNativeHandlers();
-    return nativePort;
-  };
+  let abortController = null;
 
   port.onMessage.addListener(async (message) => {
     if (!message || typeof message.type !== "string") return;
 
     if (message.type === "stop") {
-      closing = true;
-      if (nativePort) {
-        try {
-          nativePort.postMessage({
-            action: "stop",
-            utteranceId: message.utteranceId || null
-          });
-        } catch (error) {
-          console.error("Reedah: Failed to stop native narration.", error);
-        }
+      if (abortController) {
+        abortController.abort();
+        abortController = null;
       }
       return;
     }
@@ -291,10 +270,7 @@ chrome.runtime.onConnect.addListener((port) => {
       });
       return;
     }
-    const hostPort = ensureNativePort();
-    if (!hostPort) return;
 
-    closing = false;
     let resolvedVoice = settings.voice;
     if (typeof message.voice === "string") {
       resolvedVoice = message.voice.trim();
@@ -316,33 +292,12 @@ chrome.runtime.onConnect.addListener((port) => {
       }
     }
 
-    const payload = {
-      action: "speak",
-      utteranceId,
-      sentenceJobs: null
-    };
-
-    if (resolvedVoice) {
-      payload.voice = resolvedVoice;
-    }
-    if (resolvedRate != null) {
-      payload.rate = resolvedRate;
-    }
-    if (settings.pythonPath) {
-      payload.pythonPath = settings.pythonPath;
-    }
-    if (settings.model) {
-      payload.model = settings.model;
-    }
-    if (settings.langCode) {
-      payload.langCode = settings.langCode;
-    }
     let sentenceJobs;
     try {
       sentenceJobs = nativeRequestBuilder.buildSentenceJobs(text, sentenceRanges, customVocab);
     } catch (error) {
       const details = error.message || String(error);
-      console.error("Reedah: Failed to build sentence jobs for native narration.", details);
+      console.error("Reedah: Failed to build sentence jobs.", details);
       port.postMessage({
         type: "error",
         utteranceId,
@@ -352,7 +307,7 @@ chrome.runtime.onConnect.addListener((port) => {
       return;
     }
     if (sentenceJobs.length === 0) {
-      console.error("Reedah: No sentence jobs available for native narration.");
+      console.error("Reedah: No sentence jobs available.");
       port.postMessage({
         type: "error",
         utteranceId,
@@ -360,7 +315,6 @@ chrome.runtime.onConnect.addListener((port) => {
       });
       return;
     }
-    payload.sentenceJobs = sentenceJobs;
 
     port.postMessage({
       type: "prepared_sentence_jobs",
@@ -378,24 +332,72 @@ chrome.runtime.onConnect.addListener((port) => {
       );
     }
 
+    const requestBody = { utteranceId, sentenceJobs };
+    if (resolvedVoice) {
+      requestBody.voice = resolvedVoice;
+    }
+    if (resolvedRate != null) {
+      requestBody.speed = resolvedRate;
+    }
+    if (settings.langCode) {
+      requestBody.langCode = settings.langCode;
+    }
+
+    if (abortController) {
+      abortController.abort();
+    }
+    abortController = new AbortController();
+    const { signal } = abortController;
+
     try {
-      hostPort.postMessage(payload);
+      const response = await fetch(`${TTS_SERVER_URL}/tts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+        signal
+      });
+
+      if (!response.ok) {
+        let errorDetail = `HTTP ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          errorDetail = errorBody.details || errorBody.error || errorDetail;
+        } catch (_ignored) {
+          // Use status code as detail.
+        }
+        console.error("Reedah: TTS server error.", errorDetail);
+        port.postMessage({
+          type: "error",
+          utteranceId,
+          error: "server_error",
+          details: errorDetail
+        });
+        return;
+      }
+
+      await streamTTSResponse(port, response);
     } catch (error) {
-      console.error("Reedah: Failed to send narration request.", error);
-      port.postMessage({ type: "error", error: "native_send_failed" });
+      if (error.name === "AbortError") {
+        port.postMessage({ type: "cancelled", utteranceId });
+        return;
+      }
+      console.error("Reedah: TTS server request failed.", error);
+      port.postMessage({
+        type: "error",
+        utteranceId,
+        error: "server_unavailable",
+        details: "Kokoro TTS server is not running. Start it with: python native/kokoro_server.py"
+      });
+    } finally {
+      abortController = null;
     }
   });
 
   port.onDisconnect.addListener(() => {
-    closing = true;
-    if (nativePort) {
-      try {
-        nativePort.disconnect();
-      } catch (error) {
-        // Ignore disconnect errors.
-      }
+    if (abortController) {
+      abortController.abort();
+      abortController = null;
     }
-    nativePort = null;
   });
 });
 

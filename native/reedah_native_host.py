@@ -319,7 +319,7 @@ class ReedahSayer:
         self.messenger.log(
             "ReedahNative: Launching Kokoro worker "
             f"python={python_path} worker={worker_path} "
-            f"model={model} voice={voice} lang={lang_code} speed={speed} espeak=disabled"
+            f"model={model} voice={voice} lang={lang_code} speed={speed} espeak=enabled"
         )
 
         try:

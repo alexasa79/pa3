@@ -32,6 +32,26 @@ echo "Installing native host dependencies from: $REQ_FILE"
 "$PIP_BIN" install --upgrade pip
 "$PIP_BIN" install -r "$REQ_FILE"
 
+echo "Configuring espeak-ng runtime"
+ESPEAK_LIB_PATH="$("$PYTHON_BIN" -c "import espeakng_loader; print(espeakng_loader.get_library_path())")"
+ESPEAK_DATA_PATH="$("$PYTHON_BIN" -c "import espeakng_loader; print(espeakng_loader.get_data_path())")"
+
+if [[ -z "$ESPEAK_LIB_PATH" || ! -f "$ESPEAK_LIB_PATH" ]]; then
+  echo "espeak-ng library path is invalid: $ESPEAK_LIB_PATH"
+  exit 1
+fi
+
+if [[ -z "$ESPEAK_DATA_PATH" || ! -d "$ESPEAK_DATA_PATH" ]]; then
+  echo "espeak-ng data path is invalid: $ESPEAK_DATA_PATH"
+  exit 1
+fi
+
+echo "Verifying espeak-ng library loads successfully"
+if ! "$PYTHON_BIN" -c "import espeakng_loader; espeakng_loader.load_library()"; then
+  echo "espeak-ng library failed to load."
+  exit 1
+fi
+
 echo "Ensuring spaCy English model is installed (en_core_web_sm)"
 if ! "$PYTHON_BIN" -c "import spacy.util, sys; sys.exit(0 if spacy.util.is_package('en_core_web_sm') else 1)"; then
   "$PYTHON_BIN" -m spacy download en_core_web_sm
