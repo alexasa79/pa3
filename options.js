@@ -1,7 +1,6 @@
 const voiceInput = document.getElementById("voice");
 const rateInput = document.getElementById("rate");
 const statusEl = document.getElementById("status");
-const saveButton = document.getElementById("save");
 const clearButton = document.getElementById("clear");
 const manageVocabButton = document.getElementById("manage-vocab");
 const vocabCountEl = document.getElementById("vocab-count");
@@ -693,14 +692,16 @@ function loadSettings() {
   });
 }
 
-function saveSettings() {
+function persistSettings(successMessage) {
   const voice = normalizeVoice(voiceInput.value);
+  voiceInput.value = voice;
+
   let rate = null;
   try {
     rate = parseRateInputValue();
   } catch (error) {
     setStatus(error.message, true);
-    return;
+    return false;
   }
 
   chrome.storage.local.set(
@@ -710,13 +711,28 @@ function saveSettings() {
     },
     () => {
       if (chrome.runtime.lastError) {
+        console.error(
+          "Reedah: Failed to auto-save settings.",
+          chrome.runtime.lastError.message
+        );
         setStatus("Failed to save settings.", true);
         return;
       }
 
-      setStatus("Saved.");
+      if (successMessage) {
+        setStatus(successMessage);
+      }
     }
   );
+  return true;
+}
+
+function handleVoiceChange() {
+  persistSettings("Settings saved.");
+}
+
+function handleRateChange() {
+  persistSettings("Settings saved.");
 }
 
 function clearSettings() {
@@ -737,13 +753,14 @@ function clearSettings() {
   });
 }
 
-saveButton.addEventListener("click", saveSettings);
 clearButton.addEventListener("click", clearSettings);
 manageVocabButton.addEventListener("click", openVocabDialog);
 vocabAddUpdateButton.addEventListener("click", addOrUpdateVocabEntry);
 vocabResetButton.addEventListener("click", resetVocabEditor);
 vocabListEl.addEventListener("click", handleVocabListClick);
 vocabCancelButton.addEventListener("click", closeVocabDialog);
+voiceInput.addEventListener("change", handleVoiceChange);
+rateInput.addEventListener("change", handleRateChange);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
   applyThemeForCurrentTime();
