@@ -34,12 +34,64 @@
         <p class="hint">Kokoro speed multiplier. Leave blank to use 1.0.</p>
       </section>
 
+      <section class="field">
+        <label>Custom Vocabulary</label>
+        <div class="vocab-summary">
+          <button id="manage-vocab" type="button">Manage Words</button>
+          <span id="vocab-count" class="hint">No custom words configured.</span>
+        </div>
+        <p class="hint">Define spelling and pronunciation pairs to emit Kokoro tags.</p>
+      </section>
+
       <div class="actions">
         <button id="save" class="primary" type="button">Save</button>
         <button id="clear" type="button">Clear</button>
         <span id="status" role="status" aria-live="polite"></span>
       </div>
     </main>
+
+    <dialog id="vocab-dialog" class="vocab-dialog">
+      <div class="vocab-dialog__surface">
+        <h2>Custom Vocabulary</h2>
+        <p class="hint">Entries are applied as <code>[word](/pronunciation/)</code> tags during narration.</p>
+
+        <section class="field">
+          <label for="vocab-spelling">Spelling</label>
+          <input id="vocab-spelling" type="text" autocomplete="off" spellcheck="false" placeholder="e.g., Kokoro" />
+        </section>
+
+        <section class="field">
+          <label for="vocab-pronunciation">Pronunciation</label>
+          <input
+            id="vocab-pronunciation"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="e.g., kˈOkəɹO"
+          />
+        </section>
+        <p class="hint">
+          Phoneme reference:
+          <a
+            href="https://github.com/hexgrad/misaki/blob/main/EN_PHONES.md"
+            target="_blank"
+            rel="noreferrer noopener"
+            >EN_PHONES.md</a
+          >
+        </p>
+
+        <div class="actions">
+          <button id="vocab-add-update" class="primary" type="button">Add Word</button>
+          <button id="vocab-reset" type="button">Reset Entry</button>
+        </div>
+
+        <div id="vocab-list" class="vocab-list" role="list"></div>
+
+        <div class="actions vocab-dialog__actions">
+          <button id="vocab-cancel" type="button">Close</button>
+        </div>
+      </div>
+    </dialog>
 
     <script src="options.js"></script>
   </body>
