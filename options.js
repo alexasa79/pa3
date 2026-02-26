@@ -4,6 +4,8 @@ const statusEl = document.getElementById("status");
 const clearButton = document.getElementById("clear");
 const manageVocabButton = document.getElementById("manage-vocab");
 const vocabCountEl = document.getElementById("vocab-count");
+const testNarrationTextInput = document.getElementById("test-narration-text");
+const testNarrateButton = document.getElementById("test-narrate");
 const vocabDialog = document.getElementById("vocab-dialog");
 const vocabSpellingInput = document.getElementById("vocab-spelling");
 const vocabPronunciationInput = document.getElementById("vocab-pronunciation");
@@ -218,6 +220,29 @@ function parseRateInputValue() {
   return rate;
 }
 
+function normalizeTestNarrationText(value) {
+  if (typeof value !== "string") {
+    throw new Error("Test narration text must be a string.");
+  }
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    throw new Error("Test narration text must be non-empty.");
+  }
+  return normalized;
+}
+
+function updateTestNarrateButtonState() {
+  if (!testNarrateButton) return;
+  const isActiveTestPreview =
+    previewSession !== null && previewSession.previewType === "test";
+  testNarrateButton.textContent = isActiveTestPreview ? "Stop Narration" : "Narrate Text";
+}
+
+function refreshPreviewUi() {
+  renderVocabList();
+  updateTestNarrateButtonState();
+}
+
 function base64ToUint8Array(base64) {
   const binary = atob(base64);
   const len = binary.length;
@@ -282,14 +307,14 @@ function stopPreview(sendStop = true) {
   const session = previewSession;
   previewSession = null;
   closePreviewSession(session, sendStop);
-  renderVocabList();
+  refreshPreviewUi();
 }
 
 function finishPreviewSession(session) {
   if (previewSession !== session) return;
   previewSession = null;
   closePreviewSession(session, false);
-  renderVocabList();
+  refreshPreviewUi();
 }
 
 function maybeFinishPreviewWhenDone(session) {
@@ -353,26 +378,20 @@ function playNextPreviewAudio(session) {
   });
 }
 
-function startPreviewForVocabEntry(index) {
-  if (!Number.isInteger(index) || index < 0 || index >= vocabDraftEntries.length) {
-    setStatus("Invalid custom vocabulary selection.", true);
-    return;
-  }
-
-  const existing = previewSession;
-  if (existing && existing.entryIndex === index) {
-    stopPreview(true);
-    return;
-  }
+function startPreviewRequest({
+  text,
+  customVocab = null,
+  entryIndex = null,
+  previewType = "generic"
+}) {
   stopPreview(true);
 
-  const entry = vocabDraftEntries[index];
   let rate = null;
   try {
     rate = parseRateInputValue();
   } catch (error) {
     setStatus(error.message, true);
-    return;
+    return false;
   }
 
   const utteranceId = `preview-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
@@ -382,12 +401,13 @@ function startPreviewForVocabEntry(index) {
   } catch (error) {
     console.error("Reedah: Failed to open preview native port.", error);
     setStatus("Failed to open native preview port.", true);
-    return;
+    return false;
   }
 
   const session = {
     utteranceId,
-    entryIndex: index,
+    previewType,
+    entryIndex,
     completed: false,
     closing: false,
     audioQueue: [],
@@ -396,12 +416,33 @@ function startPreviewForVocabEntry(index) {
     port
   };
   previewSession = session;
-  renderVocabList();
+  refreshPreviewUi();
 
   port.onMessage.addListener((message) => {
     if (previewSession !== session) return;
     if (!message || typeof message.type !== "string") return;
     if (message.utteranceId && message.utteranceId !== utteranceId) return;
+
+    if (message.type === "prepared_sentence_jobs") {
+      if (!Array.isArray(message.sentenceJobs)) {
+        console.error("Reedah: Invalid prepared sentence jobs payload in options preview.");
+        return;
+      }
+      for (const job of message.sentenceJobs) {
+        if (!job || typeof job !== "object") {
+          console.error("Reedah: Invalid prepared sentence job in options preview.", job);
+          continue;
+        }
+        console.info(
+          "Reedah: Options preview sentence sent to model:",
+          job.index,
+          job.location,
+          job.length,
+          JSON.stringify(job.text)
+        );
+      }
+      return;
+    }
 
     if (message.type === "audio") {
       if (typeof message.audioBase64 !== "string" || !message.audioBase64) {
@@ -452,12 +493,14 @@ function startPreviewForVocabEntry(index) {
 
   const payload = {
     type: "start",
-    text: entry.spelling,
+    text,
     utteranceId,
-    sentenceRanges: [{ start: 0, end: entry.spelling.length }],
-    customVocab: [entry],
+    sentenceRanges: [{ start: 0, end: text.length }],
     voice: normalizeVoice(voiceInput.value)
   };
+  if (Array.isArray(customVocab)) {
+    payload.customVocab = customVocab;
+  }
   if (rate != null) {
     payload.rate = rate;
   }
@@ -468,6 +511,55 @@ function startPreviewForVocabEntry(index) {
     console.error("Reedah: Failed to send preview request.", error);
     finishPreviewSession(session);
     setStatus("Failed to send preview request.", true);
+    return false;
+  }
+  return true;
+}
+
+function startPreviewForVocabEntry(index) {
+  if (!Number.isInteger(index) || index < 0 || index >= vocabDraftEntries.length) {
+    setStatus("Invalid custom vocabulary selection.", true);
+    return;
+  }
+
+  const existing = previewSession;
+  if (existing && existing.previewType === "vocab" && existing.entryIndex === index) {
+    stopPreview(true);
+    return;
+  }
+
+  const entry = vocabDraftEntries[index];
+  startPreviewRequest({
+    text: entry.spelling,
+    customVocab: [entry],
+    entryIndex: index,
+    previewType: "vocab"
+  });
+}
+
+function handleTestNarrationClick() {
+  const existing = previewSession;
+  if (existing && existing.previewType === "test") {
+    stopPreview(true);
+    return;
+  }
+
+  let text;
+  try {
+    text = normalizeTestNarrationText(testNarrationTextInput.value);
+  } catch (error) {
+    setStatus(error.message, true);
+    return;
+  }
+
+  const customVocab = cloneCustomVocab(customVocabEntries);
+  const started = startPreviewRequest({
+    text,
+    customVocab,
+    previewType: "test"
+  });
+  if (started) {
+    setStatus("Running test narration...");
   }
 }
 
@@ -759,6 +851,7 @@ vocabAddUpdateButton.addEventListener("click", addOrUpdateVocabEntry);
 vocabResetButton.addEventListener("click", resetVocabEditor);
 vocabListEl.addEventListener("click", handleVocabListClick);
 vocabCancelButton.addEventListener("click", closeVocabDialog);
+testNarrateButton.addEventListener("click", handleTestNarrationClick);
 voiceInput.addEventListener("change", handleVoiceChange);
 rateInput.addEventListener("change", handleRateChange);
 document.addEventListener("visibilitychange", () => {
@@ -769,4 +862,5 @@ document.addEventListener("visibilitychange", () => {
 startThemeScheduler();
 populateVoiceOptions();
 updateCustomVocabSummary();
+updateTestNarrateButtonState();
 loadSettings();

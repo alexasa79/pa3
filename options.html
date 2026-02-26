@@ -43,6 +43,20 @@
         <p class="hint">Define spelling and pronunciation pairs to emit Kokoro tags.</p>
       </section>
 
+      <section class="field">
+        <label for="test-narration-text">Test Narration</label>
+        <textarea
+          id="test-narration-text"
+          rows="4"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Type text to narrate from options."
+        ></textarea>
+        <div class="actions test-narration-actions">
+          <button id="test-narrate" class="primary" type="button">Narrate Text</button>
+        </div>
+      </section>
+
       <div class="actions">
         <button id="clear" type="button">Clear</button>
         <span id="status" role="status" aria-live="polite"></span>
