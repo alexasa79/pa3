@@ -11,25 +11,6 @@ HOST = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = HOST
 SPEC.loader.exec_module(HOST)
 
-
-class Utf16HelpersTests(unittest.TestCase):
-    def test_utf16_slice_handles_surrogate_pairs(self):
-        text = "A😀B"
-        # UTF-16 code units: A(1), 😀(2), B(1)
-        sliced = HOST.utf16_slice(text, 1, 3)
-        self.assertEqual("😀", sliced)
-
-    def test_build_sentence_jobs_uses_utf16_offsets(self):
-        text = "A😀B. C"
-        ranges = [HOST.SentenceRange(start=0, end=5), HOST.SentenceRange(start=5, end=7)]
-        jobs = HOST.build_sentence_jobs(text, ranges)
-
-        self.assertEqual(2, len(jobs))
-        self.assertEqual("A😀B.", jobs[0].text)
-        self.assertEqual(" C", jobs[1].text)
-        self.assertEqual(5, jobs[0].length)
-
-
 class ParseHelpersTests(unittest.TestCase):
     def test_parse_int(self):
         self.assertEqual(4, HOST.parse_int("4"))
@@ -48,6 +29,38 @@ class ParseHelpersTests(unittest.TestCase):
     def test_default_kokoro_python_path_points_to_native_venv(self):
         expected_suffix = "/native/.venv/bin/python"
         self.assertTrue(HOST.DEFAULT_KOKORO_PYTHON.endswith(expected_suffix))
+
+
+class SentenceJobsTests(unittest.TestCase):
+    def test_read_sentence_jobs_accepts_valid_payload(self):
+        jobs = HOST._read_sentence_jobs(
+            [
+                {"index": 2, "location": 117, "length": 84, "text": "REPL workflow."},
+                {"index": 3, "location": 202, "length": 45, "text": "Plugins are useful."},
+            ]
+        )
+
+        self.assertEqual(2, len(jobs))
+        self.assertEqual(2, jobs[0].index)
+        self.assertEqual(117, jobs[0].location)
+        self.assertEqual(84, jobs[0].length)
+        self.assertEqual("REPL workflow.", jobs[0].text)
+
+    def test_read_sentence_jobs_rejects_invalid_length(self):
+        with self.assertRaisesRegex(ValueError, "sentenceJobs\\[0\\]\\.length must be a positive integer"):
+            HOST._read_sentence_jobs(
+                [
+                    {"index": 0, "location": 0, "length": 0, "text": "invalid"},
+                ]
+            )
+
+    def test_read_sentence_jobs_rejects_non_string_text(self):
+        with self.assertRaisesRegex(ValueError, "sentenceJobs\\[0\\]\\.text must be a string"):
+            HOST._read_sentence_jobs(
+                [
+                    {"index": 0, "location": 0, "length": 10, "text": None},
+                ]
+            )
 
 
 class AudioSendTests(unittest.TestCase):

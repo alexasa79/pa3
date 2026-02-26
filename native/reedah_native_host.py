@@ -24,12 +24,6 @@ DEFAULT_KOKORO_LANG_CODE = "a"
 
 
 @dataclass(frozen=True)
-class SentenceRange:
-    start: int
-    end: int
-
-
-@dataclass(frozen=True)
 class SentenceJob:
     index: int
     location: int
@@ -129,37 +123,6 @@ def parse_float(value: Any) -> float | None:
     return None
 
 
-def utf16_length(text: str) -> int:
-    return len(text.encode("utf-16-le")) // 2
-
-
-def utf16_slice(text: str, start: int, end: int) -> str:
-    encoded = text.encode("utf-16-le")
-    max_units = len(encoded) // 2
-    clamped_start = min(max(start, 0), max_units)
-    clamped_end = min(max(end, clamped_start), max_units)
-    view = encoded[clamped_start * 2 : clamped_end * 2]
-    return view.decode("utf-16-le", errors="ignore")
-
-
-def build_sentence_jobs(text: str, sentence_ranges: list[SentenceRange]) -> list[SentenceJob]:
-    max_length = utf16_length(text)
-    jobs: list[SentenceJob] = []
-    for index, entry in enumerate(sentence_ranges):
-        start = min(max(entry.start, 0), max_length)
-        end = min(max(entry.end, start), max_length)
-        length = end - start
-        if length <= 0:
-            continue
-
-        sentence = utf16_slice(text, start, end)
-        if not sentence.strip():
-            continue
-
-        jobs.append(SentenceJob(index=index, location=start, length=length, text=sentence))
-    return jobs
-
-
 def normalize_config_value(value: str | None, default: str) -> str:
     if value is None:
         return default
@@ -182,22 +145,20 @@ class ReedahSayer:
     def speak(
         self,
         *,
-        text: str,
         utterance_id: str,
         voice_hint: str | None,
         speed: float | None,
-        sentence_ranges: list[SentenceRange],
+        sentence_jobs: list[SentenceJob],
         python_path: str | None,
         model: str | None,
         lang_code: str | None,
     ) -> None:
         self._speech_queue.put(
             {
-                "text": text,
                 "utterance_id": utterance_id,
                 "voice_hint": voice_hint,
                 "speed": speed,
-                "sentence_ranges": sentence_ranges,
+                "sentence_jobs": sentence_jobs,
                 "python_path": python_path,
                 "model": model,
                 "lang_code": lang_code,
@@ -228,11 +189,10 @@ class ReedahSayer:
     def _run_speech(
         self,
         *,
-        text: str,
         utterance_id: str,
         voice_hint: str | None,
         speed: float | None,
-        sentence_ranges: list[SentenceRange],
+        sentence_jobs: list[SentenceJob],
         python_path: str | None,
         model: str | None,
         lang_code: str | None,
@@ -240,26 +200,28 @@ class ReedahSayer:
         with self._state_lock:
             self._cancel_requested = False
 
-        if not text:
-            self._send_error("empty_text", utterance_id)
-            return
-        if not sentence_ranges:
-            self._send_error("missing_sentence_ranges", utterance_id)
+        if not sentence_jobs:
+            self._send_error("missing_sentence_jobs", utterance_id)
             return
         if speed is not None and speed <= 0:
             self._send_error("invalid_speed", utterance_id, f"speed={speed}")
             return
 
-        jobs = build_sentence_jobs(text, sentence_ranges)
-        if not jobs:
-            self._send_error("empty_sentence_jobs", utterance_id)
-            return
+        jobs = sentence_jobs
 
         resolved_voice = normalize_config_value(voice_hint, DEFAULT_KOKORO_VOICE)
         resolved_python_path = normalize_config_value(python_path, DEFAULT_KOKORO_PYTHON)
         resolved_model = normalize_config_value(model, DEFAULT_KOKORO_MODEL)
         resolved_lang_code = normalize_config_value(lang_code, DEFAULT_KOKORO_LANG_CODE)
         resolved_speed = speed if speed is not None else 1.0
+
+        for job in jobs:
+            self.messenger.log(
+                "ReedahNative: Narration sentence "
+                f"utterance={utterance_id} index={job.index} "
+                f"location={job.location} length={job.length} "
+                f"text={json.dumps(job.text, ensure_ascii=False)}"
+            )
 
         self.messenger.send(
             {
@@ -531,21 +493,43 @@ class ReedahSayer:
         self.messenger.send(payload)
 
 
-def _read_sentence_ranges(message: dict[str, Any]) -> list[SentenceRange]:
-    raw_ranges = message.get("sentenceRanges")
-    if not isinstance(raw_ranges, list):
-        return []
+def _read_sentence_jobs(raw_value: Any) -> list[SentenceJob]:
+    if not isinstance(raw_value, list):
+        raise ValueError("sentenceJobs must be an array.")
 
-    ranges: list[SentenceRange] = []
-    for entry in raw_ranges:
+    jobs: list[SentenceJob] = []
+    for entry_index, entry in enumerate(raw_value):
         if not isinstance(entry, dict):
-            continue
-        start = parse_int(entry.get("start"))
-        end = parse_int(entry.get("end"))
-        if start is None or end is None:
-            continue
-        ranges.append(SentenceRange(start=start, end=end))
-    return ranges
+            raise ValueError(f"sentenceJobs[{entry_index}] must be an object.")
+
+        index = parse_int(entry.get("index"))
+        if index is None:
+            raise ValueError(f"sentenceJobs[{entry_index}].index must be an integer.")
+
+        location = parse_int(entry.get("location"))
+        if location is None:
+            raise ValueError(f"sentenceJobs[{entry_index}].location must be an integer.")
+
+        length = parse_int(entry.get("length"))
+        if length is None or length <= 0:
+            raise ValueError(f"sentenceJobs[{entry_index}].length must be a positive integer.")
+
+        text = entry.get("text")
+        if not isinstance(text, str):
+            raise ValueError(f"sentenceJobs[{entry_index}].text must be a string.")
+        if not text.strip():
+            raise ValueError(f"sentenceJobs[{entry_index}].text must be non-empty.")
+
+        jobs.append(
+            SentenceJob(
+                index=index,
+                location=location,
+                length=length,
+                text=text,
+            )
+        )
+
+    return jobs
 
 
 def run() -> int:
@@ -564,9 +548,6 @@ def run() -> int:
             continue
 
         if action == "speak":
-            text = message.get("text", "")
-            if not isinstance(text, str):
-                text = ""
             utterance_id = message.get("utteranceId")
             if not isinstance(utterance_id, str) or not utterance_id:
                 utterance_id = ""
@@ -584,12 +565,27 @@ def run() -> int:
             if lang_code is not None and not isinstance(lang_code, str):
                 lang_code = ""
 
+            try:
+                sentence_jobs = _read_sentence_jobs(message.get("sentenceJobs"))
+            except Exception as exc:
+                messenger.log(
+                    f"ReedahNative: ERROR [invalid_sentence_jobs] utteranceId={utterance_id} details={exc}"
+                )
+                messenger.send(
+                    {
+                        "event": "error",
+                        "message": "invalid_sentence_jobs",
+                        "utteranceId": utterance_id,
+                        "details": str(exc),
+                    }
+                )
+                continue
+
             sayer.speak(
-                text=text,
                 utterance_id=utterance_id,
                 voice_hint=voice,
                 speed=speed,
-                sentence_ranges=_read_sentence_ranges(message),
+                sentence_jobs=sentence_jobs,
                 python_path=python_path,
                 model=model,
                 lang_code=lang_code,

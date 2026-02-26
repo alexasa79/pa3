@@ -1,7 +1,16 @@
+importScripts("native_request_builder.js");
+
 const NATIVE_HOST_NAME = "com.reedah.sayer";
 const ICON_SIZES = [16, 32, 48];
 const tabState = new Map();
 let iconCache = null;
+const nativeRequestBuilder = globalThis.ReedahNativeRequestBuilder;
+if (!nativeRequestBuilder ||
+  typeof nativeRequestBuilder.buildSentenceJobs !== "function" ||
+  typeof nativeRequestBuilder.applyCustomVocab !== "function") {
+  console.error("Reedah: Native request builder helpers unavailable.");
+  throw new Error("Reedah: native request builder helpers unavailable");
+}
 const iconSupported =
   typeof OffscreenCanvas !== "undefined" && typeof ImageData !== "undefined";
 
@@ -256,23 +265,68 @@ chrome.runtime.onConnect.addListener((port) => {
 
     const utteranceId = message.utteranceId || `${Date.now()}`;
     const settings = await getSettings();
+    const hasCustomVocabOverride = Object.prototype.hasOwnProperty.call(message, "customVocab");
+    let customVocab = settings.customVocab;
+    if (hasCustomVocabOverride) {
+      try {
+        customVocab = normalizeCustomVocab(message.customVocab);
+      } catch (error) {
+        const details = error.message || String(error);
+        console.error("Reedah: Invalid custom vocabulary override.", details);
+        port.postMessage({
+          type: "error",
+          utteranceId,
+          error: "invalid_custom_vocab",
+          details
+        });
+        return;
+      }
+    } else if (settings.customVocabError) {
+      console.error("Reedah: Invalid custom vocabulary settings.", settings.customVocabError);
+      port.postMessage({
+        type: "error",
+        utteranceId,
+        error: "invalid_custom_vocab",
+        details: settings.customVocabError
+      });
+      return;
+    }
     const hostPort = ensureNativePort();
     if (!hostPort) return;
 
     closing = false;
+    let resolvedVoice = settings.voice;
+    if (typeof message.voice === "string") {
+      resolvedVoice = message.voice.trim();
+    }
+
+    let resolvedRate = settings.rate;
+    if (Object.prototype.hasOwnProperty.call(message, "rate")) {
+      resolvedRate = parseRate(message.rate);
+      if (message.rate != null && resolvedRate == null) {
+        const details = `invalid_rate:${String(message.rate)}`;
+        console.error("Reedah: Invalid narration rate override.", details);
+        port.postMessage({
+          type: "error",
+          utteranceId,
+          error: "invalid_rate",
+          details
+        });
+        return;
+      }
+    }
 
     const payload = {
       action: "speak",
-      text,
       utteranceId,
-      sentenceRanges
+      sentenceJobs: null
     };
 
-    if (settings.voice) {
-      payload.voice = settings.voice;
+    if (resolvedVoice) {
+      payload.voice = resolvedVoice;
     }
-    if (settings.rate != null) {
-      payload.rate = settings.rate;
+    if (resolvedRate != null) {
+      payload.rate = resolvedRate;
     }
     if (settings.pythonPath) {
       payload.pythonPath = settings.pythonPath;
@@ -282,6 +336,46 @@ chrome.runtime.onConnect.addListener((port) => {
     }
     if (settings.langCode) {
       payload.langCode = settings.langCode;
+    }
+    let sentenceJobs;
+    try {
+      sentenceJobs = nativeRequestBuilder.buildSentenceJobs(text, sentenceRanges, customVocab);
+    } catch (error) {
+      const details = error.message || String(error);
+      console.error("Reedah: Failed to build sentence jobs for native narration.", details);
+      port.postMessage({
+        type: "error",
+        utteranceId,
+        error: "invalid_sentence_jobs",
+        details
+      });
+      return;
+    }
+    if (sentenceJobs.length === 0) {
+      console.error("Reedah: No sentence jobs available for native narration.");
+      port.postMessage({
+        type: "error",
+        utteranceId,
+        error: "empty_sentence_jobs"
+      });
+      return;
+    }
+    payload.sentenceJobs = sentenceJobs;
+
+    port.postMessage({
+      type: "prepared_sentence_jobs",
+      utteranceId,
+      sentenceJobs
+    });
+
+    for (const job of sentenceJobs) {
+      console.info(
+        "Reedah: Narration sentence sent to model:",
+        job.index,
+        job.location,
+        job.length,
+        JSON.stringify(job.text)
+      );
     }
 
     try {
@@ -308,17 +402,68 @@ chrome.runtime.onConnect.addListener((port) => {
 function getSettings() {
   return new Promise((resolve) => {
     chrome.storage.local.get(
-      ["nativeVoice", "nativeRate", "nativePythonPath", "nativeModel", "nativeLangCode"],
+      ["nativeVoice", "nativeRate", "nativePythonPath", "nativeModel", "nativeLangCode", "nativeCustomVocab"],
       (items) => {
         const voice = (items.nativeVoice || "").trim();
         const rate = parseRate(items.nativeRate);
         const pythonPath = (items.nativePythonPath || "").trim();
         const model = (items.nativeModel || "").trim();
         const langCode = (items.nativeLangCode || "").trim();
-        resolve({ voice, rate, pythonPath, model, langCode });
+        let customVocab = [];
+        let customVocabError = null;
+        try {
+          customVocab = normalizeCustomVocab(items.nativeCustomVocab);
+        } catch (error) {
+          customVocabError = error.message || String(error);
+        }
+        resolve({ voice, rate, pythonPath, model, langCode, customVocab, customVocabError });
       }
     );
   });
+}
+
+function normalizeCustomVocab(rawValue) {
+  if (rawValue == null) return [];
+  if (!Array.isArray(rawValue)) {
+    throw new Error("Custom vocabulary must be an array.");
+  }
+  const entries = [];
+  const seen = new Set();
+  for (let index = 0; index < rawValue.length; index += 1) {
+    const rawEntry = rawValue[index];
+    if (!rawEntry || typeof rawEntry !== "object") {
+      throw new Error(`Custom vocabulary entry ${index + 1} must be an object.`);
+    }
+
+    const spelling =
+      typeof rawEntry.spelling === "string" ? rawEntry.spelling.trim() : "";
+    let pronunciation =
+      typeof rawEntry.pronunciation === "string"
+        ? rawEntry.pronunciation.trim()
+        : "";
+
+    if (pronunciation.startsWith("/") && pronunciation.endsWith("/") && pronunciation.length >= 2) {
+      pronunciation = pronunciation.slice(1, -1).trim();
+    }
+
+    if (!spelling || !pronunciation) {
+      throw new Error(`Custom vocabulary entry ${index + 1} must have spelling and pronunciation.`);
+    }
+    if (spelling.includes("[") || spelling.includes("]")) {
+      throw new Error(`Custom vocabulary entry ${index + 1} spelling must not contain '[' or ']'.`);
+    }
+    if (pronunciation.includes("/")) {
+      throw new Error(`Custom vocabulary entry ${index + 1} pronunciation must not contain '/'.`);
+    }
+
+    const spellingKey = spelling.toLocaleLowerCase();
+    if (seen.has(spellingKey)) {
+      throw new Error(`Duplicate custom vocabulary spelling: ${spelling}`);
+    }
+    seen.add(spellingKey);
+    entries.push({ spelling, pronunciation });
+  }
+  return entries;
 }
 
 function parseRate(value) {

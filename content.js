@@ -109,6 +109,14 @@
     console.error("Reedah: Controls navigation helpers unavailable.");
     return;
   }
+  const narrationText = window.ReedahNarrationText;
+  if (!narrationText ||
+    typeof narrationText.normalizeNarrationText !== "function" ||
+    typeof narrationText.shouldInsertImplicitSpace !== "function" ||
+    typeof narrationText.shouldInsertImplicitSpaceChars !== "function") {
+    console.error("Reedah: Narration text helpers unavailable.");
+    return;
+  }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message && message.type === "reedah-toggle") {
@@ -338,7 +346,7 @@
   }
 
   function normalizeNarrationText(value) {
-    return value.replace(/[\r\n]/g, " ");
+    return narrationText.normalizeNarrationText(value);
   }
 
   function shouldIncludeTextNode(targetEl, node) {
@@ -366,7 +374,15 @@
         node = walker.nextNode();
         continue;
       }
-      text += normalizeNarrationText(node.nodeValue || "");
+      const value = normalizeNarrationText(node.nodeValue || "");
+      if (!value.length) {
+        node = walker.nextNode();
+        continue;
+      }
+      if (narrationText.shouldInsertImplicitSpace(text, value)) {
+        text += " ";
+      }
+      text += value;
       node = walker.nextNode();
     }
     return text;
@@ -764,6 +780,8 @@
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     let node = walker.nextNode();
     let offset = textOffset;
+    let hasSegment = false;
+    let previousChar = "";
 
     while (node) {
       if (!shouldIncludeTextNode(el, node)) {
@@ -772,10 +790,16 @@
       }
       const value = normalizeNarrationText(node.nodeValue || "");
       if (value.length) {
+        if (hasSegment &&
+          narrationText.shouldInsertImplicitSpaceChars(previousChar, value.charAt(0))) {
+          offset += 1;
+        }
         const start = offset;
         const end = offset + value.length;
         segments.push({ node, start, end });
         offset = end;
+        hasSegment = true;
+        previousChar = value.charAt(value.length - 1);
       }
       node = walker.nextNode();
     }
@@ -1067,8 +1091,29 @@
     if (message.type === "started") {
       if (session.logVoice && (message.voiceName || message.voiceIdentifier)) {
         console.info(
-          "Reedah: Using macOS voice:",
+          "Reedah: Using Kokoro voice:",
           message.voiceName || message.voiceIdentifier
+        );
+      }
+      return;
+    }
+
+    if (message.type === "prepared_sentence_jobs") {
+      if (!Array.isArray(message.sentenceJobs)) {
+        console.error("Reedah: Invalid prepared sentence jobs payload.");
+        return;
+      }
+      for (const job of message.sentenceJobs) {
+        if (!job || typeof job !== "object") {
+          console.error("Reedah: Invalid prepared sentence job.", job);
+          continue;
+        }
+        console.info(
+          "Reedah: Narration sentence sent to model:",
+          job.index,
+          job.location,
+          job.length,
+          JSON.stringify(job.text)
         );
       }
       return;
