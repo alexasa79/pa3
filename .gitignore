@@ -1,3 +1,5 @@
 .DS_Store
 native/bin/
+native/.venv/
+__pycache__/
 *.dSYM/

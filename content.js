@@ -1098,7 +1098,8 @@
       if (session.active && state.cancelRequested) return;
       console.error(
         "Reedah: Native narration error.",
-        message.error || "unknown_error"
+        message.error || "unknown_error",
+        message.details || null
       );
       if (session.active) {
         clearActiveNarration();
@@ -1429,7 +1430,7 @@
   function createAudioUrl(base64, mimeType) {
     try {
       const bytes = base64ToUint8Array(base64);
-      const blob = new Blob([bytes], { type: mimeType || "audio/mp4" });
+      const blob = new Blob([bytes], { type: mimeType || "audio/wav" });
       return URL.createObjectURL(blob);
     } catch (error) {
       console.error("Reedah: Failed to decode audio payload.", error);

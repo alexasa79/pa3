@@ -1,5 +1,8 @@
 const voiceInput = document.getElementById("voice");
 const rateInput = document.getElementById("rate");
+const pythonPathInput = document.getElementById("python-path");
+const modelInput = document.getElementById("model");
+const langCodeInput = document.getElementById("lang-code");
 const statusEl = document.getElementById("status");
 const saveButton = document.getElementById("save");
 const clearButton = document.getElementById("clear");
@@ -16,34 +19,43 @@ function setStatus(message, isError = false) {
 }
 
 function loadSettings() {
-  chrome.storage.local.get(["nativeVoice", "nativeRate"], (items) => {
-    if (chrome.runtime.lastError) {
-      setStatus("Failed to load settings.", true);
-      return;
-    }
+  chrome.storage.local.get(
+    ["nativeVoice", "nativeRate", "nativePythonPath", "nativeModel", "nativeLangCode"],
+    (items) => {
+      if (chrome.runtime.lastError) {
+        setStatus("Failed to load settings.", true);
+        return;
+      }
 
-    voiceInput.value = items.nativeVoice || "";
-    if (items.nativeRate == null) {
-      rateInput.value = "";
-    } else {
-      rateInput.value = String(items.nativeRate);
+      voiceInput.value = items.nativeVoice || "";
+      if (items.nativeRate == null) {
+        rateInput.value = "";
+      } else {
+        rateInput.value = String(items.nativeRate);
+      }
+      pythonPathInput.value = items.nativePythonPath || "";
+      modelInput.value = items.nativeModel || "";
+      langCodeInput.value = items.nativeLangCode || "";
     }
-  });
+  );
 }
 
 function saveSettings() {
   const voice = voiceInput.value.trim();
   const rateRaw = rateInput.value.trim();
+  const pythonPath = pythonPathInput.value.trim();
+  const model = modelInput.value.trim();
+  const langCode = langCodeInput.value.trim();
   let rate = null;
 
   if (rateRaw) {
     rate = Number(rateRaw);
     if (!Number.isFinite(rate)) {
-      setStatus("Rate must be a number.", true);
+      setStatus("Speed must be a number.", true);
       return;
     }
-    if (rate < 0 || rate > 1) {
-      setStatus("Rate must be between 0.0 and 1.0.", true);
+    if (rate < 0.5 || rate > 2) {
+      setStatus("Speed must be between 0.5 and 2.0.", true);
       return;
     }
   }
@@ -51,7 +63,10 @@ function saveSettings() {
   chrome.storage.local.set(
     {
       nativeVoice: voice,
-      nativeRate: rate
+      nativeRate: rate,
+      nativePythonPath: pythonPath,
+      nativeModel: model,
+      nativeLangCode: langCode
     },
     () => {
       if (chrome.runtime.lastError) {
@@ -65,16 +80,22 @@ function saveSettings() {
 }
 
 function clearSettings() {
-  chrome.storage.local.remove(["nativeVoice", "nativeRate"], () => {
-    if (chrome.runtime.lastError) {
-      setStatus("Failed to clear settings.", true);
-      return;
-    }
+  chrome.storage.local.remove(
+    ["nativeVoice", "nativeRate", "nativePythonPath", "nativeModel", "nativeLangCode"],
+    () => {
+      if (chrome.runtime.lastError) {
+        setStatus("Failed to clear settings.", true);
+        return;
+      }
 
-    voiceInput.value = "";
-    rateInput.value = "";
-    setStatus("Cleared.");
-  });
+      voiceInput.value = "";
+      rateInput.value = "";
+      pythonPathInput.value = "";
+      modelInput.value = "";
+      langCodeInput.value = "";
+      setStatus("Cleared.");
+    }
+  );
 }
 
 saveButton.addEventListener("click", saveSettings);

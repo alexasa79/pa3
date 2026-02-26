@@ -162,7 +162,7 @@ chrome.runtime.onConnect.addListener((port) => {
           utteranceId: message.utteranceId || null,
           index: message.index,
           audioBase64: message.audioBase64,
-          mimeType: message.mimeType || "audio/mp4",
+          mimeType: message.mimeType || "audio/wav",
           location: message.location,
           length: message.length
         });
@@ -189,7 +189,8 @@ chrome.runtime.onConnect.addListener((port) => {
         port.postMessage({
           type: "error",
           utteranceId: message.utteranceId || null,
-          error: message.message || "native_error"
+          error: message.message || "native_error",
+          details: message.details || null
         });
       }
     });
@@ -273,6 +274,15 @@ chrome.runtime.onConnect.addListener((port) => {
     if (settings.rate != null) {
       payload.rate = settings.rate;
     }
+    if (settings.pythonPath) {
+      payload.pythonPath = settings.pythonPath;
+    }
+    if (settings.model) {
+      payload.model = settings.model;
+    }
+    if (settings.langCode) {
+      payload.langCode = settings.langCode;
+    }
 
     try {
       hostPort.postMessage(payload);
@@ -297,11 +307,17 @@ chrome.runtime.onConnect.addListener((port) => {
 
 function getSettings() {
   return new Promise((resolve) => {
-    chrome.storage.local.get(["nativeVoice", "nativeRate"], (items) => {
-      const voice = (items.nativeVoice || "").trim();
-      const rate = parseRate(items.nativeRate);
-      resolve({ voice, rate });
-    });
+    chrome.storage.local.get(
+      ["nativeVoice", "nativeRate", "nativePythonPath", "nativeModel", "nativeLangCode"],
+      (items) => {
+        const voice = (items.nativeVoice || "").trim();
+        const rate = parseRate(items.nativeRate);
+        const pythonPath = (items.nativePythonPath || "").trim();
+        const model = (items.nativeModel || "").trim();
+        const langCode = (items.nativeLangCode || "").trim();
+        resolve({ voice, rate, pythonPath, model, langCode });
+      }
+    );
   });
 }
 

@@ -10,7 +10,7 @@
     <main class="panel">
       <header class="panel__header">
         <h1>Reedah Settings</h1>
-        <p>Configure macOS narration settings for the native host.</p>
+        <p>Configure Kokoro settings for the Python native host.</p>
       </header>
 
       <section class="field">
@@ -20,24 +20,60 @@
           type="text"
           autocomplete="off"
           spellcheck="false"
-          placeholder="e.g., Samantha or com.apple.speech.synthesis.voice.Alex"
+          placeholder="e.g., am_adam or af_heart"
         />
-        <p class="hint">Leave blank to use the system default voice.</p>
+        <p class="hint">Leave blank to use the default Kokoro voice.</p>
       </section>
 
       <section class="field">
-        <label for="rate">Speech rate (optional)</label>
+        <label for="rate">Speech speed (optional)</label>
         <input
           id="rate"
           type="number"
-          min="0"
-          max="1"
+          min="0.5"
+          max="2"
           step="0.05"
           autocomplete="off"
           spellcheck="false"
-          placeholder="0.5"
+          placeholder="1.0"
         />
-        <p class="hint">Value between 0.0 and 1.0 mapped to speech rate. Leave blank for default.</p>
+        <p class="hint">Kokoro speed multiplier. Leave blank to use 1.0.</p>
+      </section>
+
+      <section class="field">
+        <label for="python-path">Kokoro Python Path (optional)</label>
+        <input
+          id="python-path"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="/Users/you/hobbies/reedah/native/.venv/bin/python"
+        />
+        <p class="hint">Leave blank to use Reedah's default path: native/.venv/bin/python.</p>
+      </section>
+
+      <section class="field">
+        <label for="model">Model (optional)</label>
+        <input
+          id="model"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="mlx-community/Kokoro-82M-bf16"
+        />
+        <p class="hint">Leave blank to use the default Kokoro model.</p>
+      </section>
+
+      <section class="field">
+        <label for="lang-code">Language Code (optional)</label>
+        <input
+          id="lang-code"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="a"
+        />
+        <p class="hint">Kokoro language code, for example <code>a</code> for en-us.</p>
       </section>
 
       <div class="actions">
