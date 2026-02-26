@@ -4,6 +4,9 @@ const statusEl = document.getElementById("status");
 const saveButton = document.getElementById("save");
 const clearButton = document.getElementById("clear");
 const DEFAULT_VOICE = "am_adam";
+const NIGHT_START_HOUR = 19;
+const NIGHT_END_HOUR = 6;
+const THEME_REFRESH_INTERVAL_MS = 60 * 1000;
 const KOKORO_VOICES = [
   "af_alloy",
   "af_aoede",
@@ -60,10 +63,31 @@ const KOKORO_VOICES = [
   "zm_yunxia",
   "zm_yunyang"
 ];
+let themeTimer = null;
+
+function resolveTheme(date = new Date()) {
+  const hour = date.getHours();
+  if (hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR) {
+    return "dark";
+  }
+  return "light";
+}
+
+function applyThemeForCurrentTime() {
+  document.documentElement.dataset.theme = resolveTheme();
+}
+
+function startThemeScheduler() {
+  applyThemeForCurrentTime();
+  if (themeTimer !== null) {
+    window.clearInterval(themeTimer);
+  }
+  themeTimer = window.setInterval(applyThemeForCurrentTime, THEME_REFRESH_INTERVAL_MS);
+}
 
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
-  statusEl.style.color = isError ? "#b91c1c" : "#15803d";
+  statusEl.style.color = isError ? "var(--status-error)" : "var(--status-ok)";
   if (!message) return;
 
   window.clearTimeout(setStatus._timer);
@@ -161,6 +185,11 @@ function clearSettings() {
 
 saveButton.addEventListener("click", saveSettings);
 clearButton.addEventListener("click", clearSettings);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  applyThemeForCurrentTime();
+});
 
+startThemeScheduler();
 populateVoiceOptions();
 loadSettings();
