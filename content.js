@@ -1009,7 +1009,6 @@
 
     session.el = el;
     activateSession(session, playbackId, el);
-    startPrefetch(el);
     updateControls();
   }
 
@@ -1072,7 +1071,7 @@
     try {
       port.postMessage({ type: "start", text, utteranceId, sentenceRanges });
     } catch (error) {
-      console.error("Reedah: Failed to start native narration.", error);
+      console.error("Reedah: Failed to start native narration.", { utteranceId, textLength: text.length, sentences: sentenceRanges.length, error });
       try {
         port.disconnect();
       } catch (disconnectError) {
@@ -1135,6 +1134,7 @@
       if (session.active && session.playbackId === state.playbackId) {
         state.nativeEnded = true;
         maybeStartPlayback(session.playbackId);
+        startPrefetch(session.el);
       }
       return;
     }
@@ -1144,7 +1144,8 @@
       console.error(
         "Reedah: Native narration error.",
         message.error || "unknown_error",
-        message.details || null
+        message.details || null,
+        { utteranceId: session.utteranceId, role: session.active ? "active" : "prefetch" }
       );
       if (session.active) {
         clearActiveNarration();
@@ -1155,19 +1156,29 @@
   }
 
   function handleSessionDisconnect(session) {
-    if (session.disconnecting) {
+    if (session.disconnecting || session.nativeEnded) {
       session.disconnecting = false;
       return;
     }
 
+    const lastError = chrome.runtime.lastError;
+    const context = {
+      utteranceId: session.utteranceId,
+      role: session.active ? "active" : "prefetch",
+      nativeEnded: session.nativeEnded,
+      queuedAudio: session.audioQueue ? session.audioQueue.length : 0,
+      playbackId: session.playbackId,
+      lastError: lastError ? lastError.message : null
+    };
+
     if (session.active) {
       if (state.cancelRequested) return;
-      console.error("Reedah: Native narration disconnected unexpectedly.");
+      console.error("Reedah: Native narration disconnected unexpectedly.", context);
       clearActiveNarration();
       return;
     }
 
-    console.error("Reedah: Prefetch narration disconnected unexpectedly.");
+    console.error("Reedah: Prefetch narration disconnected unexpectedly.", context);
     discardPrefetchSession(session);
   }
 
@@ -1316,7 +1327,7 @@
   function enqueueAudio(session, payload) {
     if (session.active && session.playbackId !== state.playbackId) return;
     if (!payload || typeof payload.audioBase64 !== "string") {
-      console.error("Reedah: Invalid audio payload from native host.");
+      console.error("Reedah: Invalid audio payload from native host.", { utteranceId: session.utteranceId, role: session.active ? "active" : "prefetch", payload });
       if (session.active) {
         clearActiveNarration();
       } else {
@@ -1327,7 +1338,7 @@
 
     const url = createAudioUrl(payload.audioBase64, payload.mimeType);
     if (!url) {
-      console.error("Reedah: Failed to create audio URL.");
+      console.error("Reedah: Failed to create audio URL.", { utteranceId: session.utteranceId, mimeType: payload.mimeType, base64Length: payload.audioBase64.length });
       if (session.active) {
         clearActiveNarration();
       } else {
@@ -1452,7 +1463,7 @@
       if (state.currentAudio !== audio) return;
       if (state.cancelRequested) return;
       const errorCode = audio.error ? audio.error.code : null;
-      console.error("Reedah: Audio playback failed.", errorCode);
+      console.error("Reedah: Audio playback failed.", { errorCode, playbackId, src: audio.src, queueSize: state.audioQueue.length });
       cleanupCurrentAudio();
       clearActiveNarration();
     };
@@ -1466,7 +1477,7 @@
       if (error && error.name === "AbortError") {
         return;
       }
-      console.error("Reedah: Failed to start audio playback.", error);
+      console.error("Reedah: Failed to start audio playback.", { error, playbackId, src: audio.src });
       cleanupCurrentAudio();
       clearActiveNarration();
     });
@@ -1478,7 +1489,7 @@
       const blob = new Blob([bytes], { type: mimeType || "audio/wav" });
       return URL.createObjectURL(blob);
     } catch (error) {
-      console.error("Reedah: Failed to decode audio payload.", error);
+      console.error("Reedah: Failed to decode audio payload.", { error, mimeType, base64Length: base64 ? base64.length : 0 });
       return null;
     }
   }
@@ -1855,7 +1866,7 @@
         if (error && error.name === "AbortError") {
           return;
         }
-        console.error("Reedah: Failed to resume audio playback.", error);
+        console.error("Reedah: Failed to resume audio playback.", { error, src: state.currentAudio ? state.currentAudio.src : null });
         clearActiveNarration();
       });
       updateControls();

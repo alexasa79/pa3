@@ -195,7 +195,7 @@ async function streamTTSResponse(port, response) {
         try {
           relayServerEvent(port, JSON.parse(trimmed));
         } catch (parseError) {
-          console.error("Reedah: Failed to parse server event.", parseError);
+          console.error("Reedah: Failed to parse server event.", { error: parseError, raw: trimmed.slice(0, 200) });
         }
       }
     }
@@ -203,7 +203,7 @@ async function streamTTSResponse(port, response) {
       try {
         relayServerEvent(port, JSON.parse(buffer.trim()));
       } catch (parseError) {
-        console.error("Reedah: Failed to parse final server event.", parseError);
+        console.error("Reedah: Failed to parse final server event.", { error: parseError, raw: buffer.trim().slice(0, 200) });
       }
     }
   } finally {
@@ -365,7 +365,7 @@ chrome.runtime.onConnect.addListener((port) => {
         } catch (_ignored) {
           // Use status code as detail.
         }
-        console.error("Reedah: TTS server error.", errorDetail);
+        console.error("Reedah: TTS server error.", { status: response.status, detail: errorDetail, utteranceId });
         port.postMessage({
           type: "error",
           utteranceId,
@@ -381,7 +381,7 @@ chrome.runtime.onConnect.addListener((port) => {
         port.postMessage({ type: "cancelled", utteranceId });
         return;
       }
-      console.error("Reedah: TTS server request failed.", error);
+      console.error("Reedah: TTS server request failed.", { error, utteranceId });
       port.postMessage({
         type: "error",
         utteranceId,
