@@ -42,7 +42,13 @@
           /\d/.test(fullText[i - 1]) &&
           /\d/.test(fullText[i + 1]);
 
-        if (fullText[i] === "." && (inAbbrev || inNumber)) {
+        const midWord = fullText[i] === "." &&
+          i > 0 &&
+          i + 1 < len &&
+          !/[\s.!?]/.test(fullText[i - 1]) &&
+          !/[\s.!?]/.test(fullText[i + 1]);
+
+        if (fullText[i] === "." && (inAbbrev || inNumber || midWord)) {
           continue;
         }
         let end = i + 1;
