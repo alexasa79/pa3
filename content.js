@@ -1,5 +1,8 @@
 (() => {
-  if (window.top !== window) return;
+  const frameDetection = window.ReedahFrameDetection;
+  if (!frameDetection) { console.error("Reedah: Frame detection unavailable."); return; }
+  if (!frameDetection.shouldRunInFrame()) return;
+  const IN_EDITOR_FRAME = frameDetection.isEditorFrame();
 
   const MIN_TEXT_LENGTH = 5;
   const MIN_HEADING_LENGTH = 3;
@@ -257,9 +260,10 @@
   function isCandidate(el) {
     if (!el || !el.isConnected) return false;
 
-    if (el.closest(
-      "nav, footer, header, aside, form, button, input, textarea, select, option, pre, code, script, style, [contenteditable='true'], .reedah-overlay, .reedah-controls"
-    )) {
+    const exclusions = IN_EDITOR_FRAME
+      ? "nav, footer, header, aside, button, input, textarea, select, option, pre, code, script, style, .reedah-overlay, .reedah-controls"
+      : "nav, footer, header, aside, form, button, input, textarea, select, option, pre, code, script, style, [contenteditable='true'], .reedah-overlay, .reedah-controls";
+    if (el.closest(exclusions)) {
       return false;
     }
 
@@ -342,7 +346,8 @@
   }
 
   function getText(el) {
-    return (el.innerText || "").replace(/\s+/g, " ").trim();
+    const raw = IN_EDITOR_FRAME ? (el.textContent || "") : (el.innerText || "");
+    return raw.replace(/\s+/g, " ").trim();
   }
 
   function normalizeNarrationText(value) {
@@ -2236,6 +2241,8 @@
 
     if (anchorX < 0 || anchorX > window.innerWidth) return false;
     if (anchorY < 0 || anchorY > window.innerHeight) return false;
+
+    if (IN_EDITOR_FRAME) return true;
 
     let elAtPoint = document.elementFromPoint(anchorX, anchorY);
     if (!elAtPoint) return false;

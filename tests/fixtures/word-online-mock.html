@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Word Online Mock</title>
+  <style>
+    body { font-family: Calibri, sans-serif; margin: 0; padding: 0; }
+    .PagesContainer { padding: 20px; }
+    .Page { background: #fff; max-width: 816px; margin: 0 auto; padding: 96px 72px; box-shadow: 0 0 4px rgba(0,0,0,.2); }
+    .OutlineElement { margin-bottom: 0; }
+    .Paragraph { margin: 0; padding: 0; line-height: 1.5; }
+    .TextRun { font-size: 11pt; }
+    .NormalTextRun { }
+    .HiddenParagraph { display: none; }
+    .EOP { font-size: 11pt; }
+  </style>
+</head>
+<body>
+  <form id="form1">
+    <div contenteditable="true" role="document" aria-label="Editing area">
+      <div class="PagesContainer">
+        <div class="Page">
+          <div class="PageContent">
+
+            <div class="OutlineElement Ltr">
+              <p class="Paragraph" role="heading" aria-level="1">
+                <span class="TextRun"><span class="NormalTextRun">Sample Document Title</span></span>
+                <span class="EOP">&#xFEFF;</span>
+              </p>
+            </div>
+
+            <div class="OutlineElement Ltr">
+              <p class="Paragraph">
+                <span class="TextRun"><span class="NormalTextRun">This is the first paragraph of the document. It contains enough text to be considered a valid candidate for narration by Reedah.</span></span>
+                <span class="EOP">&#xFEFF;</span>
+              </p>
+            </div>
+
+            <div class="OutlineElement Ltr">
+              <p class="Paragraph">
+                <span class="TextRun"><span class="NormalTextRun">Here is the second paragraph with </span></span>
+                <span class="TextRun"><span class="NormalTextRun" style="font-weight: bold;">bold text</span></span>
+                <span class="TextRun"><span class="NormalTextRun"> in the middle of it.</span></span>
+                <span class="EOP">&#xFEFF;</span>
+              </p>
+            </div>
+
+            <div class="OutlineElement Ltr">
+              <p class="Paragraph HiddenParagraph">
+                <span class="TextRun"><span class="NormalTextRun">This hidden paragraph should not be narrated.</span></span>
+                <span class="EOP">&#xFEFF;</span>
+              </p>
+            </div>
+
+            <div class="OutlineElement Ltr">
+              <p class="Paragraph">
+                <span class="TextRun"><span class="NormalTextRun">Short</span></span>
+                <span class="EOP">&#xFEFF;</span>
+              </p>
+            </div>
+
+            <div class="OutlineElement Ltr">
+              <p class="Paragraph">
+                <span class="TextRun"><span class="NormalTextRun">The third visible paragraph provides additional content for testing the narration flow across multiple paragraphs in Word Online.</span></span>
+                <span class="EOP">&#xFEFF;</span>
+              </p>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  </form>
+</body>
+</html>
