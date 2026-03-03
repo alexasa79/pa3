@@ -155,7 +155,6 @@
     state.enabled = true;
     document.documentElement.classList.add("reedah-enabled");
     notifyState();
-    ensureControls();
 
     scanParagraphs();
     attachObservers();
@@ -254,6 +253,11 @@
     }
 
     cleanupOverlays();
+
+    if (state.overlays.size > 0) {
+      ensureControls();
+    }
+
     updatePositions();
   }
 
