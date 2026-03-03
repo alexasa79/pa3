@@ -27,6 +27,16 @@ test("buildSentenceRanges does not split on mid-word periods", () => {
   assert.ok(sentences[1].includes("ASP.NET"));
 });
 
+test("buildSentenceRanges does not split on acronym-ending periods", () => {
+  const text = "The U.S. economy grew steadily through the decade. " +
+    "The A.I. sector also expanded rapidly in the same period.";
+  const sentences = extractSentences(text);
+
+  assert.equal(sentences.length, 2);
+  assert.ok(sentences[0].includes("U.S."));
+  assert.ok(sentences[1].includes("A.I."));
+});
+
 test("buildSentenceRanges ends a sentence after a decimal number", () => {
   const text = "The ratio was 1.5 for the sample set. " +
     "The following sentence is also long enough to be separate.";

@@ -48,7 +48,12 @@
           !/[\s.!?]/.test(fullText[i - 1]) &&
           !/[\s.!?]/.test(fullText[i + 1]);
 
-        if (fullText[i] === "." && (inAbbrev || inNumber || midWord)) {
+        const inAcronym = fullText[i] === "." &&
+          i >= 2 &&
+          /[A-Za-z]/.test(fullText[i - 1]) &&
+          fullText[i - 2] === ".";
+
+        if (fullText[i] === "." && (inAbbrev || inNumber || midWord || inAcronym)) {
           continue;
         }
         let end = i + 1;
