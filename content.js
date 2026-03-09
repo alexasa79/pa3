@@ -285,6 +285,13 @@
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return false;
 
+    if (!isListItem(el)) {
+      const parentListItem = el.parentElement && el.parentElement.closest("li");
+      if (parentListItem && isCandidate(parentListItem)) {
+        return false;
+      }
+    }
+
     return true;
   }
 
