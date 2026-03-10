@@ -482,7 +482,8 @@
       return null;
     }
 
-    const prefix = orderedListNarration.buildOrderedListNarrationPrefix(itemNumber);
+    const markerType = list.getAttribute("type") || "1";
+    const prefix = orderedListNarration.buildOrderedListNarrationPrefix(itemNumber, markerType);
     if (!prefix) {
       console.error("Reedah: Failed to build ordered list narration prefix.");
       return null;

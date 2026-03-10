@@ -123,7 +123,25 @@
     return `${majorWords} ${scaleLabel} ${remainderWords}`;
   }
 
-  function buildOrderedListNarrationPrefix(number) {
+  function numberToAlpha(n) {
+    if (!Number.isSafeInteger(n) || n < 1) return null;
+    let result = "";
+    let remaining = n;
+    while (remaining > 0) {
+      remaining -= 1;
+      result = String.fromCharCode(97 + (remaining % 26)) + result;
+      remaining = Math.floor(remaining / 26);
+    }
+    return result;
+  }
+
+  function buildOrderedListNarrationPrefix(number, markerType) {
+    if (markerType === undefined || markerType === null) markerType = "1";
+    if (markerType === "a" || markerType === "A") {
+      const alpha = numberToAlpha(number);
+      if (!alpha) return null;
+      return `${alpha.toUpperCase()}. `;
+    }
     const words = integerToEnglishCardinal(number);
     if (!words) return null;
     const capitalized = `${words[0].toUpperCase()}${words.slice(1)}`;
@@ -134,6 +152,7 @@
     parseIntegerAttribute,
     resolveOrderedListItemNumber,
     integerToEnglishCardinal,
+    numberToAlpha,
     buildOrderedListNarrationPrefix
   };
 

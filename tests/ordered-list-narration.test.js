@@ -4,6 +4,7 @@ const {
   parseIntegerAttribute,
   resolveOrderedListItemNumber,
   integerToEnglishCardinal,
+  numberToAlpha,
   buildOrderedListNarrationPrefix
 } = require("../ordered_list_narration");
 
@@ -50,4 +51,49 @@ test("buildOrderedListNarrationPrefix formats spoken prefixes", () => {
 test("buildOrderedListNarrationPrefix returns null for unsupported values", () => {
   assert.equal(buildOrderedListNarrationPrefix(Number.NaN), null);
   assert.equal(buildOrderedListNarrationPrefix(1000000000000), null);
+});
+
+test("numberToAlpha converts positive integers to alphabetic strings", () => {
+  assert.equal(numberToAlpha(1), "a");
+  assert.equal(numberToAlpha(2), "b");
+  assert.equal(numberToAlpha(26), "z");
+});
+
+test("numberToAlpha wraps around after z", () => {
+  assert.equal(numberToAlpha(27), "aa");
+  assert.equal(numberToAlpha(28), "ab");
+  assert.equal(numberToAlpha(53), "ba");
+});
+
+test("numberToAlpha returns null for non-positive integers", () => {
+  assert.equal(numberToAlpha(0), null);
+  assert.equal(numberToAlpha(-1), null);
+  assert.equal(numberToAlpha(Number.NaN), null);
+});
+
+test("buildOrderedListNarrationPrefix with alphabetic marker type 'a'", () => {
+  assert.equal(buildOrderedListNarrationPrefix(1, "a"), "A. ");
+  assert.equal(buildOrderedListNarrationPrefix(2, "a"), "B. ");
+  assert.equal(buildOrderedListNarrationPrefix(26, "a"), "Z. ");
+  assert.equal(buildOrderedListNarrationPrefix(27, "a"), "AA. ");
+});
+
+test("buildOrderedListNarrationPrefix with marker type 'A' matches 'a'", () => {
+  assert.equal(buildOrderedListNarrationPrefix(1, "A"), "A. ");
+  assert.equal(buildOrderedListNarrationPrefix(3, "A"), "C. ");
+});
+
+test("buildOrderedListNarrationPrefix with alphabetic type returns null for non-positive", () => {
+  assert.equal(buildOrderedListNarrationPrefix(0, "a"), null);
+  assert.equal(buildOrderedListNarrationPrefix(-1, "A"), null);
+});
+
+test("buildOrderedListNarrationPrefix with roman numeral types uses English cardinal", () => {
+  assert.equal(buildOrderedListNarrationPrefix(3, "i"), "Three. ");
+  assert.equal(buildOrderedListNarrationPrefix(3, "I"), "Three. ");
+});
+
+test("buildOrderedListNarrationPrefix with default/missing type preserves current behavior", () => {
+  assert.equal(buildOrderedListNarrationPrefix(2), "Two. ");
+  assert.equal(buildOrderedListNarrationPrefix(2, "1"), "Two. ");
 });
