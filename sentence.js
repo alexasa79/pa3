@@ -1,6 +1,6 @@
 (() => {
   const DEFAULT_MIN_SENTENCE_LENGTH = 20;
-  const DEFAULT_ABBREVIATIONS = ["e.g.", "i.e."];
+  const DEFAULT_ABBREVIATIONS = ["e.g.", "i.e.", "Mr."];
 
   function normalizeOptions(options = {}) {
     const abbreviations = Array.isArray(options.abbreviations)

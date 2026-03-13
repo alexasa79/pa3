@@ -16,6 +16,16 @@ test("buildSentenceRanges keeps abbreviations and decimals intact", () => {
   assert.ok(sentences[0].includes("3.14"));
 });
 
+test("buildSentenceRanges keeps Mr. attached to the following name", () => {
+  const text = "Mr. Smith delivered a detailed update during the weekly planning meeting. " +
+    "The next sentence is also long enough to be separate.";
+  const sentences = extractSentences(text);
+
+  assert.equal(sentences.length, 2);
+  assert.equal(sentences[0], "Mr. Smith delivered a detailed update during the weekly planning meeting.");
+  assert.equal(sentences[1], "The next sentence is also long enough to be separate.");
+});
+
 test("buildSentenceRanges does not split on mid-word periods", () => {
   const text = "Vert.x is a reactive toolkit for the JVM. " +
     "It also supports Node.js style APIs and ASP.NET patterns.";
