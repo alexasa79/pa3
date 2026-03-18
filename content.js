@@ -114,9 +114,7 @@
   }
   const narrationText = window.ReedahNarrationText;
   if (!narrationText ||
-    typeof narrationText.normalizeNarrationText !== "function" ||
-    typeof narrationText.shouldInsertImplicitSpace !== "function" ||
-    typeof narrationText.shouldInsertImplicitSpaceChars !== "function") {
+    typeof narrationText.normalizeNarrationText !== "function") {
     console.error("Reedah: Narration text helpers unavailable.");
     return;
   }
@@ -394,9 +392,6 @@
       if (!value.length) {
         node = walker.nextNode();
         continue;
-      }
-      if (narrationText.shouldInsertImplicitSpace(text, value)) {
-        text += " ";
       }
       text += value;
       node = walker.nextNode();
@@ -797,8 +792,6 @@
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     let node = walker.nextNode();
     let offset = textOffset;
-    let hasSegment = false;
-    let previousChar = "";
 
     while (node) {
       if (!shouldIncludeTextNode(el, node)) {
@@ -807,16 +800,10 @@
       }
       const value = normalizeNarrationText(node.nodeValue || "");
       if (value.length) {
-        if (hasSegment &&
-          narrationText.shouldInsertImplicitSpaceChars(previousChar, value.charAt(0))) {
-          offset += 1;
-        }
         const start = offset;
         const end = offset + value.length;
         segments.push({ node, start, end });
         offset = end;
-        hasSegment = true;
-        previousChar = value.charAt(value.length - 1);
       }
       node = walker.nextNode();
     }
