@@ -45,7 +45,7 @@ function drawIcon(size, enabled) {
   const radius = center - 1;
 
   ctx.clearRect(0, 0, size, size);
-  ctx.fillStyle = enabled ? "#2E7D32" : "#424242";
+  ctx.fillStyle = enabled ? "#2563EB" : "#424242";
   ctx.beginPath();
   ctx.arc(center, center, radius, 0, Math.PI * 2);
   ctx.fill();

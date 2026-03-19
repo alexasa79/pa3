@@ -10,7 +10,7 @@
   height: 18px;
   border-radius: 999px;
   border: 1px solid #0a0a0a;
-  background: #1b5e20;
+  background: #1976D2;
   color: #ffffff;
   font-family: "Avenir Next", "Avenir", "Helvetica Neue", "Segoe UI", sans-serif;
   font-size: 10px;
@@ -49,15 +49,15 @@
 }
 
 .reedah-highlight.reedah-highlight-on-light {
-  --reedah-highlight-base: rgba(219, 244, 226, 0.93);
-  --reedah-word-underline: rgba(38, 128, 74, 0.62);
-  --reedah-word-underline-strong: rgba(29, 110, 62, 0.95);
+  --reedah-highlight-base: rgba(219, 234, 254, 0.93);
+  --reedah-word-underline: rgba(59, 130, 246, 0.62);
+  --reedah-word-underline-strong: rgba(37, 99, 235, 0.95);
 }
 
 .reedah-highlight.reedah-highlight-on-dark {
-  --reedah-highlight-base: rgba(18, 52, 35, 0.91);
-  --reedah-word-underline: rgba(134, 236, 173, 0.7);
-  --reedah-word-underline-strong: rgba(189, 255, 214, 0.98);
+  --reedah-highlight-base: rgba(18, 35, 68, 0.91);
+  --reedah-word-underline: rgba(147, 197, 253, 0.7);
+  --reedah-word-underline-strong: rgba(191, 219, 254, 0.98);
 }
 
 .reedah-highlight.reedah-highlight-start {
@@ -203,7 +203,7 @@
 
 .reedah-controls__btn:hover:not(:disabled),
 .reedah-controls__btn:focus-visible:not(:disabled) {
-  background: rgba(46, 125, 50, 0.4);
+  background: rgba(59, 130, 246, 0.4);
 }
 
 .reedah-controls__meta {
