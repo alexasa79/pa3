@@ -59,6 +59,7 @@ final class DictationController: ObservableObject {
     @Published var lastReplaceSet = false
     @Published var lastUpdate: Date?
     @Published var debugMessage = "Ready"
+    @Published var serviceMessage = ""
 
     var onPasteAndHide: ((String) -> Void)?
     var onHide: (() -> Void)?
@@ -78,6 +79,14 @@ final class DictationController: ObservableObject {
         self.vocabulary = Vocabulary(path: installationDirectory().appendingPathComponent("vocabulary.txt"))
         transcriber.setSystemPrompt(vocabulary.systemPrompt())
         transcriber.setLanguage(language.rawValue)
+        transcriber.setStatusHandler { [weak self] message in
+            Task { @MainActor in
+                guard let self else { return }
+                self.serviceMessage = message
+                self.debugMessage = message
+                self.updateStatusFor(self.combineText())
+            }
+        }
         updateDisplay()
     }
 
@@ -92,6 +101,7 @@ final class DictationController: ObservableObject {
         lastUpdate = nil
         editMode = false
         editText = ""
+        serviceMessage = ""
         debugMessage = "Ready"
         updateDisplay()
     }
@@ -287,6 +297,9 @@ final class DictationController: ObservableObject {
 
     private func updateStatusFor(_ value: String) {
         var label = dictating ? "DICTATING \(language.tag)" : "PAUSED \(language.tag)"
+        if dictating, !serviceMessage.isEmpty {
+            label = "\(serviceMessage) \(language.tag)"
+        }
         if spellChecking {
             label = "SPELL CHECKING"
         }
@@ -298,6 +311,8 @@ final class DictationController: ObservableObject {
     }
 
     private func handleTranscription(_ raw: String) {
+        serviceMessage = ""
+        debugMessage = "Dictation active"
         segment = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         updateDisplay()
     }
@@ -308,6 +323,7 @@ final class DictationController: ObservableObject {
         if editMode { cancelEditMode() }
         segment = ""
         dictating = true
+        serviceMessage = ""
         debugMessage = "Starting microphone..."
         clearSelection()
         transcriber.startTranscribe { [weak self] value in
@@ -321,6 +337,7 @@ final class DictationController: ObservableObject {
         Logger.info("stopDictation requested")
         if !dictating { return }
         dictating = false
+        serviceMessage = ""
         debugMessage = "Stopping dictation..."
         let transcriber = transcriber
         DispatchQueue.global(qos: .userInitiated).async {

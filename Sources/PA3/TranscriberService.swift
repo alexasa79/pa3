@@ -95,12 +95,15 @@ final class TranscriberService {
 
     private let stateLock = NSLock()
     private let taskLock = NSLock()
+    private let statusLock = NSLock()
     private var stableText = ""
     private var stableRunes = 0
     private var previousSentences: [String] = []
     private var systemPrompt = ""
     private var language = "en"
     private var isStopping = false
+    private var generation = 0
+    private var statusHandler: (@Sendable (String) -> Void)?
 
     private var audioEngine: AVAudioEngine?
     private var captureSession: AVCaptureSession?
@@ -109,6 +112,7 @@ final class TranscriberService {
     private var captureQueue = DispatchQueue(label: "pa3.audio.capture")
     private var workerThread: Thread?
     private var currentTask: URLSessionDataTask?
+    private var ownedWhisperProcess: Process?
     private var timestamp = ""
     private var sampleRate = defaultSampleRate
     private let startupLock = NSLock()
@@ -124,7 +128,7 @@ final class TranscriberService {
 
     func warmUp() {
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            self?.ensureWhisperServerStarted()
+            _ = self?.ensureWhisperServerStarted()
         }
     }
 
@@ -140,6 +144,12 @@ final class TranscriberService {
         stateLock.unlock()
     }
 
+    func setStatusHandler(_ handler: (@Sendable (String) -> Void)?) {
+        statusLock.lock()
+        statusHandler = handler
+        statusLock.unlock()
+    }
+
     func stablePrefixRunes() -> Int {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -151,6 +161,8 @@ final class TranscriberService {
         stopTranscribe()
 
         stateLock.lock()
+        generation += 1
+        let startGeneration = generation
         stableText = ""
         stableRunes = 0
         previousSentences = []
@@ -164,13 +176,30 @@ final class TranscriberService {
         debugLock.unlock()
 
         timestamp = Self.recordingTimestamp()
-        startCaptureAndWorker(receiver: receiver)
+        if skipWhisper {
+            startCaptureAndWorker(receiver: receiver)
+            return
+        }
+        reportStatus("Starting Whisper...")
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            guard self.ensureWhisperServerStarted(generation: startGeneration) else {
+                Logger.warn("Whisper startup did not complete for generation \(startGeneration)")
+                return
+            }
+            guard self.shouldContinue(generation: startGeneration) else {
+                Logger.info("Skipping capture start for stale generation \(startGeneration)")
+                return
+            }
+            self.startCaptureAndWorker(receiver: receiver)
+        }
     }
 
     func stopTranscribe() {
         Logger.info("TranscriberService.stopTranscribe")
         stateLock.lock()
         isStopping = true
+        generation += 1
         stateLock.unlock()
 
         taskLock.lock()
@@ -180,8 +209,12 @@ final class TranscriberService {
 
         sampleQueue?.close()
         workerThread?.cancel()
-        while workerThread?.isExecuting == true {
+        let deadline = Date().addingTimeInterval(0.5)
+        while workerThread?.isExecuting == true && Date() < deadline {
             Thread.sleep(forTimeInterval: 0.01)
+        }
+        if workerThread?.isExecuting == true {
+            Logger.warn("transcription worker still exiting; stopTranscribe continuing")
         }
         workerThread = nil
         sampleQueue = nil
@@ -203,6 +236,7 @@ final class TranscriberService {
 
     func close() {
         stopTranscribe()
+        stopOwnedWhisperServer()
     }
 
     private func startCaptureAndWorker(receiver: @escaping @Sendable (String) -> Void) {
@@ -403,7 +437,9 @@ final class TranscriberService {
     }
 
     private func transcribeSlice(samples: [Float], timestamp: String, sampleRate: Int, receiver: @escaping @Sendable (String) -> Void) -> Int {
-        ensureWhisperServerStarted()
+        guard ensureWhisperServerStarted() else {
+            return 0
+        }
         let paddingSamples = max(0, Int(round(Double(sampleRate) * silencePadding)))
         let padded = [Float](repeating: 0, count: paddingSamples) + samples
         let wav = WAVEncoder.encode(samples: padded, sampleRate: sampleRate)
@@ -465,6 +501,7 @@ final class TranscriberService {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
         Logger.info("Sending Whisper request bytes=\(body.count)")
+        reportStatus("Transcribing...")
 
         let syncTask = SyncHTTP.dataTask(for: request)
         let task = syncTask.task
@@ -504,6 +541,7 @@ final class TranscriberService {
 
             let text = joined.text
             Logger.info("Received Whisper transcription chars=\(text.count)")
+            reportStatus("Dictation active")
             DispatchQueue.main.async {
                 receiver(text)
             }
@@ -515,7 +553,9 @@ final class TranscriberService {
     }
 
     func debugTranscribeWAV(_ wav: Data) -> String {
-        ensureWhisperServerStarted()
+        guard ensureWhisperServerStarted() else {
+            return ""
+        }
         final class Box: @unchecked Sendable {
             let lock = NSLock()
             var text = ""
@@ -554,10 +594,15 @@ final class TranscriberService {
         try? wav.write(to: file)
     }
 
-    private func startWhisperServer() {
+    private func startWhisperServer(generation: Int? = nil) -> Bool {
         if isWhisperPortOpen() {
             Logger.info("Whisper server is already reachable on port \(whisperPort)")
-            return
+            reportStatus("Whisper ready")
+            return true
+        }
+        reportStatus("Starting Whisper...")
+        if let generation, !shouldContinue(generation: generation) {
+            return false
         }
 
         let installDir = installationDirectory()
@@ -565,11 +610,6 @@ final class TranscriberService {
         let server = buildDir.appendingPathComponent("bin/whisper-server")
         let model = installDir.appendingPathComponent("models/whisper.ggml")
         let args = ["-m", model.path, "--port", "\(whisperPort)"]
-
-        if isServerRunning(serverPath: server.path, args: args) {
-            Logger.info("Whisper server is already running")
-            return
-        }
 
         let process = Process()
         process.executableURL = server
@@ -586,55 +626,92 @@ final class TranscriberService {
         ]) { _, new in new }
         do {
             try process.run()
+            taskLock.lock()
+            ownedWhisperProcess = process
+            taskLock.unlock()
             Logger.info("Started whisper-server pid \(process.processIdentifier)")
         } catch {
             Logger.error("Failed to start whisper-server: \(error)")
+            reportStatus("Whisper failed to start")
+            return false
         }
-        waitForWhisperServer(timeout: 45)
+        return waitForWhisperServer(timeout: 45, generation: generation)
     }
 
-    private func ensureWhisperServerStarted() {
+    private func ensureWhisperServerStarted(generation: Int? = nil) -> Bool {
         startupLock.lock()
         if startupStarted {
             startupLock.unlock()
             if !isWhisperPortOpen() {
-                waitForWhisperServer(timeout: 45)
+                reportStatus("Waiting for Whisper...")
+                return waitForWhisperServer(timeout: 45, generation: generation)
             }
-            return
+            reportStatus("Whisper ready")
+            return true
         }
         startupStarted = true
         startupLock.unlock()
-        startWhisperServer()
+        return startWhisperServer(generation: generation)
     }
 
-    private func isServerRunning(serverPath: String, args: [String]) -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["aux"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let text = String(data: data, encoding: .utf8) else { return false }
-            let expected = ([serverPath] + args).joined(separator: " ")
-            return text.contains(expected)
-        } catch {
-            Logger.warn("Unable to inspect running processes: \(error)")
-            return false
-        }
-    }
-
-    private func waitForWhisperServer(timeout: TimeInterval) {
+    private func waitForWhisperServer(timeout: TimeInterval, generation: Int? = nil) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
+        var lastReport = Date.distantPast
         while Date() < deadline {
+            if let generation, !shouldContinue(generation: generation) {
+                Logger.info("Whisper startup cancelled for generation \(generation)")
+                reportStatus("Dictation stopped")
+                return false
+            }
             if isWhisperPortOpen() {
-                return
+                reportStatus("Whisper ready")
+                return true
+            }
+            if Date().timeIntervalSince(lastReport) >= 1 {
+                let remaining = max(0, Int(ceil(deadline.timeIntervalSinceNow)))
+                reportStatus("Starting Whisper... \(remaining)s")
+                lastReport = Date()
             }
             Thread.sleep(forTimeInterval: 0.2)
         }
         Logger.warn("Whisper server did not become ready")
+        reportStatus("Whisper not ready")
+        return false
+    }
+
+    private func reportStatus(_ message: String) {
+        Logger.info("transcriber status=\(message)")
+        statusLock.lock()
+        let handler = statusHandler
+        statusLock.unlock()
+        handler?(message)
+    }
+
+    private func shouldContinue(generation expectedGeneration: Int) -> Bool {
+        stateLock.lock()
+        let active = !isStopping && generation == expectedGeneration
+        stateLock.unlock()
+        return active
+    }
+
+    private func stopOwnedWhisperServer() {
+        taskLock.lock()
+        let process = ownedWhisperProcess
+        ownedWhisperProcess = nil
+        taskLock.unlock()
+        guard let process, process.isRunning else {
+            return
+        }
+        Logger.info("Terminating owned whisper-server pid \(process.processIdentifier)")
+        process.terminate()
+        let deadline = Date().addingTimeInterval(2.0)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        if process.isRunning {
+            Logger.warn("owned whisper-server did not terminate promptly; interrupting")
+            process.interrupt()
+        }
     }
 
     private func isWhisperPortOpen() -> Bool {
