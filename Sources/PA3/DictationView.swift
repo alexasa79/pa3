@@ -9,7 +9,7 @@ struct DictationView: View {
             Divider()
             controls
             Divider()
-            transcript
+            mainContent
             Divider()
             footer
         }
@@ -36,7 +36,7 @@ struct DictationView: View {
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(.secondary)
             Spacer()
-            Text("Language: 1 English   2 Russian   3 Hebrew | Current: \(controller.language.name)")
+            Text(controller.debugMessage)
                 .font(.system(size: 14, design: .monospaced))
                 .foregroundStyle(.secondary)
         }
@@ -45,34 +45,95 @@ struct DictationView: View {
         .background(controller.dictating ? Color.green.opacity(0.12) : Color.orange.opacity(0.12))
     }
 
+    private var mainContent: some View {
+        HStack(spacing: 0) {
+            transcript
+            Divider()
+            shortcutsPanel
+        }
+    }
+
     private var transcript: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                FlowLayout(spacing: 0, lineSpacing: 8) {
-                    ForEach(renderItems()) { item in
-                        if item.isBreak {
-                            Color.clear
-                                .frame(width: 9000, height: 18)
-                        } else {
-                            Text(item.displayText)
-                                .font(.system(size: 18, design: .monospaced))
-                                .padding(.horizontal, item.highlighted ? 3 : 0)
-                                .padding(.vertical, item.highlighted ? 2 : 0)
-                                .background(item.background)
-                                .foregroundStyle(item.foreground)
-                                .id(item.id)
+        GeometryReader { geometry in
+            ScrollViewReader { proxy in
+                ScrollView {
+                    FlowLayout(spacing: 0, lineSpacing: 2) {
+                        ForEach(renderItems()) { item in
+                            if item.isBreak {
+                                Color.clear
+                                    .frame(width: 9000, height: 10)
+                            } else {
+                                Text(item.displayText)
+                                    .font(.system(size: 16, design: .monospaced))
+                                    .padding(.horizontal, 2)
+                                    .frame(height: 21, alignment: .center)
+                                    .background(item.background)
+                                    .background(
+                                        GeometryReader { proxy in
+                                            Color.clear.preference(
+                                                key: WordFramePreferenceKey.self,
+                                                value: item.wordIndex.map { [$0: proxy.frame(in: .named("transcript"))] } ?? [:]
+                                            )
+                                        }
+                                    )
+                                    .foregroundStyle(item.foreground)
+                                    .id(item.id)
+                            }
                         }
                     }
+                    .padding(18)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-                .padding(18)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-            .onChange(of: controller.words.count) {
-                if let last = renderItems().last?.id {
-                    proxy.scrollTo(last, anchor: .bottom)
+                .onAppear {
+                    controller.setTranscriptLayoutWidth(geometry.size.width)
+                }
+                .onChange(of: geometry.size.width) {
+                    controller.setTranscriptLayoutWidth(geometry.size.width)
+                }
+                .onChange(of: controller.words.count) {
+                    if let last = renderItems().last?.id {
+                        proxy.scrollTo(last, anchor: .bottom)
+                    }
+                }
+                .onPreferenceChange(WordFramePreferenceKey.self) { frames in
+                    controller.setWordFrames(frames)
                 }
             }
         }
+        .coordinateSpace(name: "transcript")
+    }
+
+    private var shortcutsPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Shortcuts")
+                .font(.system(size: 13, design: .monospaced).weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+                .padding(.bottom, 8)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(shortcutRows(), id: \.key) { row in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text(row.key)
+                                .font(.system(size: 13, design: .monospaced).weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .frame(width: 86, alignment: .leading)
+                            Text(row.description)
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .frame(width: 260)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var controls: some View {
@@ -115,19 +176,23 @@ struct DictationView: View {
     }
 
     private var footer: some View {
-        FlowLayout(spacing: 14, lineSpacing: 6) {
-            Text(controller.debugMessage)
+        HStack(spacing: 18) {
+            Text("Language")
                 .font(.system(size: 14, design: .monospaced).weight(.semibold))
                 .foregroundStyle(.secondary)
-            ForEach(controller.keyBindings(), id: \.self) { binding in
-                Text(binding)
-                    .font(.system(size: 14, design: .monospaced))
-                    .foregroundStyle(.primary)
-            }
+            Text("1 English")
+                .font(.system(size: 14, design: .monospaced))
+            Text("2 Russian")
+                .font(.system(size: 14, design: .monospaced))
+            Text("3 Hebrew")
+                .font(.system(size: 14, design: .monospaced))
+            Spacer()
+            Text("Current: \(controller.language.name)")
+                .font(.system(size: 14, design: .monospaced).weight(.semibold))
+                .foregroundStyle(.primary)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 44)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
@@ -158,17 +223,38 @@ struct DictationView: View {
         var previousParagraph: Int?
         for token in tokens {
             if let previousParagraph, previousParagraph != token.paragraph {
-                items.append(RenderItem(id: "break-\(token.id)", displayText: "", isBreak: true, selected: false, pending: false))
+                items.append(RenderItem(id: "break-\(token.id)", displayText: "", isBreak: true, selected: false, pending: false, wordIndex: nil))
             }
-            let needsSpace = !items.isEmpty && !token.text.isEmpty && hasAlphanumeric(token.text) && items.last?.isBreak == false
-            items.append(RenderItem(id: "word-\(token.id)", displayText: (needsSpace ? " " : "") + token.text, isBreak: false, selected: token.selected, pending: token.pending))
+            let nextToken = token.id + 1 < tokens.count ? tokens[token.id + 1] : nil
+            let needsTrailingSpace = nextToken.map {
+                $0.paragraph == token.paragraph && hasAlphanumeric(token.text) && hasAlphanumeric($0.text)
+            } ?? false
+            items.append(RenderItem(id: "word-\(token.id)", displayText: token.text + (needsTrailingSpace ? " " : ""), isBreak: false, selected: token.selected, pending: token.pending, wordIndex: token.id))
             previousParagraph = token.paragraph
         }
         if items.isEmpty {
-            items.append(RenderItem(id: "empty", displayText: "", isBreak: false, selected: false, pending: false))
+            items.append(RenderItem(id: "empty", displayText: "", isBreak: false, selected: false, pending: false, wordIndex: nil))
         }
         return items
     }
+
+    private func shortcutRows() -> [ShortcutRow] {
+        controller.keyBindings().map { binding in
+            let parts = binding.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else {
+                return ShortcutRow(key: binding, description: "")
+            }
+            return ShortcutRow(
+                key: parts[0].trimmingCharacters(in: .whitespaces),
+                description: parts[1].trimmingCharacters(in: .whitespaces)
+            )
+        }
+    }
+}
+
+private struct ShortcutRow {
+    let key: String
+    let description: String
 }
 
 private struct RenderItem: Identifiable {
@@ -177,6 +263,7 @@ private struct RenderItem: Identifiable {
     let isBreak: Bool
     let selected: Bool
     let pending: Bool
+    let wordIndex: Int?
 
     var highlighted: Bool { selected || pending }
     var background: Color {
@@ -187,6 +274,14 @@ private struct RenderItem: Identifiable {
     var foreground: Color {
         if selected { return Color.black }
         return Color.primary
+    }
+}
+
+private struct WordFramePreferenceKey: PreferenceKey {
+    static let defaultValue: [Int: CGRect] = [:]
+
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
     }
 }
 

@@ -113,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let content = DictationView(controller: controller)
         let hosting = NSHostingView(rootView: content)
         let window = KeyWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 980, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 1240, height: 620),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false

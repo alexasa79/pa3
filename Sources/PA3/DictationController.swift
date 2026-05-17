@@ -73,6 +73,8 @@ final class DictationController: ObservableObject {
     private var editAction: EditAction = .replace
     private var editSelectAll = false
     private var runningStop = false
+    private var transcriptColumnLimit = 100
+    private var wordFrames: [Int: CGRect] = [:]
 
     init(transcriber: TranscriberService) {
         self.transcriber = transcriber
@@ -225,6 +227,16 @@ final class DictationController: ObservableObject {
             bindings += ["c: edit selection", "C: change all", "a: append after", "i: insert before", "x: delete selection", "A: add vocab"]
         }
         return bindings
+    }
+
+    func setTranscriptLayoutWidth(_ width: CGFloat) {
+        let contentWidth = max(0, width - 36)
+        let estimatedMonospaceCharacterWidth = 9.65
+        transcriptColumnLimit = max(20, Int(contentWidth / estimatedMonospaceCharacterWidth))
+    }
+
+    func setWordFrames(_ frames: [Int: CGRect]) {
+        wordFrames = frames
     }
 
     func tokens() -> [TranscriptToken] {
@@ -469,7 +481,10 @@ final class DictationController: ObservableObject {
     }
 
     private func moveSelectionVertical(_ direction: Int, extend: Bool) {
-        let columns = layoutColumns(maxWidth: 78)
+        if moveSelectionUsingRenderedFrames(direction: direction, extend: extend) {
+            return
+        }
+        let columns = layoutColumns(maxWidth: transcriptColumnLimit)
         guard selectedWord >= 0, selectedWord < columns.count else {
             setSelection(direction > 0 ? 0 : words.count - 1)
             return
@@ -496,6 +511,52 @@ final class DictationController: ObservableObject {
                 setSelection(best)
             }
         }
+    }
+
+    private func moveSelectionUsingRenderedFrames(direction: Int, extend: Bool) -> Bool {
+        guard selectedWord >= 0,
+              let current = wordFrames[selectedWord],
+              !wordFrames.isEmpty else {
+            return false
+        }
+        let verticalTolerance: CGFloat = 4
+        let candidates = wordFrames.filter { index, frame in
+            index >= 0 && index < words.count &&
+                (direction < 0 ? frame.midY < current.midY - verticalTolerance : frame.midY > current.midY + verticalTolerance)
+        }
+        guard !candidates.isEmpty else {
+            return false
+        }
+
+        let nearestYDistance = candidates.values
+            .map { abs($0.midY - current.midY) }
+            .min() ?? 0
+        let sameVisualRowTolerance: CGFloat = 6
+        let nearestRow = candidates.filter { _, frame in
+            abs(abs(frame.midY - current.midY) - nearestYDistance) <= sameVisualRowTolerance
+        }
+
+        let currentX = current.midX
+        let best = nearestRow.min { lhs, rhs in
+            let leftDistance = abs(lhs.value.midX - currentX)
+            let rightDistance = abs(rhs.value.midX - currentX)
+            if leftDistance == rightDistance {
+                return lhs.key < rhs.key
+            }
+            return leftDistance < rightDistance
+        }
+        guard let best else {
+            return false
+        }
+        if extend {
+            if selectionAnchor < 0 { selectionAnchor = selectedWord }
+            selectedWord = best.key
+            selectionStart = min(best.key, selectionAnchor)
+            selectionEnd = max(best.key, selectionAnchor)
+        } else {
+            setSelection(best.key)
+        }
+        return true
     }
 
     private func layoutColumns(maxWidth: Int) -> [(line: Int, column: Int)] {
