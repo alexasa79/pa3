@@ -1,0 +1,9 @@
+.build/
+Assets/
+PA3.app/
+
+*.log
+rec/
+
+models
+paste
