@@ -375,7 +375,19 @@ final class DictationController: ObservableObject {
 
     private func startNewParagraph() {
         if dictating {
-            stopDictation()
+            dictating = false
+            serviceMessage = ""
+            debugMessage = "Starting new paragraph..."
+            commitSegment()
+            updateDisplay()
+            let transcriber = transcriber
+            DispatchQueue.global(qos: .userInitiated).async {
+                transcriber.stopTranscribe()
+                DispatchQueue.main.async {
+                    self.startDictation()
+                }
+            }
+            return
         }
         startDictation()
     }
