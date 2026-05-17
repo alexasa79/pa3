@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DictationView: View {
     @ObservedObject var controller: DictationController
+    @State private var showingShortcuts = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -46,11 +47,38 @@ struct DictationView: View {
     }
 
     private var mainContent: some View {
-        HStack(spacing: 0) {
+        ZStack(alignment: .trailing) {
             transcript
-            Divider()
-            shortcutsPanel
+            helpTab
+            if showingShortcuts {
+                shortcutsOverlay
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
         }
+    }
+
+    private var helpTab: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.16)) {
+                showingShortcuts.toggle()
+            }
+        } label: {
+            Image(systemName: "keyboard")
+                .font(.system(size: 10, weight: .semibold))
+                .rotationEffect(.degrees(270))
+                .scaleEffect(x: 1.0, y: 1.85, anchor: .center)
+                .frame(width: 12, height: 74)
+        }
+        .buttonStyle(.plain)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .overlay(
+            RoundedRectangle(cornerRadius: 5)
+                .stroke(Color.secondary.opacity(0.35), lineWidth: 1)
+        )
+        .help("Show keyboard shortcuts")
+        .padding(.trailing, 4)
+        .opacity(showingShortcuts ? 0 : 1)
     }
 
     private var transcript: some View {
@@ -103,27 +131,41 @@ struct DictationView: View {
         .coordinateSpace(name: "transcript")
     }
 
-    private var shortcutsPanel: some View {
+    private var shortcutsOverlay: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Shortcuts")
-                .font(.system(size: 13, design: .monospaced).weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 14)
-                .padding(.top, 14)
-                .padding(.bottom, 8)
+            HStack(spacing: 8) {
+                Text("Shortcuts")
+                    .font(.system(size: 13, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        showingShortcuts = false
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .help("Hide keyboard shortcuts")
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 8)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(shortcutRows(), id: \.key) { row in
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(row.key)
                                 .font(.system(size: 13, design: .monospaced).weight(.semibold))
                                 .foregroundStyle(.primary)
-                                .frame(width: 86, alignment: .leading)
+                                .frame(width: 62, alignment: .leading)
                             Text(row.description)
                                 .font(.system(size: 13, design: .monospaced))
                                 .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.88)
                         }
                     }
                 }
@@ -132,8 +174,20 @@ struct DictationView: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
-        .frame(width: 260)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(width: 280)
+        .frame(maxHeight: .infinity)
+        .background(.regularMaterial)
+        .overlay(alignment: .leading) {
+            Divider()
+        }
+        .shadow(color: Color.black.opacity(0.18), radius: 12, x: -3, y: 0)
+        .onHover { hovering in
+            if !hovering {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    showingShortcuts = false
+                }
+            }
+        }
     }
 
     private var controls: some View {

@@ -35,10 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupWindow(controller: controller)
         Logger.info("window set up")
         setupHotKey()
-
-        showWindow()
-        controller.startDictation()
-        Logger.info("window shown")
+        Logger.info("launch complete; waiting for activation")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
