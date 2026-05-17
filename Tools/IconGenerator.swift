@@ -105,10 +105,8 @@ func drawMenuIcon(size: CGFloat) -> NSImage {
 
     NSColor.black.setStroke()
     let bars: [(x: CGFloat, h: CGFloat)] = [
-        (0.28, 0.34),
-        (0.42, 0.70),
-        (0.56, 0.46),
-        (0.70, 0.62)
+        (0.40, 0.70),
+        (0.60, 0.46)
     ]
     for bar in bars {
         let path = NSBezierPath()

@@ -51,7 +51,7 @@ if CommandLine.arguments.contains("--whisper-fixture-test") {
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
-app.setActivationPolicy(.regular)
+app.setActivationPolicy(.accessory)
 app.run()
 
 private func smokeTestDuration() -> TimeInterval {
