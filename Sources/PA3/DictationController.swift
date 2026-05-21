@@ -229,6 +229,18 @@ final class DictationController: ObservableObject {
         return bindings
     }
 
+    func applyCurrentEdit() {
+        if editAction == .replaceAll {
+            commitEditModeReplaceAll()
+        } else {
+            commitEditMode()
+        }
+    }
+
+    func cancelCurrentEdit() {
+        cancelEditMode()
+    }
+
     func setTranscriptLayoutWidth(_ width: CGFloat) {
         let contentWidth = max(0, width - 36)
         let estimatedMonospaceCharacterWidth = 9.65

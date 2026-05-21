@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct DictationView: View {
@@ -254,21 +255,21 @@ struct DictationView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Edit")
                 .font(.system(.headline, design: .monospaced))
-            TextField("", text: Binding(
+            EditTextField(text: Binding(
                 get: { controller.editText },
                 set: { controller.editText = $0 }
-            ))
-            .textFieldStyle(.roundedBorder)
-            .font(.system(.body, design: .monospaced))
+            ), onSubmit: {
+                controller.applyCurrentEdit()
+            }, onCancel: {
+                controller.cancelCurrentEdit()
+            })
+            .frame(height: 30)
             Text("enter: apply edit   esc: cancel edit")
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
         }
         .padding(18)
         .frame(width: 560)
-        .overlay(KeyCatcher { event in
-            controller.handleKey(event)
-        }.frame(width: 0, height: 0))
     }
 
     private func renderItems() -> [RenderItem] {
@@ -328,6 +329,101 @@ private struct RenderItem: Identifiable {
     var foreground: Color {
         if selected { return Color.black }
         return Color.primary
+    }
+}
+
+private struct EditTextField: NSViewRepresentable {
+    @Binding var text: String
+    let onSubmit: () -> Void
+    let onCancel: () -> Void
+
+    @MainActor func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, onSubmit: onSubmit, onCancel: onCancel)
+    }
+
+    @MainActor func makeNSView(context: Context) -> Field {
+        let field = Field()
+        field.delegate = context.coordinator
+        field.onSubmit = onSubmit
+        field.onCancel = onCancel
+        field.stringValue = text
+        field.isEditable = true
+        field.isSelectable = true
+        field.isBordered = true
+        field.isBezeled = true
+        field.bezelStyle = .roundedBezel
+        field.focusRingType = .default
+        field.font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        field.lineBreakMode = .byClipping
+        return field
+    }
+
+    @MainActor func updateNSView(_ field: Field, context: Context) {
+        context.coordinator.text = $text
+        field.onSubmit = onSubmit
+        field.onCancel = onCancel
+        if field.stringValue != text {
+            field.stringValue = text
+        }
+        guard !context.coordinator.didFocus else {
+            return
+        }
+        context.coordinator.didFocus = true
+        DispatchQueue.main.async {
+            field.window?.makeFirstResponder(field)
+            field.selectText(nil)
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var text: Binding<String>
+        let onSubmit: () -> Void
+        let onCancel: () -> Void
+        var didFocus = false
+
+        init(text: Binding<String>, onSubmit: @escaping () -> Void, onCancel: @escaping () -> Void) {
+            self.text = text
+            self.onSubmit = onSubmit
+            self.onCancel = onCancel
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else {
+                return
+            }
+            text.wrappedValue = field.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            switch commandSelector {
+            case #selector(NSResponder.insertNewline(_:)),
+                 #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
+                text.wrappedValue = textView.string
+                onSubmit()
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                onCancel()
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    final class Field: NSTextField {
+        var onSubmit: (() -> Void)?
+        var onCancel: (() -> Void)?
+
+        override func keyDown(with event: NSEvent) {
+            switch event.keyCode {
+            case 36, 76:
+                onSubmit?()
+            case 53:
+                onCancel?()
+            default:
+                super.keyDown(with: event)
+            }
+        }
     }
 }
 
