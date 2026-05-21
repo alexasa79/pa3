@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Carbon
 import SwiftUI
 
@@ -9,7 +10,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: DictationController?
     private var hotKey: GlobalHotKey?
     private var previousApp: NSRunningApplication?
+    private var previousWindow: AXUIElement?
     private var lastExternalApp: NSRunningApplication?
+    private var lastExternalWindow: AXUIElement?
     private var workspaceObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -103,7 +106,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         lastExternalApp = app
-        Logger.info("remembered external app pid=\(app.processIdentifier) name=\(app.localizedName ?? "?")")
+        lastExternalWindow = focusedWindow(for: app.processIdentifier)
+        Logger.info("remembered external app pid=\(app.processIdentifier) name=\(app.localizedName ?? "?") window=\(lastExternalWindow == nil ? "nil" : "captured")")
+    }
+
+    private func focusedWindow(for pid: pid_t) -> AXUIElement? {
+        guard AXIsProcessTrusted() else { return nil }
+        let appElement = AXUIElementCreateApplication(pid)
+        var value: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &value)
+        guard status == .success, let value else {
+            Logger.info("AX focused window unavailable pid=\(pid) status=\(status.rawValue)")
+            return nil
+        }
+        return (value as! AXUIElement)
+    }
+
+    private func raiseAXWindow(_ window: AXUIElement) {
+        let raise = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        let main = AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+        let focused = AXUIElementSetAttributeValue(window, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        Logger.info("AX window raise=\(raise.rawValue) main=\(main.rawValue) focused=\(focused.rawValue)")
     }
 
     private func setupWindow(controller: DictationController) {
@@ -168,8 +191,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if frontmost?.processIdentifier != NSRunningApplication.current.processIdentifier {
             previousApp = frontmost
             rememberExternalApp(frontmost)
+            previousWindow = lastExternalWindow
         } else {
             previousApp = lastExternalApp
+            previousWindow = lastExternalWindow
         }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
@@ -204,15 +229,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func restorePreviousApp(afterRestore: (() -> Void)? = nil) {
         let app = previousApp?.isTerminated == false ? previousApp : lastExternalApp
+        let window = previousWindow ?? lastExternalWindow
         guard let app else {
             Logger.warn("No previous app to restore")
             afterRestore?()
             return
         }
-        Logger.info("restoring previous app pid=\(app.processIdentifier) name=\(app.localizedName ?? "?")")
-        app.activate(options: [.activateAllWindows])
-        activateApplicationBundle(app)
+        Logger.info("restoring previous app pid=\(app.processIdentifier) name=\(app.localizedName ?? "?") window=\(window == nil ? "nil" : "remembered")")
+        app.activate()
         activateProcessWithSystemEvents(pid: app.processIdentifier)
+        if let window {
+            raiseAXWindow(window)
+        }
         waitForFocus(app: app, deadline: Date().addingTimeInterval(1.0), afterRestore: afterRestore)
     }
 
@@ -224,19 +252,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             self.waitForFocus(app: app, deadline: deadline, afterRestore: afterRestore)
-        }
-    }
-
-    private func activateApplicationBundle(_ app: NSRunningApplication) {
-        guard let bundleURL = app.bundleURL else {
-            return
-        }
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) { _, error in
-            if let error {
-                Logger.warn("NSWorkspace focus restore failed: \(error)")
-            }
         }
     }
 
