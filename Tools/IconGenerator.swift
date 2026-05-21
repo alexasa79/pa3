@@ -104,27 +104,33 @@ func drawMenuIcon(size: CGFloat) -> NSImage {
     NSRect(x: 0, y: 0, width: size, height: size).fill()
 
     NSColor.black.setStroke()
-    let bars: [(x: CGFloat, h: CGFloat)] = [
-        (0.40, 0.70),
-        (0.60, 0.46)
-    ]
-    for bar in bars {
-        let path = NSBezierPath()
-        path.lineWidth = max(2.6, size * 0.090)
-        path.lineCapStyle = .round
-        let x = size * bar.x
-        let half = size * bar.h * 0.5
-        path.move(to: NSPoint(x: x, y: size * 0.5 - half))
-        path.line(to: NSPoint(x: x, y: size * 0.5 + half))
-        path.stroke()
-    }
+    let midY = size * 0.50
 
-    let baseline = NSBezierPath()
-    baseline.lineWidth = max(1.4, size * 0.045)
-    baseline.lineCapStyle = .round
-    baseline.move(to: NSPoint(x: size * 0.18, y: size * 0.50))
-    baseline.line(to: NSPoint(x: size * 0.80, y: size * 0.50))
-    baseline.stroke()
+    let wave = NSBezierPath()
+    wave.lineWidth = max(2.0, size * 0.073)
+    wave.lineCapStyle = .round
+    wave.lineJoinStyle = .round
+
+    let startX = size * 0.10
+    let endX = size * 0.90
+    let amplitude = size * 0.22
+    let segments = 96
+
+    for index in 0...segments {
+        let progress = CGFloat(index) / CGFloat(segments)
+        let phase = progress * 4.0 * .pi
+        let point = NSPoint(
+            x: startX + (endX - startX) * progress,
+            y: midY + sin(phase) * amplitude
+        )
+
+        if index == 0 {
+            wave.move(to: point)
+        } else {
+            wave.line(to: point)
+        }
+    }
+    wave.stroke()
 
     return image
 }
