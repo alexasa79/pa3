@@ -379,10 +379,27 @@ final class DictationController: ObservableObject {
     }
 
     func restartDictation() {
-        stopDictation()
+        let wasDictating = dictating
+        if wasDictating {
+            dictating = false
+            serviceMessage = ""
+            debugMessage = "Restarting dictation..."
+        }
         committed = ""
         segment = ""
-        startDictation()
+        clearSelection()
+        updateDisplay()
+        guard wasDictating else {
+            startDictation()
+            return
+        }
+        let transcriber = transcriber
+        DispatchQueue.global(qos: .userInitiated).async {
+            transcriber.stopTranscribe()
+            DispatchQueue.main.async {
+                self.startDictation()
+            }
+        }
     }
 
     private func startNewParagraph() {
