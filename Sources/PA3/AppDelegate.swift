@@ -118,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.title = "PA3"
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
+        window.collectionBehavior.insert(.moveToActiveSpace)
         window.contentView = hosting
         window.center()
         window.delegate = self
