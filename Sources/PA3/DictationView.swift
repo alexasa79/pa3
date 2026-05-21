@@ -91,6 +91,27 @@ struct DictationView: View {
                             if item.isBreak {
                                 Color.clear
                                     .frame(width: 9000, height: 10)
+                            } else if item.selected && !controller.dictating && item.hasTrailingSpace {
+                                HStack(spacing: 0) {
+                                    Text(item.textWithoutTrailingSpace)
+                                        .font(.system(size: 16, design: .monospaced))
+                                        .padding(.horizontal, 2)
+                                        .frame(height: 21, alignment: .center)
+                                        .background(item.background)
+                                        .background(
+                                            GeometryReader { proxy in
+                                                Color.clear.preference(
+                                                    key: WordFramePreferenceKey.self,
+                                                    value: item.wordIndex.map { [$0: proxy.frame(in: .named("transcript"))] } ?? [:]
+                                                )
+                                            }
+                                        )
+                                        .foregroundStyle(item.foreground)
+                                    Text(" ")
+                                        .font(.system(size: 16, design: .monospaced))
+                                        .frame(height: 21, alignment: .center)
+                                }
+                                .id(item.id)
                             } else {
                                 Text(item.displayText)
                                     .font(.system(size: 16, design: .monospaced))
@@ -321,6 +342,10 @@ private struct RenderItem: Identifiable {
     let wordIndex: Int?
 
     var highlighted: Bool { selected || pending }
+    var hasTrailingSpace: Bool { displayText.hasSuffix(" ") }
+    var textWithoutTrailingSpace: String {
+        hasTrailingSpace ? String(displayText.dropLast()) : displayText
+    }
     var background: Color {
         if selected { return Color.yellow.opacity(0.8) }
         if pending { return Color.gray.opacity(0.25) }
