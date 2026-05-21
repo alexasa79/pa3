@@ -303,7 +303,7 @@ struct DictationView: View {
             }
             let nextToken = token.id + 1 < tokens.count ? tokens[token.id + 1] : nil
             let needsTrailingSpace = nextToken.map {
-                $0.paragraph == token.paragraph && hasAlphanumeric(token.text) && hasAlphanumeric($0.text)
+                $0.paragraph == token.paragraph && hasAlphanumeric($0.text)
             } ?? false
             let selectionContinues = nextToken.map {
                 token.selected && $0.selected && $0.paragraph == token.paragraph
