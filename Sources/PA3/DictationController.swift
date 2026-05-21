@@ -410,10 +410,27 @@ final class DictationController: ObservableObject {
         if normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return
         }
-        stopDictation()
-        committed = committed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? normalized : committed.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n" + normalized
+        let wasDictating = dictating
+        if wasDictating {
+            dictating = false
+            serviceMessage = ""
+            debugMessage = "Inserting clipboard..."
+        }
+        commitSegment()
+        let trimmedCommitted = committed.trimmingCharacters(in: .whitespacesAndNewlines)
+        committed = trimmedCommitted.isEmpty ? normalized : trimmedCommitted + "\n\n" + normalized
         segment = ""
-        startDictation()
+        updateDisplay()
+        guard wasDictating else {
+            return
+        }
+        let transcriber = transcriber
+        DispatchQueue.global(qos: .userInitiated).async {
+            transcriber.stopTranscribe()
+            DispatchQueue.main.async {
+                self.startDictation()
+            }
+        }
     }
 
     private func startTranscriptSpellCheck() {
