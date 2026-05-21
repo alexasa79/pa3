@@ -91,7 +91,7 @@ struct DictationView: View {
                             if item.isBreak {
                                 Color.clear
                                     .frame(width: 9000, height: 10)
-                            } else if item.selected && !controller.dictating && item.hasTrailingSpace {
+                            } else if item.selected && !controller.dictating && item.hasTrailingSpace && !item.selectionContinues {
                                 HStack(spacing: 0) {
                                     Text(item.textWithoutTrailingSpace)
                                         .font(.system(size: 16, design: .monospaced))
@@ -299,17 +299,20 @@ struct DictationView: View {
         var previousParagraph: Int?
         for token in tokens {
             if let previousParagraph, previousParagraph != token.paragraph {
-                items.append(RenderItem(id: "break-\(token.id)", displayText: "", isBreak: true, selected: false, pending: false, wordIndex: nil))
+                items.append(RenderItem(id: "break-\(token.id)", displayText: "", isBreak: true, selected: false, pending: false, selectionContinues: false, wordIndex: nil))
             }
             let nextToken = token.id + 1 < tokens.count ? tokens[token.id + 1] : nil
             let needsTrailingSpace = nextToken.map {
                 $0.paragraph == token.paragraph && hasAlphanumeric(token.text) && hasAlphanumeric($0.text)
             } ?? false
-            items.append(RenderItem(id: "word-\(token.id)", displayText: token.text + (needsTrailingSpace ? " " : ""), isBreak: false, selected: token.selected, pending: token.pending, wordIndex: token.id))
+            let selectionContinues = nextToken.map {
+                token.selected && $0.selected && $0.paragraph == token.paragraph
+            } ?? false
+            items.append(RenderItem(id: "word-\(token.id)", displayText: token.text + (needsTrailingSpace ? " " : ""), isBreak: false, selected: token.selected, pending: token.pending, selectionContinues: selectionContinues, wordIndex: token.id))
             previousParagraph = token.paragraph
         }
         if items.isEmpty {
-            items.append(RenderItem(id: "empty", displayText: "", isBreak: false, selected: false, pending: false, wordIndex: nil))
+            items.append(RenderItem(id: "empty", displayText: "", isBreak: false, selected: false, pending: false, selectionContinues: false, wordIndex: nil))
         }
         return items
     }
@@ -339,6 +342,7 @@ private struct RenderItem: Identifiable {
     let isBreak: Bool
     let selected: Bool
     let pending: Bool
+    let selectionContinues: Bool
     let wordIndex: Int?
 
     var highlighted: Bool { selected || pending }
