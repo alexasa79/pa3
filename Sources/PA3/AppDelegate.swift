@@ -62,11 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.action = #selector(statusButtonClicked)
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Show", action: #selector(showFromMenu), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Start Dictation", action: #selector(startFromMenu), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Stop Dictation", action: #selector(stopFromMenu), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Restart Dictation", action: #selector(restartFromMenu), keyEquivalent: ""))
-        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Start dictation", action: #selector(startFromMenu), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitFromMenu), keyEquivalent: "q"))
         for item in menu.items {
             item.target = self
