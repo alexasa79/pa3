@@ -452,12 +452,22 @@ final class DictationController: ObservableObject {
 
     private func startTranscriptSpellCheck() {
         if spellChecking { return }
-        stopDictation()
+        let wasDictating = dictating
+        if wasDictating {
+            dictating = false
+            serviceMessage = ""
+            debugMessage = "Preparing spell check..."
+        }
+        commitSegment()
         let input = committed.trimmingCharacters(in: .whitespacesAndNewlines)
         if input.isEmpty { return }
         spellChecking = true
         updateStatusFor(input)
+        let transcriber = transcriber
         DispatchQueue.global(qos: .userInitiated).async {
+            if wasDictating {
+                transcriber.stopTranscribe()
+            }
             let result = Result { try OllamaClient().spellCheckTranscript(input) }
             DispatchQueue.main.async {
                 self.spellChecking = false
