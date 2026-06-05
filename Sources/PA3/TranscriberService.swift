@@ -92,6 +92,7 @@ final class TranscriberService {
     private let silencePadding: TimeInterval = 0.1
     private let sentencesToKeep = 2
     private let whisperPort = 65_461
+    private let whisperStartupTimeout: TimeInterval = 180
 
     private let stateLock = NSLock()
     private let taskLock = NSLock()
@@ -113,6 +114,7 @@ final class TranscriberService {
     private var workerThread: Thread?
     private var currentTask: URLSessionDataTask?
     private var ownedWhisperProcess: Process?
+    private var ownedWhisperOutputPipes: [Pipe] = []
     private var timestamp = ""
     private var sampleRate = defaultSampleRate
     private let startupLock = NSLock()
@@ -624,10 +626,15 @@ final class TranscriberService {
         process.environment = ProcessInfo.processInfo.environment.merging([
             "DYLD_LIBRARY_PATH": libraryPaths.joined(separator: ":")
         ]) { _, new in new }
+        let outputPipes = attachWhisperLogging(to: process)
+        process.terminationHandler = { process in
+            Logger.warn("whisper-server pid \(process.processIdentifier) exited status \(process.terminationStatus)")
+        }
         do {
             try process.run()
             taskLock.lock()
             ownedWhisperProcess = process
+            ownedWhisperOutputPipes = outputPipes
             taskLock.unlock()
             Logger.info("Started whisper-server pid \(process.processIdentifier)")
         } catch {
@@ -635,7 +642,7 @@ final class TranscriberService {
             reportStatus("Whisper failed to start")
             return false
         }
-        return waitForWhisperServer(timeout: 45, generation: generation)
+        return waitForWhisperServer(timeout: whisperStartupTimeout, generation: generation)
     }
 
     private func ensureWhisperServerStarted(generation: Int? = nil) -> Bool {
@@ -644,7 +651,7 @@ final class TranscriberService {
             startupLock.unlock()
             if !isWhisperPortOpen() {
                 reportStatus("Waiting for Whisper...")
-                return waitForWhisperServer(timeout: 45, generation: generation)
+                return waitForWhisperServer(timeout: whisperStartupTimeout, generation: generation)
             }
             reportStatus("Whisper ready")
             return true
@@ -711,6 +718,33 @@ final class TranscriberService {
         if process.isRunning {
             Logger.warn("owned whisper-server did not terminate promptly; interrupting")
             process.interrupt()
+        }
+        taskLock.lock()
+        for pipe in ownedWhisperOutputPipes {
+            pipe.fileHandleForReading.readabilityHandler = nil
+        }
+        ownedWhisperOutputPipes.removeAll()
+        taskLock.unlock()
+    }
+
+    private func attachWhisperLogging(to process: Process) -> [Pipe] {
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        logWhisperOutput(stdout, prefix: "whisper-server stdout")
+        logWhisperOutput(stderr, prefix: "whisper-server stderr")
+        return [stdout, stderr]
+    }
+
+    private func logWhisperOutput(_ pipe: Pipe, prefix: String) {
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            let text = String(decoding: data, as: UTF8.self)
+            for line in text.split(whereSeparator: \.isNewline) {
+                Logger.info("\(prefix): \(line)")
+            }
         }
     }
 

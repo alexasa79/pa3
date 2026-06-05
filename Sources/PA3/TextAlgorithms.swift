@@ -98,12 +98,22 @@ func buildTextFromWordData(words: [String], paragraphs: [Int]) -> String {
 func joinParagraphWords(_ words: [String]) -> String {
     var result = ""
     for (index, word) in words.enumerated() {
-        if index > 0, hasAlphanumeric(word) {
+        if index > 0, shouldInsertSpace(before: word, after: words[index - 1]) {
             result += " "
         }
         result += word
     }
     return result
+}
+
+func shouldInsertSpace(before word: String, after previous: String) -> Bool {
+    if word == "/" {
+        return hasAlphanumeric(previous)
+    }
+    if previous == "/" {
+        return false
+    }
+    return hasAlphanumeric(word)
 }
 
 func hasAlphanumeric(_ string: String) -> Bool {
@@ -138,15 +148,17 @@ func endsSentence(_ word: String) -> Bool {
 
 func buildText(_ tokens: [String]) -> String {
     var result = ""
+    var previous = ""
     for token in tokens {
         let word = token.trimmingCharacters(in: .whitespacesAndNewlines)
         if word.isEmpty {
             continue
         }
-        if !result.isEmpty, hasAlphanumeric(word) {
+        if !result.isEmpty, shouldInsertSpace(before: word, after: previous) {
             result += " "
         }
         result += word
+        previous = word
     }
     return result
 }
