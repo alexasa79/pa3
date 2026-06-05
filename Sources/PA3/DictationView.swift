@@ -383,7 +383,10 @@ private struct EditTextField: NSViewRepresentable {
         field.bezelStyle = .roundedBezel
         field.focusRingType = .default
         field.font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        field.lineBreakMode = .byClipping
+        field.usesSingleLineMode = true
+        field.cell?.isScrollable = true
+        field.cell?.wraps = false
+        field.lineBreakMode = .byTruncatingHead
         return field
     }
 
@@ -393,6 +396,7 @@ private struct EditTextField: NSViewRepresentable {
         field.onCancel = onCancel
         if field.stringValue != text {
             field.stringValue = text
+            field.currentEditor()?.scrollRangeToVisible(NSRange(location: field.stringValue.utf16.count, length: 0))
         }
         guard !context.coordinator.didFocus else {
             return
