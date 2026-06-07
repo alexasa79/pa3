@@ -25,6 +25,16 @@ struct WhisperTranscription: Decodable {
     var segments: [WhisperSegment]
 }
 
+func decodedWhisperText(_ transcription: WhisperTranscription) -> String {
+    let pieces = transcription.segments.flatMap { segment in
+        segment.words?.map(\.word) ?? []
+    }
+    if pieces.isEmpty {
+        return transcription.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    return pieces.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
 final class SampleQueue {
     private let condition = NSCondition()
     private let capacity: Int
@@ -774,7 +784,8 @@ final class TranscriberService {
     }
 
     private func splitTranscription(_ transcription: WhisperTranscription, previousSentences: [String], keepSentences: Int) -> (trimSeconds: Double, stableChunk: String, pendingText: String, nextSentences: [String]) {
-        let tokens = transcription.text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let decodedText = decodedWhisperText(transcription)
+        let tokens = decodedText.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         if tokens.isEmpty || keepSentences < 0 {
             return (0, "", "", [])
         }

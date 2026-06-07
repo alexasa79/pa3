@@ -48,6 +48,19 @@ if CommandLine.arguments.contains("--whisper-fixture-test") {
     }
 }
 
+if CommandLine.arguments.contains("--whisper-text-test") {
+    let failures = runWhisperTextTests()
+    print("whisper-text-test")
+    if failures.isEmpty {
+        print("ok")
+        exit(0)
+    }
+    for failure in failures {
+        print("FAIL:", failure)
+    }
+    exit(2)
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
@@ -95,4 +108,81 @@ private func runProcess(_ executable: String, _ arguments: [String]) throws {
         let output = String(data: data, encoding: .utf8) ?? ""
         throw NSError(domain: "PA3.Process", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: "\(executable) failed: \(output)"])
     }
+}
+
+private func runWhisperTextTests() -> [String] {
+    var failures: [String] = []
+
+    func expect(_ name: String, _ transcription: WhisperTranscription, _ expected: String) {
+        let actual = decodedWhisperText(transcription)
+        if actual != expected {
+            failures.append("\(name): expected \(String(reflecting: expected)), got \(String(reflecting: actual))")
+        }
+    }
+
+    expect(
+        "joins continuation across segment boundary",
+        makeTestTranscription(segments: [
+            makeTestSegment(text: " Very importantly, I want you to implement a test that ver", words: [
+                " Very", " importantly", ",", " I", " want", " you", " to", " implement", " a", " test", " that", " ver"
+            ]),
+            makeTestSegment(text: "ifies that the behavior is correct.", words: [
+                "ifies", " that", " the", " behavior", " is", " correct", "."
+            ])
+        ]),
+        "Very importantly, I want you to implement a test that verifies that the behavior is correct."
+    )
+
+    expect(
+        "preserves real space across segment boundary",
+        makeTestTranscription(segments: [
+            makeTestSegment(text: "I also want you to implement a test that verifies that the", words: [
+                " I", " also", " want", " you", " to", " implement", " a", " test", " that", " verifies", " that", " the"
+            ]),
+            makeTestSegment(text: " order cancellation when rejected type of scenario also", words: [
+                " order", " cancellation", " when", " rejected", " type", " of", " scenario", " also"
+            ]),
+            makeTestSegment(text: " works.", words: [
+                " works", "."
+            ])
+        ]),
+        "I also want you to implement a test that verifies that the order cancellation when rejected type of scenario also works."
+    )
+
+    expect(
+        "preserves contraction and trims first word",
+        makeTestTranscription(segments: [
+            makeTestSegment(text: " I'm checking whether it works.", words: [
+                " I", "'m", " checking", " whether", " it", " works", "."
+            ])
+        ]),
+        "I'm checking whether it works."
+    )
+
+    expect(
+        "falls back to response text without word pieces",
+        makeTestTranscription(
+            segments: [
+                WhisperSegment(id: 0, text: " Plain response text.", start: 0, end: 1, words: nil)
+            ],
+            text: " Plain response text.\n"
+        ),
+        "Plain response text."
+    )
+
+    return failures
+}
+
+private func makeTestTranscription(segments: [WhisperSegment], text: String = "") -> WhisperTranscription {
+    WhisperTranscription(task: nil, language: nil, duration: nil, text: text, segments: segments)
+}
+
+private func makeTestSegment(text: String, words: [String]) -> WhisperSegment {
+    WhisperSegment(
+        id: nil,
+        text: text,
+        start: 0,
+        end: 0,
+        words: words.map { WhisperWord(word: $0, start: 0, end: 0, probability: nil) }
+    )
 }

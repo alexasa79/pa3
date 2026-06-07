@@ -13,12 +13,16 @@ KEYCHAIN ?= $(HOME)/Library/Keychains/login.keychain-db
 CODESIGN_CERT_DAYS ?= 3650
 CODESIGN_P12_PASSWORD ?= pa3-local-codesign
 
-.PHONY: all build app icons whisper link-pa2-assets codesign-identity clean run
+.PHONY: all build app icons whisper link-pa2-assets codesign-identity clean run test
 
 all: app
 
 build:
 	swift build -c release
+
+test:
+	swift build
+	.build/debug/pa3 --whisper-text-test
 
 icons:
 	mkdir -p "$(ASSETS)"
