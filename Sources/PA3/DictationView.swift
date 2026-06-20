@@ -25,6 +25,16 @@ struct DictationView: View {
         )) {
             editSheet
         }
+        .sheet(isPresented: Binding(
+            get: { controller.vocabularyEditorPresented },
+            set: { presented in
+                if !presented {
+                    controller.cancelVocabularyEditor()
+                }
+            }
+        )) {
+            dictionarySheet
+        }
     }
 
     private var header: some View {
@@ -41,6 +51,15 @@ struct DictationView: View {
             Text(controller.debugMessage)
                 .font(.system(size: 14, design: .monospaced))
                 .foregroundStyle(.secondary)
+            if !controller.vocabularyNotice.isEmpty {
+                Text(controller.vocabularyNotice)
+                    .font(.system(size: 13, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(Color.green)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.green.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
         }
         .padding(.horizontal, 16)
         .frame(height: 48)
@@ -240,6 +259,12 @@ struct DictationView: View {
                 Label("Hide", systemImage: "eye.slash")
             }
 
+            Button {
+                controller.openVocabularyEditor()
+            } label: {
+                Label("Dictionary", systemImage: "book.closed")
+            }
+
             Spacer()
 
             Text("Dictation starts on launch. Use Stop/Start to test the audio path.")
@@ -293,6 +318,44 @@ struct DictationView: View {
         .frame(width: 560)
     }
 
+    private var dictionarySheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Dictionary")
+                    .font(.system(.headline, design: .monospaced))
+                Spacer()
+                Text("\(dictionaryWordCount()) words")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+
+            TextEditor(text: Binding(
+                get: { controller.vocabularyEditText },
+                set: { controller.vocabularyEditText = $0 }
+            ))
+            .font(.system(size: 14, design: .monospaced))
+            .frame(minHeight: 300)
+            .border(Color.secondary.opacity(0.25))
+
+            HStack {
+                Text("One word or phrase per line.")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Cancel") {
+                    controller.cancelVocabularyEditor()
+                }
+                .keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    controller.saveVocabularyEditor()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(18)
+        .frame(width: 560)
+    }
+
     private func renderItems() -> [RenderItem] {
         let tokens = controller.tokens()
         var items: [RenderItem] = []
@@ -328,6 +391,14 @@ struct DictationView: View {
                 description: parts[1].trimmingCharacters(in: .whitespaces)
             )
         }
+    }
+
+    private func dictionaryWordCount() -> Int {
+        controller.vocabularyEditText
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .count
     }
 }
 

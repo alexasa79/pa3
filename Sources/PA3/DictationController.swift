@@ -60,6 +60,10 @@ final class DictationController: ObservableObject {
     @Published var lastUpdate: Date?
     @Published var debugMessage = "Ready"
     @Published var serviceMessage = ""
+    @Published var vocabularyWords: [String] = []
+    @Published var vocabularyEditText = ""
+    @Published var vocabularyEditorPresented = false
+    @Published var vocabularyNotice = ""
 
     var onPasteAndHide: ((String) -> Void)?
     var onHide: (() -> Void)?
@@ -79,6 +83,7 @@ final class DictationController: ObservableObject {
     init(transcriber: TranscriberService) {
         self.transcriber = transcriber
         self.vocabulary = Vocabulary(path: installationDirectory().appendingPathComponent("vocabulary.txt"))
+        self.vocabularyWords = vocabulary.allWords()
         transcriber.setSystemPrompt(vocabulary.systemPrompt())
         transcriber.setLanguage(language.rawValue)
         transcriber.setStatusHandler { [weak self] message in
@@ -194,6 +199,8 @@ final class DictationController: ObservableObject {
             if !dictating { startEditMode(.insertAfter) }
         case "A":
             addSelectedWordToVocabulary()
+        case "D":
+            openVocabularyEditor()
         case "i", "I":
             if !dictating { startEditMode(.insertBefore) }
         case "x", "X":
@@ -217,9 +224,9 @@ final class DictationController: ObservableObject {
             return ["enter: apply edit", "esc: cancel edit", "arrows: move cursor", "home/end: jump", "alt+backspace: delete word", "backspace: delete char", "delete: delete ahead"]
         }
         if dictating {
-            return ["space: pause dictation", "enter: paste result", "v: insert clipboard", "s: spell check transcript", "R: restart dictation", "q: discard", "ctrl+c: abort", "m: mute output", "o: new paragraph"]
+            return ["space: pause dictation", "enter: paste result", "v: insert clipboard", "s: spell check transcript", "R: restart dictation", "q: discard", "ctrl+c: abort", "m: mute output", "o: new paragraph", "D: edit dictionary"]
         }
-        var bindings = ["space: resume dictation", "enter: paste result", "v: insert clipboard", "s: spell check transcript", "R: restart dictation", "q: discard", "ctrl+c: abort", "m: mute output", "o: new paragraph", "J: join paragraph", "S: split paragraph", "arrows: navigate", "shift+arrows: expand selection"]
+        var bindings = ["space: resume dictation", "enter: paste result", "v: insert clipboard", "s: spell check transcript", "R: restart dictation", "q: discard", "ctrl+c: abort", "m: mute output", "o: new paragraph", "D: edit dictionary", "J: join paragraph", "S: split paragraph", "arrows: navigate", "shift+arrows: expand selection"]
         if lastReplaceSet && hasSelection() {
             bindings.append(".: repeat change")
         }
@@ -239,6 +246,24 @@ final class DictationController: ObservableObject {
 
     func cancelCurrentEdit() {
         cancelEditMode()
+    }
+
+    func openVocabularyEditor() {
+        vocabularyEditText = vocabularyWords.joined(separator: "\n")
+        vocabularyEditorPresented = true
+    }
+
+    func saveVocabularyEditor() {
+        vocabularyWords = vocabulary.replace(with: vocabularyEditText)
+        transcriber.setSystemPrompt(vocabulary.systemPrompt())
+        vocabularyEditText = vocabularyWords.joined(separator: "\n")
+        vocabularyEditorPresented = false
+        showVocabularyNotice("\(vocabularyWords.count) dictionary words saved")
+    }
+
+    func cancelVocabularyEditor() {
+        vocabularyEditText = ""
+        vocabularyEditorPresented = false
     }
 
     func setTranscriptLayoutWidth(_ width: CGFloat) {
@@ -494,7 +519,22 @@ final class DictationController: ObservableObject {
         }
         let result = vocabulary.add(word)
         if result.added {
+            vocabularyWords = vocabulary.allWords()
             transcriber.setSystemPrompt(vocabulary.systemPrompt())
+            showVocabularyNotice("Added \"\(result.normalized)\"")
+        } else if !result.normalized.isEmpty {
+            debugMessage = "\"\(result.normalized)\" is already in dictionary"
+        }
+    }
+
+    private func showVocabularyNotice(_ message: String) {
+        vocabularyNotice = message
+        debugMessage = message
+        let expected = message
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            if self.vocabularyNotice == expected {
+                self.vocabularyNotice = ""
+            }
         }
     }
 
