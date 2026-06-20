@@ -27,6 +27,22 @@ final class Vocabulary {
         return (normalized, true)
     }
 
+    func allWords() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return words
+    }
+
+    func replace(with text: String) -> [String] {
+        let nextWords = Self.normalizedUniqueWords(from: text)
+        lock.lock()
+        defer { lock.unlock() }
+        words = nextWords
+        index = Set(nextWords)
+        saveLocked()
+        return words
+    }
+
     func systemPrompt() -> String {
         lock.lock()
         defer { lock.unlock() }
@@ -57,6 +73,19 @@ final class Vocabulary {
     private static func normalize(_ word: String) -> String {
         word.trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: " ,.!?:;\"'()[]{}"))
+    }
+
+    private static func normalizedUniqueWords(from text: String) -> [String] {
+        var result: [String] = []
+        var seen = Set<String>()
+        for line in text.components(separatedBy: .newlines) {
+            let normalized = normalize(line)
+            if !normalized.isEmpty, !seen.contains(normalized) {
+                result.append(normalized)
+                seen.insert(normalized)
+            }
+        }
+        return result
     }
 }
 
