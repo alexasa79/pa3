@@ -44,7 +44,6 @@ final class DictationController: ObservableObject {
     @Published var text = ""
     @Published var status = ""
     @Published var dictating = false
-    @Published var muted = false
     @Published var spellChecking = false
     @Published var words: [String] = []
     @Published var wordParagraphs: [Int] = []
@@ -79,6 +78,25 @@ final class DictationController: ObservableObject {
     private var runningStop = false
     private var transcriptColumnLimit = 100
     private var wordFrames: [Int: CGRect] = [:]
+
+    /// Output volume to duck to while dictating, and the level to restore afterwards.
+    private let duckLevel: Float = 0.15
+    private var preDuckVolume: Float?
+
+    private func duckOutput() {
+        guard preDuckVolume == nil else { return }
+        preDuckVolume = OutputVolume.current()
+        if preDuckVolume != nil {
+            OutputVolume.set(duckLevel)
+        }
+    }
+
+    private func restoreOutput() {
+        if let level = preDuckVolume {
+            OutputVolume.set(level)
+            preDuckVolume = nil
+        }
+    }
 
     init(transcriber: TranscriberService) {
         self.transcriber = transcriber
@@ -187,10 +205,6 @@ final class DictationController: ObservableObject {
             if !dictating { splitCurrentParagraph() }
         case ".":
             if !dictating { applyLastReplace() }
-        case "m", "M":
-            SystemHelpers.toggleOutputMute()
-            muted.toggle()
-            updateStatusFor(combineText())
         case "c":
             if !dictating { startEditMode(.replace) }
         case "C":
@@ -224,9 +238,9 @@ final class DictationController: ObservableObject {
             return ["enter: apply edit", "esc: cancel edit", "arrows: move cursor", "home/end: jump", "alt+backspace: delete word", "backspace: delete char", "delete: delete ahead"]
         }
         if dictating {
-            return ["space: pause dictation", "enter: paste result", "v: insert clipboard", "s: spell check transcript", "R: restart dictation", "q: discard", "ctrl+c: abort", "m: mute output", "o: new paragraph", "D: edit dictionary"]
+            return ["space: pause dictation", "enter: paste result", "v: insert clipboard", "s: spell check transcript", "R: restart dictation", "q: discard", "ctrl+c: abort", "o: new paragraph", "D: edit dictionary"]
         }
-        var bindings = ["space: resume dictation", "enter: paste result", "v: insert clipboard", "s: spell check transcript", "R: restart dictation", "q: discard", "ctrl+c: abort", "m: mute output", "o: new paragraph", "D: edit dictionary", "J: join paragraph", "S: split paragraph", "arrows: navigate", "shift+arrows: expand selection"]
+        var bindings = ["space: resume dictation", "enter: paste result", "v: insert clipboard", "s: spell check transcript", "R: restart dictation", "q: discard", "ctrl+c: abort", "o: new paragraph", "D: edit dictionary", "J: join paragraph", "S: split paragraph", "arrows: navigate", "shift+arrows: expand selection"]
         if lastReplaceSet && hasSelection() {
             bindings.append(".: repeat change")
         }
@@ -352,9 +366,6 @@ final class DictationController: ObservableObject {
         if spellChecking {
             label = "SPELL CHECKING"
         }
-        if muted {
-            label += " muted"
-        }
         let count = value.count
         status = count > 0 ? "\(label) | \(count) chars" : label
     }
@@ -372,6 +383,7 @@ final class DictationController: ObservableObject {
         if editMode { cancelEditMode() }
         segment = ""
         dictating = true
+        duckOutput()
         serviceMessage = ""
         debugMessage = "Starting microphone..."
         clearSelection()
@@ -386,6 +398,7 @@ final class DictationController: ObservableObject {
         Logger.info("stopDictation requested")
         if !dictating { return }
         dictating = false
+        restoreOutput()
         serviceMessage = ""
         debugMessage = "Stopping dictation..."
         let transcriber = transcriber
@@ -480,6 +493,7 @@ final class DictationController: ObservableObject {
         let wasDictating = dictating
         if wasDictating {
             dictating = false
+            restoreOutput()
             serviceMessage = ""
             debugMessage = "Preparing spell check..."
         }

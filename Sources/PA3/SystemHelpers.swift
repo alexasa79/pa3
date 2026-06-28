@@ -4,18 +4,6 @@ import Carbon
 import Foundation
 
 enum SystemHelpers {
-    static func toggleOutputMute() {
-        let script = """
-        set isMuted to output muted of (get volume settings)
-        if isMuted is true then
-        set volume output muted false
-        else
-        set volume output muted true
-        end if
-        """
-        runAppleScript(script)
-    }
-
     static func closeWindow() {
         runAppleScript("tell application \"System Events\" to keystroke \"q\" using {command down}")
     }
