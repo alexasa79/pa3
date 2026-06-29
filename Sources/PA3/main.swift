@@ -3,7 +3,7 @@ import SwiftUI
 
 if CommandLine.arguments.contains("--audio-smoke-test") {
     Logger.setup()
-    let seconds = smokeTestDuration()
+    let seconds = smokeTestDuration(flag: "--audio-smoke-test")
     Logger.info("audio smoke test starting seconds=\(seconds)")
     let transcriber = TranscriberService()
     transcriber.startTranscribe(sendTo: { text in
@@ -24,6 +24,56 @@ if CommandLine.arguments.contains("--audio-smoke-test") {
     print("wavs=\(wavs.count)")
     Logger.close()
     exit(snapshot.tapCallbacks > 0 && snapshot.queuedChunks > 0 && snapshot.workerChunks > 0 ? 0 : 2)
+}
+
+if CommandLine.arguments.contains("--duck-test") {
+    Logger.setup()
+    let seconds = smokeTestDuration(flag: "--duck-test", default: 6)
+
+    func describeDefault(_ tag: String) {
+        let input = OutputVolume.defaultInputDevice().map { "\($0) (\(OutputVolume.name(of: $0)))" } ?? "none"
+        if let device = OutputVolume.defaultOutputDevice() {
+            let vol = OutputVolume.current(device: device).map { String(format: "%.3f", $0) } ?? "nil"
+            print("[\(tag)] out=\(device) (\(OutputVolume.name(of: device))) vol=\(vol)  in=\(input)")
+        } else {
+            print("[\(tag)] no default output device  in=\(input)")
+        }
+    }
+
+    print("duck-test seconds=\(seconds) — duck, open mic (triggers Bluetooth profile switch), then restore")
+    describeDefault("before")
+
+    let ducker = OutputDucker(level: 0.15)
+    ducker.start()
+    describeDefault("after-duck")
+
+    let transcriber = TranscriberService()
+    transcriber.startTranscribe(sendTo: { _ in }, skipWhisper: true)
+
+    let deadline = Date().addingTimeInterval(seconds)
+    while Date() < deadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        describeDefault("mic-open")
+    }
+
+    transcriber.stopTranscribe()
+    RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+    describeDefault("after-mic-stop")
+
+    ducker.stop()
+    RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+    describeDefault("after-restore")
+
+    // Watch for several seconds: if Bluetooth keeps per-profile volume memory, the switch
+    // back to the music profile may restore the (polluted) value AFTER we restore.
+    let settleDeadline = Date().addingTimeInterval(5)
+    while Date() < settleDeadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        describeDefault("settle")
+    }
+
+    Logger.close()
+    exit(0)
 }
 
 if CommandLine.arguments.contains("--whisper-fixture-test") {
@@ -67,11 +117,11 @@ app.delegate = delegate
 app.setActivationPolicy(.accessory)
 app.run()
 
-private func smokeTestDuration() -> TimeInterval {
-    guard let index = CommandLine.arguments.firstIndex(of: "--audio-smoke-test"),
+private func smokeTestDuration(flag: String = "--audio-smoke-test", default fallback: TimeInterval = 3) -> TimeInterval {
+    guard let index = CommandLine.arguments.firstIndex(of: flag),
           CommandLine.arguments.indices.contains(index + 1),
           let value = Double(CommandLine.arguments[index + 1]) else {
-        return 3
+        return fallback
     }
     return value
 }

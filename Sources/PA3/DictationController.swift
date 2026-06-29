@@ -79,23 +79,16 @@ final class DictationController: ObservableObject {
     private var transcriptColumnLimit = 100
     private var wordFrames: [Int: CGRect] = [:]
 
-    /// Output volume to duck to while dictating, and the level to restore afterwards.
-    private let duckLevel: Float = 0.15
-    private var preDuckVolume: Float?
+    /// Ducks output while dictating and follows the default device if it changes (e.g. a
+    /// Bluetooth headset switching to its headset profile when the microphone opens).
+    private let ducker = OutputDucker(level: 0.15)
 
     private func duckOutput() {
-        guard preDuckVolume == nil else { return }
-        preDuckVolume = OutputVolume.current()
-        if preDuckVolume != nil {
-            OutputVolume.set(duckLevel)
-        }
+        ducker.start()
     }
 
     private func restoreOutput() {
-        if let level = preDuckVolume {
-            OutputVolume.set(level)
-            preDuckVolume = nil
-        }
+        ducker.stop()
     }
 
     init(transcriber: TranscriberService) {
@@ -133,16 +126,19 @@ final class DictationController: ObservableObject {
 
     func shutdown() {
         stopDictation()
+        restoreOutput()
         transcriber.close()
     }
 
     func pasteAndHide() {
         stopDictation()
+        restoreOutput()
         onPasteAndHide?(text)
     }
 
     func discardAndHide() {
         stopDictation()
+        restoreOutput()
         onHide?()
     }
 
