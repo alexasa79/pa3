@@ -50,21 +50,23 @@ func drawAppIcon(size: CGFloat) -> NSImage {
     let midY = size * 0.50
     let startX = size * 0.18
     let step = size * 0.10
+    let smallAmplitude = size * 0.09
+    let largeAmplitude = size * 0.11
     wave.move(to: NSPoint(x: startX, y: midY))
     wave.curve(
         to: NSPoint(x: startX + step * 2, y: midY),
-        controlPoint1: NSPoint(x: startX + step * 0.45, y: midY + size * 0.16),
-        controlPoint2: NSPoint(x: startX + step * 1.55, y: midY - size * 0.16)
+        controlPoint1: NSPoint(x: startX + step * 0.45, y: midY + smallAmplitude),
+        controlPoint2: NSPoint(x: startX + step * 1.55, y: midY - smallAmplitude)
     )
     wave.curve(
         to: NSPoint(x: startX + step * 4, y: midY),
-        controlPoint1: NSPoint(x: startX + step * 2.45, y: midY + size * 0.20),
-        controlPoint2: NSPoint(x: startX + step * 3.55, y: midY - size * 0.20)
+        controlPoint1: NSPoint(x: startX + step * 2.45, y: midY + largeAmplitude),
+        controlPoint2: NSPoint(x: startX + step * 3.55, y: midY - largeAmplitude)
     )
     wave.curve(
         to: NSPoint(x: startX + step * 6.2, y: midY),
-        controlPoint1: NSPoint(x: startX + step * 4.55, y: midY + size * 0.16),
-        controlPoint2: NSPoint(x: startX + step * 5.65, y: midY - size * 0.16)
+        controlPoint1: NSPoint(x: startX + step * 4.55, y: midY + smallAmplitude),
+        controlPoint2: NSPoint(x: startX + step * 5.65, y: midY - smallAmplitude)
     )
     wave.stroke()
 
@@ -113,7 +115,7 @@ func drawMenuIcon(size: CGFloat) -> NSImage {
 
     let startX = size * 0.10
     let endX = size * 0.90
-    let amplitude = size * 0.22
+    let amplitude = size * 0.12
     let segments = 96
 
     for index in 0...segments {
