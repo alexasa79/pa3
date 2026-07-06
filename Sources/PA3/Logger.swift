@@ -5,7 +5,7 @@ enum Logger {
     nonisolated(unsafe) private static var handle: FileHandle?
 
     static func setup() {
-        let path = installationDirectory().appendingPathComponent("pa3.log")
+        let path = userDataDirectory().appendingPathComponent("pa3.log")
         FileManager.default.createFile(atPath: path.path, contents: nil)
         handle = try? FileHandle(forWritingTo: path)
         try? handle?.truncate(atOffset: 0)
@@ -39,14 +39,19 @@ enum Logger {
     }
 }
 
-func installationDirectory() -> URL {
-    if let override = ProcessInfo.processInfo.environment["PA3_INSTALL_DIR"], !override.isEmpty {
-        return URL(fileURLWithPath: override, isDirectory: true)
-    }
+func appResourceDirectory() -> URL {
     if let resourceURL = Bundle.main.resourceURL,
        Bundle.main.bundlePath.hasSuffix(".app") {
         return resourceURL
     }
     let exe = URL(fileURLWithPath: CommandLine.arguments.first ?? FileManager.default.currentDirectoryPath)
     return exe.deletingLastPathComponent()
+}
+
+func userDataDirectory() -> URL {
+    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
+    let dir = base.appendingPathComponent("PA3", isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    return dir
 }

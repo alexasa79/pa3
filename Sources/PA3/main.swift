@@ -13,7 +13,7 @@ if CommandLine.arguments.contains("--audio-smoke-test") {
     RunLoop.current.run(until: Date().addingTimeInterval(seconds))
     transcriber.stopTranscribe()
     let snapshot = transcriber.debugSnapshot()
-    let recDir = installationDirectory().appendingPathComponent("rec")
+    let recDir = userDataDirectory().appendingPathComponent("rec")
     let recordings = (try? FileManager.default.contentsOfDirectory(at: recDir, includingPropertiesForKeys: nil)) ?? []
     let wavs = recordings.filter { $0.pathExtension.lowercased() == "wav" }
     Logger.info("audio smoke test result taps=\(snapshot.tapCallbacks) queued=\(snapshot.queuedChunks) worker=\(snapshot.workerChunks) wavs=\(wavs.count)")

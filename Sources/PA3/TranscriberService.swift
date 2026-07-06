@@ -600,7 +600,7 @@ final class TranscriberService {
     }
 
     private func saveRecording(_ wav: Data, timestamp: String) {
-        let dir = installationDirectory().appendingPathComponent("rec")
+        let dir = userDataDirectory().appendingPathComponent("rec")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appendingPathComponent("\(timestamp).wav")
         try? wav.write(to: file)
@@ -617,7 +617,7 @@ final class TranscriberService {
             return false
         }
 
-        let installDir = installationDirectory()
+        let installDir = appResourceDirectory()
         let buildDir = installDir.appendingPathComponent("whisper.cpp/build")
         let server = buildDir.appendingPathComponent("bin/whisper-server")
         let model = installDir.appendingPathComponent("models/whisper.ggml")

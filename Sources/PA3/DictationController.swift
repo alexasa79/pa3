@@ -94,7 +94,7 @@ final class DictationController: ObservableObject {
 
     init(transcriber: TranscriberService) {
         self.transcriber = transcriber
-        self.vocabulary = Vocabulary(path: installationDirectory().appendingPathComponent("vocabulary.txt"))
+        self.vocabulary = Vocabulary(path: Self.vocabularyPath())
         self.vocabularyWords = vocabulary.allWords()
         transcriber.setSystemPrompt(vocabulary.systemPrompt())
         transcriber.setLanguage(language.rawValue)
@@ -107,6 +107,16 @@ final class DictationController: ObservableObject {
             }
         }
         updateDisplay()
+    }
+
+    private static func vocabularyPath() -> URL {
+        let path = userDataDirectory().appendingPathComponent("vocabulary.txt")
+        let oldPath = appResourceDirectory().appendingPathComponent("vocabulary.txt")
+        if !FileManager.default.fileExists(atPath: path.path),
+           FileManager.default.fileExists(atPath: oldPath.path) {
+            try? FileManager.default.copyItem(at: oldPath, to: path)
+        }
+        return path
     }
 
     func beginNewSession() {
