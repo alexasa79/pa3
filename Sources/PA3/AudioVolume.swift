@@ -69,6 +69,20 @@ enum OutputVolume {
         return Float(volume)
     }
 
+    /// Current nominal sample rate of a device, or nil. Low rates (8/16/24 kHz) indicate the
+    /// Bluetooth headset (mic) profile; music profiles run at 44.1/48 kHz.
+    static func sampleRate(of device: AudioDeviceID) -> Float64? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectHasProperty(device, &address) else { return nil }
+        var rate = Float64(0)
+        var size = UInt32(MemoryLayout<Float64>.size)
+        let status = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &rate)
+        return status == noErr ? rate : nil
+    }
+
     /// Sets the master output volume of the default device (clamped to 0.0...1.0). Returns false if unsupported.
     @discardableResult
     static func set(_ value: Float) -> Bool {
@@ -87,6 +101,40 @@ enum OutputVolume {
         var volume = Float32(max(0, min(1, value)))
         let size = UInt32(MemoryLayout<Float32>.size)
         let status = AudioObjectSetPropertyData(device, &address, 0, nil, size, &volume)
+        return status == noErr
+    }
+
+    private static func muteAddress() -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyMute,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain)
+    }
+
+    /// Whether the device's output is muted, or nil if it doesn't expose a mute control.
+    /// Unlike the volume scalar, the mute control is present on both the music and headset
+    /// Bluetooth profiles, so muting stays effective while the microphone is open.
+    static func isMuted(device: AudioDeviceID) -> Bool? {
+        var address = muteAddress()
+        guard AudioObjectHasProperty(device, &address) else { return nil }
+        var muted = UInt32(0)
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        let status = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &muted)
+        guard status == noErr else { return nil }
+        return muted != 0
+    }
+
+    /// Mutes or unmutes the device's output. Returns false if unsupported.
+    @discardableResult
+    static func setMuted(_ muted: Bool, device: AudioDeviceID) -> Bool {
+        var address = muteAddress()
+        guard AudioObjectHasProperty(device, &address) else { return false }
+        var settable: DarwinBoolean = false
+        guard AudioObjectIsPropertySettable(device, &address, &settable) == noErr,
+              settable.boolValue else { return false }
+        var value = UInt32(muted ? 1 : 0)
+        let size = UInt32(MemoryLayout<UInt32>.size)
+        let status = AudioObjectSetPropertyData(device, &address, 0, nil, size, &value)
         return status == noErr
     }
 }
@@ -281,6 +329,192 @@ final class OutputDucker {
         device = nil
         originalVolume = nil
         targetVolume = nil
+        phase = .idle
+    }
+
+    private func sampleRate(of device: AudioDeviceID) -> Float64? {
+        var address = sampleRateAddress
+        guard AudioObjectHasProperty(device, &address) else { return nil }
+        var rate = Float64(0)
+        var size = UInt32(MemoryLayout<Float64>.size)
+        let status = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &rate)
+        return status == noErr ? rate : nil
+    }
+}
+
+/// Mutes the system output while dictating and unmutes it afterward.
+///
+/// We mute rather than lower the volume because a Bluetooth headset's *volume* control has no
+/// audible effect while its microphone is open (the low-bandwidth headset profile), whereas its
+/// *mute* control works on both profiles. Mirrors `OutputDucker`'s structure for coping with the
+/// profile switch the microphone triggers:
+///
+/// Opening the mic switches the device to the headset profile ~1s in, which can clear the mute
+/// we set; switching back to the music profile ~1-2s after the mic closes can resurface the mute
+/// we wrote into that profile's memory, leaving audio stuck silent. So we keep a listener that
+/// re-asserts a moving `target` (muted while dictating, the original mute state while winding
+/// down) and watch the nominal sample rate: the jump back up to a music-profile rate signals the
+/// switch-back, at which point we re-apply the original state and tear everything down.
+///
+/// All access is on the main actor; CoreAudio listeners and timers are delivered on the main
+/// queue too, so the callbacks `assumeIsolated`.
+@MainActor
+final class OutputMuter {
+    /// Nominal sample rates below this mean the Bluetooth headset (mic) profile is active.
+    private let musicSampleRateThreshold: Float64 = 32000
+    /// Hard cap on how long we keep correcting after stop, in case the switch-back never arrives.
+    private let maxWindDownSeconds: TimeInterval = 8
+
+    private enum Phase { case idle, muting, windingDown }
+    private var phase: Phase = .idle
+
+    private var device: AudioDeviceID?
+    /// Mute state to restore on the way out (usually unmuted).
+    private var originalMuted: Bool?
+    /// State the listener keeps re-asserting against profile-switch resets.
+    private var targetMuted: Bool?
+
+    private var muteListener: AudioObjectPropertyListenerBlock?
+    private var sampleRateListener: AudioObjectPropertyListenerBlock?
+    private var teardownItem: DispatchWorkItem?
+
+    private var muteAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyMute,
+        mScope: kAudioObjectPropertyScopeOutput,
+        mElement: kAudioObjectPropertyElementMain)
+    private var sampleRateAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyNominalSampleRate,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain)
+
+    var isActive: Bool { phase != .idle }
+
+    func start() {
+        switch phase {
+        case .muting:
+            return
+        case .windingDown:
+            // A new session began before the previous wind-down finished; re-arm in place.
+            guard let dev = device else { return }
+            teardownItem?.cancel()
+            teardownItem = nil
+            targetMuted = true
+            phase = .muting
+            Logger.info("OutputMuter.restart device=\(dev)")
+            reapplyTarget(on: dev)
+        case .idle:
+            guard let dev = OutputVolume.defaultOutputDevice() else { return }
+            guard OutputVolume.isMuted(device: dev) != nil else {
+                Logger.info("OutputMuter.start skipped device=\(dev) (\(OutputVolume.name(of: dev))) no mute control")
+                return
+            }
+            device = dev
+            originalMuted = OutputVolume.isMuted(device: dev) ?? false
+            targetMuted = true
+            phase = .muting
+            Logger.info("OutputMuter.start device=\(dev) (\(OutputVolume.name(of: dev))) originalMuted=\(originalMuted.map(String.init) ?? "nil")")
+            installMuteListener(on: dev)
+            installSampleRateListener(on: dev)
+            reapplyTarget(on: dev)
+        }
+    }
+
+    func stop() {
+        guard phase == .muting, let dev = device else { return }
+        let original = originalMuted ?? false
+        targetMuted = original
+        phase = .windingDown
+        let rate = sampleRate(of: dev)
+        Logger.info("OutputMuter.stop device=\(dev) restoreMuted=\(original) sampleRate=\(rate.map { String($0) } ?? "nil")")
+        reapplyTarget(on: dev)
+        if let rate, rate < musicSampleRateThreshold {
+            scheduleTeardown(after: maxWindDownSeconds)
+        } else {
+            teardown()
+        }
+    }
+
+    // MARK: - Listeners
+
+    private func installMuteListener(on dev: AudioDeviceID) {
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.enforceTarget(reason: "mute") }
+        }
+        muteListener = block
+        AudioObjectAddPropertyListenerBlock(dev, &muteAddress, DispatchQueue.main, block)
+    }
+
+    private func installSampleRateListener(on dev: AudioDeviceID) {
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.sampleRateChanged() }
+        }
+        sampleRateListener = block
+        AudioObjectAddPropertyListenerBlock(dev, &sampleRateAddress, DispatchQueue.main, block)
+    }
+
+    /// Re-assert the current target if the live mute state has drifted (e.g. a profile switch
+    /// clearing it). Safe to call spuriously.
+    private func enforceTarget(reason: String) {
+        guard let dev = device, let target = targetMuted,
+              let current = OutputVolume.isMuted(device: dev) else { return }
+        if current != target {
+            OutputVolume.setMuted(target, device: dev)
+            Logger.info("OutputMuter.reassert reason=\(reason) device=\(dev) was=\(current) -> \(target) phase=\(phase)")
+        }
+    }
+
+    private func sampleRateChanged() {
+        guard let dev = device else { return }
+        let rate = sampleRate(of: dev) ?? 0
+        Logger.info("OutputMuter.sampleRate device=\(dev) -> \(rate) phase=\(phase)")
+        reapplyTarget(on: dev)
+        if phase == .windingDown && rate >= musicSampleRateThreshold {
+            scheduleTeardown(after: 1)
+        }
+    }
+
+    /// Write the target now and again over the next second; the profile switch's reset can land
+    /// slightly after its notification, so a single write may be undone.
+    private func reapplyTarget(on dev: AudioDeviceID) {
+        enforceTarget(reason: "immediate")
+        for delay in [0.15, 0.4, 0.8] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.device == dev else { return }
+                    self.enforceTarget(reason: "delayed+\(delay)")
+                }
+            }
+        }
+    }
+
+    // MARK: - Teardown
+
+    private func scheduleTeardown(after seconds: TimeInterval) {
+        teardownItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.teardown() }
+        }
+        teardownItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: item)
+    }
+
+    private func teardown() {
+        if let dev = device {
+            if let block = muteListener {
+                AudioObjectRemovePropertyListenerBlock(dev, &muteAddress, DispatchQueue.main, block)
+            }
+            if let block = sampleRateListener {
+                AudioObjectRemovePropertyListenerBlock(dev, &sampleRateAddress, DispatchQueue.main, block)
+            }
+            Logger.info("OutputMuter.teardown device=\(dev) finalMuted=\(OutputVolume.isMuted(device: dev).map(String.init) ?? "nil")")
+        }
+        muteListener = nil
+        sampleRateListener = nil
+        teardownItem?.cancel()
+        teardownItem = nil
+        device = nil
+        originalMuted = nil
+        targetMuted = nil
         phase = .idle
     }
 

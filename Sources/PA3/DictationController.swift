@@ -79,16 +79,17 @@ final class DictationController: ObservableObject {
     private var transcriptColumnLimit = 100
     private var wordFrames: [Int: CGRect] = [:]
 
-    /// Ducks output while dictating and follows the default device if it changes (e.g. a
-    /// Bluetooth headset switching to its headset profile when the microphone opens).
-    private let ducker = OutputDucker(level: 0.15)
+    /// Mutes output while dictating (and re-asserts across the Bluetooth profile switch the
+    /// microphone triggers). We mute rather than lower the volume because a Bluetooth headset's
+    /// volume control has no audible effect while its mic is open, but its mute control does.
+    private let muter = OutputMuter()
 
     private func duckOutput() {
-        ducker.start()
+        muter.start()
     }
 
     private func restoreOutput() {
-        ducker.stop()
+        muter.stop()
     }
 
     init(transcriber: TranscriberService) {
