@@ -46,10 +46,12 @@ final class Vocabulary {
     func systemPrompt() -> String {
         lock.lock()
         defer { lock.unlock() }
+        // Give Whisper a fixed punctuation style without feeding back previous dictation.
+        let punctuationExample = "Hello. This is a punctuated transcript."
         if words.isEmpty {
-            return ""
+            return punctuationExample
         }
-        return "vocabulary: " + words.joined(separator: ", ")
+        return "vocabulary: " + words.joined(separator: ", ") + "\n" + punctuationExample
     }
 
     private func load() {
