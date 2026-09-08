@@ -100,7 +100,12 @@ final class TranscriberService {
     private let chunkDurationMs = 10
     private let audioBufferSeconds = 10
     private let silencePadding: TimeInterval = 0.1
-    private let sentencesToKeep = 2
+    private var segmentationConfig = SegmentationConfig.default
+    private var segmentation: SegmentationConfig {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return segmentationConfig
+    }
     private let whisperPort = 65_461
     private let whisperStartupTimeout: TimeInterval = 180
 
@@ -109,8 +114,10 @@ final class TranscriberService {
     private let statusLock = NSLock()
     private var stableText = ""
     private var stableRunes = 0
-    private var previousSentences: [String] = []
+    private var pendingText = ""
     private var systemPrompt = ""
+    /// Called with the absolute time of every cut. Used by the replay tool.
+    var cutHandler: (@Sendable (Double, SegmentCut) -> Void)?
     private var language = "en"
     private var isStopping = false
     private var generation = 0
@@ -142,6 +149,13 @@ final class TranscriberService {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             _ = self?.ensureWhisperServerStarted()
         }
+    }
+
+    /// How many complete sentences stay in the audio buffer as context for Whisper. Applies from the next round.
+    func setKeepSentences(_ count: Int) {
+        stateLock.lock()
+        segmentationConfig.keepSentences = max(0, count)
+        stateLock.unlock()
     }
 
     func setSystemPrompt(_ prompt: String) {
@@ -177,7 +191,7 @@ final class TranscriberService {
         let startGeneration = generation
         stableText = ""
         stableRunes = 0
-        previousSentences = []
+        pendingText = ""
         isStopping = false
         self.skipWhisper = skipWhisper
         stateLock.unlock()
@@ -377,19 +391,43 @@ final class TranscriberService {
         return result
     }
 
-    private func transcribeLoop(queue: SampleQueue, timestamp: String, sampleRate: Int, receiver: @escaping @Sendable (String) -> Void) {
+    private func transcribeLoop(queue: SampleQueue, timestamp: String, sampleRate: Int, record: Bool = true, receiver: @escaping @Sendable (String) -> Void) {
         var audio: [Float] = []
         audio.reserveCapacity(sampleRate * 300)
+        var consumedSamples = 0
+        let recorder = (skipWhisper || !record) ? nil : SessionRecorder(directory: recordingDirectory(), timestamp: timestamp, sampleRate: sampleRate)
+        defer { recorder?.close() }
+
+        var newAudio = false
+        var lastRequestStart = Date.distantPast
+        var threshold = segmentation.minThreshold
+        let maxTrailingSilence = Int(segmentation.maxTrailingSilence * Double(sampleRate))
 
         while !Thread.current.isCancelled {
             guard let chunk = queue.receive() else {
                 Logger.info("transcription worker queue closed")
+                if newAudio, !skipWhisper, audio.count > sampleRate / 2 {
+                    // Replay ends here. A live session is already stopping, so this request is refused and costs nothing.
+                    _ = transcribeSlice(samples: audio, offsetSamples: consumedSamples, sampleRate: sampleRate, receiver: receiver)
+                }
                 break
             }
             noteWorkerChunk(samples: chunk.count)
-            audio.append(contentsOf: chunk)
-            for drained in queue.drain() {
-                audio.append(contentsOf: drained)
+            for piece in [chunk] + queue.drain() {
+                recorder?.append(piece)
+                if skipWhisper {
+                    continue
+                }
+                // Once the buffer already ends in a second of silence, more silence adds nothing. Drop it so a pause
+                // cannot grow the buffer, and so the tail of the last sentence stays close to the end of the audio.
+                if audio.count >= maxTrailingSilence,
+                   isQuiet(audio[(audio.count - maxTrailingSilence)...], threshold: threshold),
+                   isQuiet(piece[...], threshold: threshold) {
+                    consumedSamples += piece.count
+                    continue
+                }
+                audio.append(contentsOf: piece)
+                newAudio = true
             }
 
             if skipWhisper {
@@ -398,15 +436,20 @@ final class TranscriberService {
                 }
                 continue
             }
-            if audio.count > sampleRate {
-                let trimmed = transcribeSlice(samples: audio, timestamp: timestamp, sampleRate: sampleRate, receiver: receiver)
-                if trimmed > 0 {
-                    if trimmed >= audio.count {
-                        audio.removeAll(keepingCapacity: true)
-                    } else {
-                        audio.removeFirst(trimmed)
-                    }
-                }
+            // One round per interval, counted from the start of the previous round. The loop is sequential, so a round
+            // that runs longer than the interval simply delays the next one until it is done.
+            guard audio.count > sampleRate, newAudio,
+                  Date().timeIntervalSince(lastRequestStart) >= segmentation.minRequestInterval else {
+                continue
+            }
+            newAudio = false
+            lastRequestStart = Date()
+            let result = transcribeSlice(samples: audio, offsetSamples: consumedSamples, sampleRate: sampleRate, receiver: receiver)
+            threshold = result.threshold
+            if result.trim > 0 {
+                let count = min(result.trim, audio.count)
+                audio.removeFirst(count)
+                consumedSamples += count
             }
         }
         Logger.info("transcription worker exiting")
@@ -448,29 +491,78 @@ final class TranscriberService {
         return (tapCallbacks, queuedChunks, workerChunks)
     }
 
-    private func transcribeSlice(samples: [Float], timestamp: String, sampleRate: Int, receiver: @escaping @Sendable (String) -> Void) -> Int {
+    /// Sends the buffer to Whisper and commits whatever can be cut.
+    /// Returns how many samples to drop from the front and the speech threshold measured on this buffer.
+    private func transcribeSlice(samples: [Float], offsetSamples: Int, sampleRate: Int, receiver: @escaping @Sendable (String) -> Void) -> (trim: Int, threshold: Float) {
+        let segmentation = self.segmentation
+        let energies = frameEnergies(samples: samples, sampleRate: sampleRate, frameSeconds: segmentation.frameSeconds)
+        let threshold = speechThreshold(energies: energies, config: segmentation)
         guard ensureWhisperServerStarted() else {
-            return 0
+            return (0, threshold)
+        }
+        if !energies.contains(where: { $0 >= threshold }) {
+            // Nothing to hear. Keep a little context and skip the request so Whisper cannot invent words from silence.
+            let keep = Int(segmentation.searchWindow * Double(sampleRate))
+            return (max(0, samples.count - keep), threshold)
         }
         let paddingSamples = max(0, Int(round(Double(sampleRate) * silencePadding)))
         let padded = [Float](repeating: 0, count: paddingSamples) + samples
         let wav = WAVEncoder.encode(samples: padded, sampleRate: sampleRate)
-        saveRecording(wav, timestamp: timestamp)
 
-        let trimSeconds = sendRequest(wav: wav, receiver: receiver)
-        if trimSeconds <= 0 {
-            return 0
+        guard let transcription = requestTranscription(wav: wav) else {
+            return (0, threshold)
         }
-        let trimmedSamples = Int(round(trimSeconds * Double(sampleRate)))
-        if trimmedSamples <= 0 || trimmedSamples >= samples.count {
-            return 0
+        let tokens = timedTokens(transcription, offset: silencePadding)
+        let quiet = quietRuns(energies: energies, threshold: threshold, config: segmentation)
+        let duration = Double(samples.count) / Double(sampleRate)
+        var cut = chooseCut(tokens: tokens, quiet: quiet, duration: duration, config: segmentation)
+        if let candidate = cut {
+            // Whisper's word times are too rough to trust a cut on their own. Transcribe the audio before the cut by itself:
+            // that text is what really lies before the cut, whatever the timestamps said.
+            let cutSamples = Int(round(candidate.time * Double(sampleRate)))
+            let head = [Float](repeating: 0, count: paddingSamples) + samples[..<cutSamples]
+            if let headTranscription = requestTranscription(wav: WAVEncoder.encode(samples: head, sampleRate: sampleRate)) {
+                let headTokens = timedTokens(headTranscription, offset: silencePadding).map(\.text)
+                cut = confirmCut(candidate, headTokens: headTokens, allTokens: tokens.map(\.text))
+                if cut == nil {
+                    Logger.info("cut at \(String(format: "%.2f", candidate.time))s rejected: head says \(String(reflecting: buildText(headTokens))) expected \(String(reflecting: buildText(candidate.committed)))")
+                }
+            } else {
+                cut = nil
+            }
         }
-        return trimmedSamples
+
+        stateLock.lock()
+        if let cut {
+            stableText = appendText(stableText, buildText(cut.committed))
+            pendingText = buildText(cut.pending)
+        } else {
+            pendingText = buildText(tokens.map(\.text))
+        }
+        let joined = joinText(stableText, pendingText)
+        stableRunes = joined.stableRunes
+        stateLock.unlock()
+
+        if let cut {
+            let absolute = Double(offsetSamples) / Double(sampleRate) + cut.time
+            Logger.info("cut at \(String(format: "%.2f", absolute))s reason=\(cut.reason) committed=\(String(reflecting: buildText(cut.committed))) pending=\(String(reflecting: buildText(cut.pending)))")
+            cutHandler?(absolute, cut)
+        }
+        let text = joined.text
+        Logger.info("Received Whisper transcription duration=\(String(format: "%.2f", duration)) text=\(String(reflecting: buildText(tokens.map(\.text))))")
+        reportStatus("Dictation active")
+        DispatchQueue.main.async {
+            receiver(text)
+        }
+        guard let cut else {
+            return (0, threshold)
+        }
+        return (Int(round(cut.time * Double(sampleRate))), threshold)
     }
 
-    private func sendRequest(wav: Data, receiver: @escaping @Sendable (String) -> Void) -> Double {
+    private func requestTranscription(wav: Data) -> WhisperTranscription? {
         guard let url = URL(string: "http://127.0.0.1:\(whisperPort)/inference") else {
-            return 0
+            return nil
         }
 
         let boundary = "pa3-\(UUID().uuidString)"
@@ -492,11 +584,10 @@ final class TranscriberService {
         stateLock.lock()
         let prompt = systemPrompt
         let currentLanguage = language
-        let prev = previousSentences
         let stopping = isStopping
         stateLock.unlock()
         if stopping {
-            return 0
+            return nil
         }
         if !prompt.isEmpty {
             addField("prompt", prompt)
@@ -530,81 +621,82 @@ final class TranscriberService {
 
         if let error = result.error {
             Logger.warn("HTTP request failed: \(error)")
-            return 0
+            return nil
         }
         guard result.statusCode == 200, let responseData = result.data else {
             Logger.warn("Whisper server responded with status \(result.statusCode)")
-            return 0
+            return nil
         }
-
         do {
-            var transcription = try JSONDecoder().decode(WhisperTranscription.self, from: responseData)
-            transcription = adjustTranscriptionTiming(transcription)
-            let split = splitTranscription(transcription, previousSentences: prev, keepSentences: sentencesToKeep)
-
-            stateLock.lock()
-            if split.trimSeconds > 0, !split.stableChunk.isEmpty {
-                stableText = appendText(stableText, split.stableChunk)
-            }
-            previousSentences = split.nextSentences
-            let joined = joinText(stableText, split.pendingText)
-            stableRunes = joined.stableRunes
-            stateLock.unlock()
-
-            let text = joined.text
-            Logger.info("Received Whisper transcription chars=\(text.count)")
-            reportStatus("Dictation active")
-            DispatchQueue.main.async {
-                receiver(text)
-            }
-            return split.trimSeconds
+            return try JSONDecoder().decode(WhisperTranscription.self, from: responseData)
         } catch {
             Logger.warn("Failed to decode whisper response: \(error)")
-            return 0
+            return nil
         }
     }
 
     func debugTranscribeWAV(_ wav: Data) -> String {
-        guard ensureWhisperServerStarted() else {
+        guard ensureWhisperServerStarted(), let transcription = requestTranscription(wav: wav) else {
             return ""
         }
-        final class Box: @unchecked Sendable {
-            let lock = NSLock()
-            var text = ""
-            var done = false
-            func set(_ value: String) {
-                lock.lock()
-                text = value
-                done = true
-                lock.unlock()
-            }
-            func snapshot() -> (Bool, String) {
-                lock.lock()
-                defer { lock.unlock() }
-                return (done, text)
-            }
-        }
-        let box = Box()
-        _ = sendRequest(wav: wav) { text in
-            box.set(text)
-        }
-        let deadline = Date().addingTimeInterval(30)
-        while Date() < deadline {
-            let snapshot = box.snapshot()
-            if snapshot.0 {
-                return snapshot.1
-            }
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
-        }
-        return box.snapshot().1
+        return decodedWhisperText(transcription)
     }
 
-    private func saveRecording(_ wav: Data, timestamp: String) {
-        let dir = userDataDirectory().appendingPathComponent("rec")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let file = dir.appendingPathComponent("\(timestamp).wav")
-        try? wav.write(to: file)
+    /// Feeds prerecorded audio through the same worker the microphone uses, paced at `speed` times real time.
+    /// Returns once the worker has processed everything.
+    func replay(samples: [Float], sampleRate: Int, speed: Double, receiver: @escaping @Sendable (String) -> Void) {
+        stopTranscribe()
+        stateLock.lock()
+        generation += 1
+        stableText = ""
+        stableRunes = 0
+        pendingText = ""
+        isStopping = false
+        skipWhisper = false
+        stateLock.unlock()
+        self.sampleRate = sampleRate
+
+        let framesPerChunk = max(1, Int(round(Double(sampleRate * chunkDurationMs) / 1000.0)))
+        let queue = SampleQueue(capacity: max(32, (sampleRate / framesPerChunk) * audioBufferSeconds))
+        sampleQueue = queue
+        let thread = Thread { [weak self, weak queue] in
+            guard let self, let queue else { return }
+            self.transcribeLoop(queue: queue, timestamp: "replay", sampleRate: sampleRate, record: false, receiver: receiver)
+        }
+        thread.name = "pa3.transcription.replay"
+        workerThread = thread
+        thread.start()
+
+        let chunkInterval = Double(chunkDurationMs) / 1000.0 / max(0.01, speed)
+        let started = Date()
+        var index = 0
+        var sent = 0
+        while index < samples.count {
+            let end = min(samples.count, index + framesPerChunk)
+            _ = queue.send(Array(samples[index..<end]), timeout: 60)
+            index = end
+            sent += 1
+            let due = started.addingTimeInterval(Double(sent) * chunkInterval)
+            let wait = due.timeIntervalSinceNow
+            if wait > 0 {
+                Thread.sleep(forTimeInterval: wait)
+            }
+        }
+        queue.close()
+        while thread.isExecuting {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        }
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        workerThread = nil
+        sampleQueue = nil
     }
+
+    func currentText() -> (stable: String, pending: String) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return (stableText, pendingText)
+    }
+
 
     private func startWhisperServer(generation: Int? = nil) -> Bool {
         if isWhisperPortOpen() {
@@ -778,49 +870,6 @@ final class TranscriberService {
         }
     }
 
-    private func adjustTranscriptionTiming(_ transcription: WhisperTranscription) -> WhisperTranscription {
-        // The current UI only needs text and word end boundaries. Keep response immutable here and account for padding while splitting.
-        transcription
-    }
-
-    private func splitTranscription(_ transcription: WhisperTranscription, previousSentences: [String], keepSentences: Int) -> (trimSeconds: Double, stableChunk: String, pendingText: String, nextSentences: [String]) {
-        let decodedText = decodedWhisperText(transcription)
-        let tokens = decodedText.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        if tokens.isEmpty || keepSentences < 0 {
-            return (0, "", "", [])
-        }
-        let boundaries = sentenceBoundaries(transcription.segments)
-        var sentences = completeSentenceTexts(tokens)
-        let completeCount = min(boundaries.count, sentences.count)
-        sentences = Array(sentences.prefix(completeCount))
-        if completeCount == 0 {
-            return (0, "", buildText(tokens), sentences)
-        }
-        let verified = commonSentencePrefix(previousSentences, sentences)
-        let maxCommit = max(0, completeCount - keepSentences)
-        let commitCount = min(verified, maxCommit)
-        if commitCount <= 0 {
-            return (0, "", buildText(tokens), sentences)
-        }
-        let boundaryIndex = commitCount - 1
-        let trimSeconds = max(0, boundaries[boundaryIndex] - silencePadding)
-        if trimSeconds <= 0 {
-            return (0, "", buildText(tokens), sentences)
-        }
-        let split = splitTokensAtSentence(tokens, boundaryIndex: boundaryIndex)
-        return (trimSeconds, buildText(split.stable), buildText(split.pending), Array(sentences.dropFirst(commitCount)))
-    }
-
-    private func sentenceBoundaries(_ segments: [WhisperSegment]) -> [Double] {
-        var result: [Double] = []
-        for segment in segments {
-            for word in segment.words ?? [] where endsSentence(word.word) {
-                result.append(max(0, Double(word.end) - silencePadding))
-            }
-        }
-        return result
-    }
-
     private static func recordingTimestamp() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd'T'HH-mm-ss"
@@ -830,7 +879,7 @@ final class TranscriberService {
 
 extension TranscriberService: @unchecked Sendable {}
 
-private final class ConverterInputProvider: @unchecked Sendable {
+final class ConverterInputProvider: @unchecked Sendable {
     private let lock = NSLock()
     private let buffer: AVAudioPCMBuffer
     private var didProvide = false
@@ -972,11 +1021,72 @@ private final class AudioCaptureDelegate: NSObject, AVCaptureAudioDataOutputSamp
     }
 }
 
+/// Appends every captured sample of one capture run to `rec/<timestamp>.wav`.
+/// The header sizes are patched after each write so the file stays playable if the app dies.
+final class SessionRecorder {
+    private var handle: FileHandle?
+    private var sampleCount = 0
+    private let sampleRate: Int
+
+    init?(directory: URL, timestamp: String, sampleRate: Int) {
+        self.sampleRate = sampleRate
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("\(timestamp).wav")
+        guard FileManager.default.createFile(atPath: file.path, contents: WAVEncoder.header(sampleCount: 0, sampleRate: sampleRate)),
+              let handle = try? FileHandle(forWritingTo: file) else {
+            Logger.warn("Failed to open session recording \(file.path)")
+            return nil
+        }
+        self.handle = handle
+        _ = try? handle.seekToEnd()
+    }
+
+    func append(_ samples: [Float]) {
+        guard let handle, !samples.isEmpty else { return }
+        do {
+            try handle.seekToEnd()
+            try handle.write(contentsOf: WAVEncoder.pcm(samples: samples))
+            sampleCount += samples.count
+            let header = WAVEncoder.header(sampleCount: sampleCount, sampleRate: sampleRate)
+            try handle.seek(toOffset: 4)
+            try handle.write(contentsOf: header[4..<8])
+            try handle.seek(toOffset: 40)
+            try handle.write(contentsOf: header[40..<44])
+        } catch {
+            Logger.warn("Session recording write failed: \(error)")
+            close()
+        }
+    }
+
+    func close() {
+        guard let handle else { return }
+        try? handle.close()
+        self.handle = nil
+        Logger.info("session recording closed samples=\(sampleCount)")
+    }
+}
+
 enum WAVEncoder {
     static func encode(samples: [Float], sampleRate: Int) -> Data {
+        var data = header(sampleCount: samples.count, sampleRate: sampleRate)
+        data.append(pcm(samples: samples))
+        return data
+    }
+
+    static func pcm(samples: [Float]) -> Data {
+        var data = Data(capacity: samples.count * 2)
+        for sample in samples {
+            let clamped = max(-1, min(1, sample))
+            let value = Int16(clamped * 32767)
+            data.append(value.littleEndianData)
+        }
+        return data
+    }
+
+    static func header(sampleCount: Int, sampleRate: Int) -> Data {
         var data = Data()
         let bytesPerSample = 2
-        let subchunk2Size = samples.count * bytesPerSample
+        let subchunk2Size = sampleCount * bytesPerSample
         let chunkSize = 36 + subchunk2Size
 
         data.append("RIFF".data(using: .ascii)!)
@@ -992,12 +1102,6 @@ enum WAVEncoder {
         data.append(UInt16(16).littleEndianData)
         data.append("data".data(using: .ascii)!)
         data.append(UInt32(subchunk2Size).littleEndianData)
-
-        for sample in samples {
-            let clamped = max(-1, min(1, sample))
-            let value = Int16(clamped * 32767)
-            data.append(value.littleEndianData)
-        }
         return data
     }
 }

@@ -40,6 +40,9 @@ enum Logger {
 }
 
 func appResourceDirectory() -> URL {
+    if let override = ProcessInfo.processInfo.environment["PA3_INSTALL_DIR"], !override.isEmpty {
+        return URL(fileURLWithPath: override, isDirectory: true)
+    }
     if let resourceURL = Bundle.main.resourceURL,
        Bundle.main.bundlePath.hasSuffix(".app") {
         return resourceURL
@@ -54,4 +57,20 @@ func userDataDirectory() -> URL {
     let dir = base.appendingPathComponent("PA3", isDirectory: true)
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     return dir
+}
+
+/// Where full session recordings go. Outside the app bundle so `make app` cannot wipe them.
+/// `PA3_RECORDING_DIR` overrides it; otherwise `$XDG_CACHE_HOME/pa3/rec` or `~/.cache/pa3/rec`.
+func recordingDirectory() -> URL {
+    let environment = ProcessInfo.processInfo.environment
+    if let override = environment["PA3_RECORDING_DIR"], !override.isEmpty {
+        return URL(fileURLWithPath: override, isDirectory: true)
+    }
+    let cache: URL
+    if let xdg = environment["XDG_CACHE_HOME"], !xdg.isEmpty {
+        cache = URL(fileURLWithPath: xdg, isDirectory: true)
+    } else {
+        cache = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache", isDirectory: true)
+    }
+    return cache.appendingPathComponent("pa3/rec", isDirectory: true)
 }

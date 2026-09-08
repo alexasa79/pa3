@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 
 if CommandLine.arguments.contains("--audio-smoke-test") {
@@ -13,7 +14,7 @@ if CommandLine.arguments.contains("--audio-smoke-test") {
     RunLoop.current.run(until: Date().addingTimeInterval(seconds))
     transcriber.stopTranscribe()
     let snapshot = transcriber.debugSnapshot()
-    let recDir = userDataDirectory().appendingPathComponent("rec")
+    let recDir = recordingDirectory()
     let recordings = (try? FileManager.default.contentsOfDirectory(at: recDir, includingPropertiesForKeys: nil)) ?? []
     let wavs = recordings.filter { $0.pathExtension.lowercased() == "wav" }
     Logger.info("audio smoke test result taps=\(snapshot.tapCallbacks) queued=\(snapshot.queuedChunks) worker=\(snapshot.workerChunks) wavs=\(wavs.count)")
@@ -98,8 +99,12 @@ if CommandLine.arguments.contains("--whisper-fixture-test") {
     }
 }
 
+if CommandLine.arguments.contains("--replay") || CommandLine.arguments.contains("--replay-test") {
+    exit(Replay.main(arguments: CommandLine.arguments))
+}
+
 if CommandLine.arguments.contains("--whisper-text-test") {
-    let failures = runWhisperTextTests()
+    let failures = runWhisperTextTests() + runSegmentationTests()
     print("whisper-text-test")
     if failures.isEmpty {
         print("ok")
@@ -220,7 +225,33 @@ private func runWhisperTextTests() -> [String] {
         "Plain response text."
     )
 
+    failures.append(contentsOf: runSessionRecorderTest())
     return failures
+}
+
+private func runSessionRecorderTest() -> [String] {
+    let name = "session recorder writes a readable wav"
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("pa3-recorder-test-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let sampleRate = 16_000
+    guard let recorder = SessionRecorder(directory: dir, timestamp: "test", sampleRate: sampleRate) else {
+        return ["\(name): could not create recorder"]
+    }
+    let first = (0..<160).map { Float(sin(Double($0) * 0.1)) }
+    let second = [Float](repeating: 0.5, count: 320)
+    recorder.append(first)
+    recorder.append(second)
+    recorder.close()
+
+    let file = dir.appendingPathComponent("test.wav")
+    guard let audio = try? AVAudioFile(forReading: file) else {
+        return ["\(name): wav did not open"]
+    }
+    let expected = AVAudioFramePosition(first.count + second.count)
+    if audio.length != expected || Int(audio.fileFormat.sampleRate) != sampleRate || audio.fileFormat.channelCount != 1 {
+        return ["\(name): got frames=\(audio.length) rate=\(audio.fileFormat.sampleRate) channels=\(audio.fileFormat.channelCount), expected frames=\(expected) rate=\(sampleRate) channels=1"]
+    }
+    return []
 }
 
 private func makeTestTranscription(segments: [WhisperSegment], text: String = "") -> WhisperTranscription {

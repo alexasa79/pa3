@@ -13,7 +13,7 @@ KEYCHAIN ?= $(HOME)/Library/Keychains/login.keychain-db
 CODESIGN_CERT_DAYS ?= 3650
 CODESIGN_P12_PASSWORD ?= pa3-local-codesign
 
-.PHONY: all build app icons whisper link-pa2-assets codesign-identity clean run test
+.PHONY: all build app icons whisper link-pa2-assets codesign-identity clean run test fixtures replay-test
 
 all: app
 
@@ -23,6 +23,14 @@ build:
 test:
 	swift build
 	.build/debug/pa3 --whisper-text-test
+
+fixtures:
+	sh Tests/make-fixtures.sh Tests/fixtures
+
+replay-test: whisper
+	swift build
+	@if [ -z "$$(ls Tests/fixtures/*.wav 2>/dev/null)" ]; then $(MAKE) fixtures; fi
+	PA3_INSTALL_DIR="$$(pwd)" .build/debug/pa3 --replay-test Tests/fixtures $(REPLAY_FLAGS)
 
 icons:
 	mkdir -p "$(ASSETS)"

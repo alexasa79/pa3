@@ -265,6 +265,8 @@ struct DictationView: View {
                 Label("Dictionary", systemImage: "book.closed")
             }
 
+            contextControl
+
             Spacer()
 
             Text("Dictation starts on launch. Use Stop/Start to test the audio path.")
@@ -274,6 +276,30 @@ struct DictationView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    /// Up and down control for how many sentences of audio stay in the clip as context for Whisper.
+    private var contextControl: some View {
+        HStack(spacing: 4) {
+            Text("Context")
+                .foregroundStyle(.secondary)
+            Button {
+                controller.adjustKeepSentences(by: -1)
+            } label: {
+                Image(systemName: "minus")
+            }
+            .disabled(controller.keepSentences <= DictationController.keepSentencesRange.lowerBound)
+            Text("\(controller.keepSentences)")
+                .font(.system(size: 14, design: .monospaced))
+                .frame(minWidth: 16)
+            Button {
+                controller.adjustKeepSentences(by: 1)
+            } label: {
+                Image(systemName: "plus")
+            }
+            .disabled(controller.keepSentences >= DictationController.keepSentencesRange.upperBound)
+        }
+        .help("Sentences of audio kept in the clip as context for Whisper. More context, longer clip.")
     }
 
     private var footer: some View {

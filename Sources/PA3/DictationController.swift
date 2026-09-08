@@ -63,6 +63,10 @@ final class DictationController: ObservableObject {
     @Published var vocabularyEditText = ""
     @Published var vocabularyEditorPresented = false
     @Published var vocabularyNotice = ""
+    /// Sentences kept in the audio buffer as context. Stored in preferences.
+    @Published private(set) var keepSentences = 2
+    static let keepSentencesKey = "keepSentences"
+    static let keepSentencesRange = 0...5
 
     var onPasteAndHide: ((String) -> Void)?
     var onHide: (() -> Void)?
@@ -98,6 +102,10 @@ final class DictationController: ObservableObject {
         self.vocabularyWords = vocabulary.allWords()
         transcriber.setSystemPrompt(vocabulary.systemPrompt())
         transcriber.setLanguage(language.rawValue)
+        if UserDefaults.standard.object(forKey: Self.keepSentencesKey) != nil {
+            keepSentences = Self.keepSentencesRange.clamped(UserDefaults.standard.integer(forKey: Self.keepSentencesKey))
+        }
+        transcriber.setKeepSentences(keepSentences)
         transcriber.setStatusHandler { [weak self] message in
             Task { @MainActor in
                 guard let self else { return }
@@ -382,6 +390,15 @@ final class DictationController: ObservableObject {
         debugMessage = "Dictation active"
         segment = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         updateDisplay()
+    }
+
+    func adjustKeepSentences(by delta: Int) {
+        let value = Self.keepSentencesRange.clamped(keepSentences + delta)
+        guard value != keepSentences else { return }
+        keepSentences = value
+        UserDefaults.standard.set(value, forKey: Self.keepSentencesKey)
+        transcriber.setKeepSentences(value)
+        Logger.info("keepSentences=\(value)")
     }
 
     func startDictation() {

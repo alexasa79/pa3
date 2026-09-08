@@ -19,6 +19,20 @@ make SIGN_IDENTITY=- app
 
 The app stays resident after paste. Use `Ctrl+Option+Command+P` to show it again, or use the menu-bar waveform icon.
 
+## Testing
+
+`make test` builds and runs the unit tests, including the segmentation rules that decide where live audio is cut.
+
+`make replay-test` pushes spoken clips through the real transcription worker and checks that every cut lands in silence and that the words match the reference. Clips are built with the macOS `say` command by `make fixtures` and land in `Tests/fixtures`, together with `.txt` files holding the words spoken. The test needs whisper-server built and a model in `models`.
+
+Every dictation session is recorded in full to `~/.cache/pa3/rec` (or `$XDG_CACHE_HOME/pa3/rec`; set `PA3_RECORDING_DIR` to change it). To replay one:
+
+```sh
+PA3_INSTALL_DIR=$(pwd) .build/debug/pa3 --replay ~/.cache/pa3/rec/2026-09-06T10-00-00.wav --speed 4
+```
+
+Add `--reference file.txt` to compare against known text. Without it, the replay compares against a one-shot transcription of the whole clip when it is under 30 seconds. `--speed 1` paces the audio like a live session, which changes how much audio each Whisper round sees.
+
 ## Runtime Notes
 
 - `Enter`: paste current transcript into the previously active app and hide PA3.

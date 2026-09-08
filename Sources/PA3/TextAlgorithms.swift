@@ -163,47 +163,14 @@ func buildText(_ tokens: [String]) -> String {
     return result
 }
 
-func completeSentenceTexts(_ tokens: [String]) -> [String] {
-    var sentences: [String] = []
-    var current: [String] = []
-    for token in tokens {
-        current.append(token)
-        if endsSentence(token) {
-            sentences.append(buildText(current))
-            current.removeAll(keepingCapacity: true)
-        }
-    }
-    return sentences
-}
-
-func commonSentencePrefix(_ left: [String], _ right: [String]) -> Int {
-    let count = min(left.count, right.count)
-    for i in 0..<count where left[i] != right[i] {
-        return i
-    }
-    return count
-}
-
-func splitTokensAtSentence(_ tokens: [String], boundaryIndex: Int) -> (stable: [String], pending: [String]) {
-    var sentenceIndex = -1
-    var splitAt = tokens.count
-    for (index, token) in tokens.enumerated() where endsSentence(token) {
-        sentenceIndex += 1
-        if sentenceIndex == boundaryIndex {
-            splitAt = index + 1
-            break
-        }
-    }
-    return (Array(tokens[..<splitAt]), Array(tokens[splitAt...]))
-}
-
 func wordIndexForRunes(words: [String], stableRunes: Int) -> Int {
     if stableRunes <= 0 || words.isEmpty {
         return 0
     }
     var runesSeen = 0
     for (index, word) in words.enumerated() {
-        if index > 0 {
+        // Split-off punctuation such as the "." of "key." has no space before it in the text.
+        if index > 0, shouldInsertSpace(before: word, after: words[index - 1]) {
             runesSeen += 1
         }
         runesSeen += word.count
@@ -212,4 +179,10 @@ func wordIndexForRunes(words: [String], stableRunes: Int) -> Int {
         }
     }
     return words.count
+}
+
+extension ClosedRange where Bound == Int {
+    func clamped(_ value: Int) -> Int {
+        Swift.min(upperBound, Swift.max(lowerBound, value))
+    }
 }
