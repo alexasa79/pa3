@@ -171,6 +171,29 @@ func runSegmentationTests() -> [String] {
         check("over the cap the context is given up before cutting by time", overCap?.reason == "sentence, no context" && overCap?.committed.count == 4, "got \(String(describing: overCap))")
     }
 
+    // Resampler: a 440 Hz tone at 24 kHz comes out as the same tone at 16 kHz, whatever the chunking
+    do {
+        let resampler = Resampler(outputRate: 16_000)
+        let inputRate = 24_000.0
+        var output: [Float] = []
+        var index = 0
+        for chunkSize in [240, 480, 100, 7, 1000, 480, 480] {
+            let chunk = (index..<(index + chunkSize)).map { Float(sin(2 * Double.pi * 440 * Double($0) / inputRate)) }
+            output.append(contentsOf: resampler.process(chunk, inputRate: inputRate))
+            index += chunkSize
+        }
+        let expectedCount = Int(Double(index) * 16_000 / inputRate)
+        check("resampler keeps the duration", abs(output.count - expectedCount) <= 2, "got \(output.count), expected about \(expectedCount)")
+        var worst: Float = 0
+        for (i, sample) in output.enumerated() {
+            let expected = Float(sin(2 * Double.pi * 440 * Double(i) / 16_000))
+            worst = max(worst, abs(sample - expected))
+        }
+        check("resampler keeps the waveform", worst < 0.02, "worst error \(worst)")
+        let passthrough = resampler.process([0.5, 0.25], inputRate: 16_000)
+        check("resampler passes matching rate through after a rate change", passthrough == [0.5, 0.25], "got \(passthrough)")
+    }
+
     // confirmCut
     do {
         let sentence = SegmentCut(time: 1.3, committed: ["How", "does", "it", "work?"], pending: ["What", "does"], reason: "sentence")

@@ -286,7 +286,9 @@ final class TranscriberService {
             }
         }
 
-        sampleRate = 48_000
+        // The microphone may deliver any rate, and it can change mid-session. Everything past this point runs at 16 kHz.
+        sampleRate = Self.defaultSampleRate
+        let resampler = Resampler(outputRate: Double(sampleRate))
         let framesPerBuffer = max(1, Int(round(Double(sampleRate * chunkDurationMs) / 1000.0)))
         let chunksPerSecond = max(1, Int(ceil(Double(sampleRate) / Double(framesPerBuffer))))
         let queue = SampleQueue(capacity: max(32, chunksPerSecond * audioBufferSeconds))
@@ -316,11 +318,12 @@ final class TranscriberService {
         let output = AVCaptureAudioDataOutput()
         let delegate = AudioCaptureDelegate { [weak self, weak queue] samples, rate in
             guard let self, let queue else { return }
-            if rate > 0 {
-                self.sampleRate = Int(rate.rounded())
-            }
             self.noteTapCallback(frames: samples.count)
             self.captureQueue.async {
+                let samples = resampler.process(samples, inputRate: rate)
+                if samples.isEmpty {
+                    return
+                }
                 if !queue.send(samples, timeout: 0.25) {
                     Logger.warn("Dropping audio frame; consumer behind")
                 } else {

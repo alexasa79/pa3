@@ -265,3 +265,49 @@ func confirmCut(_ cut: SegmentCut, headTokens: [String], allTokens: [String]) ->
     let pending = Array(allTokens.dropFirst(min(allTokens.count, headTokens.count)))
     return SegmentCut(time: cut.time, committed: headTokens, pending: pending, reason: cut.reason + " (extended)")
 }
+
+/// Converts a stream of mono samples at whatever rate the microphone delivers to a fixed output rate.
+/// Linear interpolation, which is plenty for speech going down to 16 kHz. Keeps its place between chunks,
+/// and starts over if the input rate changes, as it does when AirPods switch to headset mode.
+/// Only ever touched from the serial capture queue.
+final class Resampler: @unchecked Sendable {
+    let outputRate: Double
+    private(set) var inputRate = 0.0
+    private var pending: [Float] = []
+    private var position = 0.0
+
+    init(outputRate: Double) {
+        self.outputRate = outputRate
+    }
+
+    func process(_ input: [Float], inputRate: Double) -> [Float] {
+        guard inputRate > 0, !input.isEmpty else { return [] }
+        if inputRate != self.inputRate {
+            if self.inputRate > 0 {
+                Logger.info("input sample rate changed \(self.inputRate) -> \(inputRate)")
+            }
+            self.inputRate = inputRate
+            pending.removeAll(keepingCapacity: true)
+            position = 0
+        }
+        if inputRate == outputRate, pending.isEmpty {
+            return input
+        }
+        pending.append(contentsOf: input)
+        let step = inputRate / outputRate
+        var output: [Float] = []
+        output.reserveCapacity(Int(Double(input.count) / step) + 2)
+        while position + 1 < Double(pending.count) {
+            let index = Int(position)
+            let fraction = Float(position - Double(index))
+            output.append(pending[index] + (pending[index + 1] - pending[index]) * fraction)
+            position += step
+        }
+        let consumed = Int(position)
+        if consumed > 0 {
+            pending.removeFirst(min(consumed, pending.count))
+            position -= Double(consumed)
+        }
+        return output
+    }
+}
