@@ -9,9 +9,7 @@ func runSegmentationTests() -> [String] {
             failures.append(extra.isEmpty ? name : "\(name): \(extra)")
         }
     }
-    // Most cut tests look at a single sentence boundary, so they run without context sentences.
-    var config = SegmentationConfig.default
-    config.keepSentences = 0
+    let config = SegmentationConfig.default
     let rate = 16_000
 
     // timedTokens
@@ -71,7 +69,9 @@ func runSegmentationTests() -> [String] {
             TimedToken(text: "are", start: 1.6, end: 2.0)
         ]
         let quiet = [QuietRun(start: 1.1, end: 1.5)]
-        let cut = chooseCut(tokens: tokens, quiet: quiet, duration: 2.2, config: config)
+        var limited = config
+        limited.maxBuffer = 2.0
+        let cut = chooseCut(tokens: tokens, quiet: quiet, duration: 2.2, config: limited)
         check("sentence cut lands inside the pause", cut != nil && cut!.time > 1.1 && cut!.time < 1.5, "got \(String(describing: cut))")
         check("sentence cut commits the sentence", cut?.committed == ["Hello", "world."], "got \(String(describing: cut))")
         check("sentence cut keeps the rest pending", cut?.pending == ["How", "are"], "got \(String(describing: cut))")
@@ -88,7 +88,9 @@ func runSegmentationTests() -> [String] {
             TimedToken(text: "type", start: 2.1, end: 2.4)
         ]
         let quiet = [QuietRun(start: 0.95, end: 1.15), QuietRun(start: 1.6, end: 2.1)]
-        let cut = chooseCut(tokens: tokens, quiet: quiet, duration: 2.6, config: config)
+        var limited = config
+        limited.maxBuffer = 2.0
+        let cut = chooseCut(tokens: tokens, quiet: quiet, duration: 2.6, config: limited)
         check("sentence cut picks the pause before the next word, not the longest", cut != nil && cut!.time > 0.95 && cut!.time < 1.15, "got \(String(describing: cut))")
     }
 
@@ -108,8 +110,10 @@ func runSegmentationTests() -> [String] {
             TimedToken(text: "How", start: 1.4, end: 1.8)
         ]
         let quiet = [QuietRun(start: 2.0, end: 2.2)]
-        let cut = chooseCut(tokens: tokens, quiet: quiet, duration: 2.3, config: config)
-        check("no cut without a pause near the sentence end", cut == nil, "got \(String(describing: cut))")
+        var limited = config
+        limited.maxBuffer = 2.0
+        let cut = chooseCut(tokens: tokens, quiet: quiet, duration: 2.3, config: limited)
+        check("without a pause near the sentence use a time-based pause cut", cut?.reason == "window cap" && cut?.timeBased == true, "got \(String(describing: cut))")
     }
 
     // chooseCut: period on the last token only
@@ -139,36 +143,42 @@ func runSegmentationTests() -> [String] {
         }
         let quiet = [QuietRun(start: 10.0, end: 10.2), QuietRun(start: 20.0, end: 20.4)]
         let cut = chooseCut(tokens: tokens, quiet: quiet, duration: 29.5, config: config)
-        check("window cap cuts at the latest clear pause", cut?.reason == "window cap" && cut != nil && abs(cut!.time - 20.2) < 0.001, "got \(String(describing: cut))")
-        check("window cap commits words before the pause", cut?.committed.count == 20, "got \(String(describing: cut?.committed.count))")
+        check("window cap cuts at the earliest sufficient pause", cut?.reason == "window cap" && cut != nil && abs(cut!.time - 10.1) < 0.001, "got \(String(describing: cut))")
+        check("window cap commits words before the pause", cut?.committed.count == 10, "got \(String(describing: cut?.committed.count))")
         let noPause = chooseCut(tokens: tokens, quiet: [], duration: 29.5, config: config)
-        check("window cap without pause still cuts", noPause != nil && noPause!.time > 0, "got \(String(describing: noPause))")
+        check("without a pause retain almost the full duration limit", noPause != nil && abs((29.5 - noPause!.time) - 27.99) < 0.001, "got \(String(describing: noPause))")
+        let spanning = chooseCut(tokens: tokens, quiet: [QuietRun(start: 1.0, end: 2.0)], duration: 29.5, config: config)
+        check("a pause spanning the required cut is usable", spanning != nil && spanning!.time > 1.5 && spanning!.time < 2.0)
+        let oldPause = chooseCut(tokens: tokens, quiet: [QuietRun(start: 0.2, end: 0.4)], duration: 29.5, config: config)
+        check("a pause that removes too little audio is skipped", oldPause?.reason == "window cap, no pause" && oldPause != nil && 29.5 - oldPause!.time < 28)
+        let unsorted = chooseCut(tokens: tokens, quiet: Array(quiet.reversed()), duration: 29.5, config: config)
+        check("pause order cannot cause excess trimming", unsorted == cut)
         let under = chooseCut(tokens: Array(tokens.prefix(10)), quiet: [QuietRun(start: 5.0, end: 5.2)], duration: 10.0, config: config)
         check("no cap cut under the limit", under == nil, "got \(String(describing: under))")
     }
 
-    // chooseCut: context sentences stay in the buffer
+    // Three-sentence regression: commit only the first sentence at the duration limit.
     do {
         let tokens = [
-            TimedToken(text: "One.", start: 0.5, end: 0.9),
-            TimedToken(text: "Two.", start: 1.5, end: 1.9),
-            TimedToken(text: "Three.", start: 2.5, end: 2.9),
-            TimedToken(text: "Four.", start: 3.5, end: 3.9),
-            TimedToken(text: "tail", start: 4.5, end: 4.8)
+            TimedToken(text: "First.", start: 0.5, end: 8.0),
+            TimedToken(text: "Second?", start: 8.6, end: 20.0),
+            TimedToken(text: "Third?", start: 20.6, end: 27.9)
         ]
-        let quiet = [QuietRun(start: 1.0, end: 1.4), QuietRun(start: 2.0, end: 2.4), QuietRun(start: 3.0, end: 3.4), QuietRun(start: 4.0, end: 4.4)]
-        var keepTwo = config
-        keepTwo.keepSentences = 2
-        let cut = chooseCut(tokens: tokens, quiet: quiet, duration: 5.0, config: keepTwo)
-        check("keep two leaves two sentences behind the cut", cut?.committed == ["One.", "Two."] && cut?.pending == ["Three.", "Four.", "tail"], "got \(String(describing: cut))")
-        check("keep two cuts in the pause after the committed sentence", cut != nil && cut!.time > 2.0 && cut!.time < 2.4, "got \(String(describing: cut))")
-        var keepFour = config
-        keepFour.keepSentences = 4
-        check("no cut while fewer sentences than the context wants", chooseCut(tokens: tokens, quiet: quiet, duration: 5.0, config: keepFour) == nil)
-        var capped = keepFour
-        capped.maxBuffer = 4.0
-        let overCap = chooseCut(tokens: tokens, quiet: quiet, duration: 5.0, config: capped)
-        check("over the cap the context is given up before cutting by time", overCap?.reason == "sentence, no context" && overCap?.committed.count == 4, "got \(String(describing: overCap))")
+        let quiet = [QuietRun(start: 8.1, end: 8.5), QuietRun(start: 20.1, end: 20.5)]
+        check("no sentence cut below duration limit", chooseCut(tokens: tokens, quiet: quiet, duration: 27.9, config: config) == nil)
+        check("no sentence cut exactly at duration limit", chooseCut(tokens: tokens, quiet: quiet, duration: 28.0, config: config) == nil)
+        let cut = chooseCut(tokens: tokens, quiet: quiet, duration: 28.03, config: config)
+        check("first sentence is enough to get below limit", cut?.committed == ["First."] && cut?.pending == ["Second?", "Third?"], "got \(String(describing: cut))")
+        check("cut is in first sentence pause", cut != nil && cut!.time > 8.1 && cut!.time < 8.5)
+        check("confirmed first sentence preserves the remaining sentences", cut != nil && confirmCut(cut!, headTokens: ["First."], allTokens: tokens.map(\.text)) == cut)
+        let oversized = chooseCut(tokens: tokens, quiet: quiet, duration: 40.0, config: config)
+        check("skip an early boundary if it removes too little", oversized?.committed == ["First.", "Second?"] && oversized?.pending == ["Third?"], "got \(String(describing: oversized))")
+        var shorter = config
+        shorter.maxBuffer = 10
+        let adjusted = chooseCut(tokens: tokens, quiet: quiet, duration: 28.03, config: shorter)
+        check("changing seconds changes the required cut", adjusted?.committed == ["First.", "Second?"])
+        let many = (0..<12).map { TimedToken(text: "Sentence\($0).", start: Double($0), end: Double($0) + 0.5) }
+        check("sentence count alone never triggers trimming", chooseCut(tokens: many, quiet: quiet, duration: 12.0, config: config) == nil)
     }
 
     // Resampler: a 440 Hz tone at 24 kHz comes out as the same tone at 16 kHz, whatever the chunking

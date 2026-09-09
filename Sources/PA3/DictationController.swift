@@ -63,10 +63,10 @@ final class DictationController: ObservableObject {
     @Published var vocabularyEditText = ""
     @Published var vocabularyEditorPresented = false
     @Published var vocabularyNotice = ""
-    /// Sentences kept in the audio buffer as context. Stored in preferences.
-    @Published private(set) var keepSentences = 2
-    static let keepSentencesKey = "keepSentences"
-    static let keepSentencesRange = 0...5
+    /// Audio duration limit in seconds. Stored separately from the old sentence preference.
+    @Published private(set) var contextSeconds = Int(SegmentationConfig.default.maxBuffer)
+    static let contextSecondsKey = "contextSeconds"
+    static let contextSecondsRange = SegmentationConfig.contextSecondsRange
 
     var onPasteAndHide: ((String) -> Void)?
     var onHide: (() -> Void)?
@@ -102,10 +102,10 @@ final class DictationController: ObservableObject {
         self.vocabularyWords = vocabulary.allWords()
         transcriber.setSystemPrompt(vocabulary.systemPrompt())
         transcriber.setLanguage(language.rawValue)
-        if UserDefaults.standard.object(forKey: Self.keepSentencesKey) != nil {
-            keepSentences = Self.keepSentencesRange.clamped(UserDefaults.standard.integer(forKey: Self.keepSentencesKey))
+        if UserDefaults.standard.object(forKey: Self.contextSecondsKey) != nil {
+            contextSeconds = Self.contextSecondsRange.clamped(UserDefaults.standard.integer(forKey: Self.contextSecondsKey))
         }
-        transcriber.setKeepSentences(keepSentences)
+        transcriber.setContextSeconds(contextSeconds)
         transcriber.setStatusHandler { [weak self] message in
             Task { @MainActor in
                 guard let self else { return }
@@ -392,13 +392,13 @@ final class DictationController: ObservableObject {
         updateDisplay()
     }
 
-    func adjustKeepSentences(by delta: Int) {
-        let value = Self.keepSentencesRange.clamped(keepSentences + delta)
-        guard value != keepSentences else { return }
-        keepSentences = value
-        UserDefaults.standard.set(value, forKey: Self.keepSentencesKey)
-        transcriber.setKeepSentences(value)
-        Logger.info("keepSentences=\(value)")
+    func adjustContextSeconds(by delta: Int) {
+        let value = Self.contextSecondsRange.clamped(contextSeconds + delta)
+        guard value != contextSeconds else { return }
+        contextSeconds = value
+        UserDefaults.standard.set(value, forKey: Self.contextSecondsKey)
+        transcriber.setContextSeconds(value)
+        Logger.info("contextSeconds=\(value)")
     }
 
     func startDictation() {

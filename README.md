@@ -33,10 +33,13 @@ PA3_INSTALL_DIR=$(pwd) .build/debug/pa3 --replay ~/.cache/pa3/rec/2026-09-06T10-
 
 Add `--reference file.txt` to compare against known text. Without it, the replay compares against a one-shot transcription of the whole clip when it is under 30 seconds. `--speed 1` paces the audio like a live session, which changes how much audio each Whisper round sees.
 
+`--context-seconds N` sets the replay audio duration limit (5–28 seconds; default 28).
+
 ## Runtime Notes
 
 - `Enter`: paste current transcript into the previously active app and hide PA3.
 - `q`, `Esc`, `Ctrl+C`: discard and hide PA3.
 - `Space`: pause/resume dictation.
+- `Context`: audio duration limit in seconds (5–28; default 28). No sentence-count limit is used. When the clip exceeds the setting, PA3 removes audio through the earliest suitable sentence boundary that gets the remaining clip below the limit. If no suitable sentence boundary exists, it uses the earliest sufficient pause, or a minimal time cut when there is no pause. The old sentence-count preference is ignored.
 - The audio capture callback feeds a bounded queue while a separate worker drains accumulated audio and talks to Whisper, matching the important `pa2` threading model.
 - macOS may prompt for Microphone and Accessibility permissions. Accessibility is needed for paste automation through System Events.

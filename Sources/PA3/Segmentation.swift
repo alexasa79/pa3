@@ -22,15 +22,13 @@ struct SegmentationConfig {
     var searchWindow = 0.5
     /// Shortest pause that counts as a gap between sentences.
     var minQuiet = 0.15
-    /// Complete sentences left in the buffer behind the tail. Whisper hears them again every round as context,
-    /// at the cost of a longer clip. Only what lies before them gets committed.
-    var keepSentences = 2
     /// Silence kept at the end of the buffer. Anything beyond it is dropped as it arrives.
     var maxTrailingSilence = 1.0
     /// Time between the starts of two rounds. A round that runs longer than this delays the next one.
     var minRequestInterval = 1.0
-    /// Whisper works on 30 second windows. Never let the buffer approach that.
-    var maxBuffer = 28.0
+    /// Duration limit, with headroom below Whisper's 30-second window.
+    static let contextSecondsRange = 5...28
+    var maxBuffer = Double(SegmentationConfig.contextSecondsRange.upperBound)
     /// Frame size for energy measurement.
     var frameSeconds = 0.01
     /// Speech threshold is the noise floor times this factor, clamped to the range below.
@@ -181,58 +179,53 @@ func trustedSentenceEnds(_ tokens: [TimedToken]) -> [Int] {
     return result
 }
 
-/// Decides where the buffer can be cut so that committed text never changes again.
-/// Cuts follow sentences: a trusted sentence end with a pause near it. The window cap is the only exception.
+/// Cut only after exceeding the duration limit. Prefer the earliest sentence boundary
+/// that removes enough audio, preserving all later sentences as context.
 func chooseCut(tokens: [TimedToken], quiet: [QuietRun], duration: Double, config: SegmentationConfig = .default) -> SegmentCut? {
-    var best: SegmentCut? = nil
-    func consider(_ cut: SegmentCut) {
-        guard cut.time > 0, cut.time < duration else { return }
-        if best == nil || cut.time > best!.time {
-            best = cut
-        }
+    guard duration > config.maxBuffer else { return nil }
+    // One frame of headroom puts the retained clip strictly below the limit.
+    let minimumCut = duration - config.maxBuffer + config.frameSeconds
+    guard minimumCut > 0, minimumCut < duration else { return nil }
+    if let cut = sentenceCut(tokens: tokens, quiet: quiet, minimumCut: minimumCut, duration: duration, config: config) {
+        return cut
     }
 
-    if let cut = sentenceCut(tokens: tokens, quiet: quiet, keep: config.keepSentences, config: config) {
-        consider(cut)
+    // Without a usable sentence boundary, preserve as much audio as possible by
+    // using the earliest sufficient pause. A time cut is the last resort.
+    let pauseTimes = quiet.compactMap { run -> Double? in
+        let time = max(minimumCut, run.middle)
+        return time < run.end && time < duration ? time : nil
     }
-
-    if best == nil, duration > config.maxBuffer {
-        // Out of room. Give up the context sentences first, and only then fall back to a cut by time.
-        if let cut = sentenceCut(tokens: tokens, quiet: quiet, keep: 0, config: config) {
-            consider(cut)
-        } else if let run = quiet.last(where: { $0.length >= config.minQuiet * 2 }) ?? quiet.max(by: { $0.length < $1.length }) {
-            consider(cutAtTime(run.middle, tokens: tokens, reason: "window cap"))
-        } else {
-            consider(cutAtTime(duration - 2, tokens: tokens, reason: "window cap, no pause"))
-        }
+    if let time = pauseTimes.min() {
+        return cutAtTime(time, tokens: tokens, reason: "window cap")
     }
-    return best
+    return cutAtTime(minimumCut, tokens: tokens, reason: "window cap, no pause")
 }
 
-/// The latest sentence end that leaves `keep` complete sentences behind it, cut in the pause that follows it.
-private func sentenceCut(tokens: [TimedToken], quiet: [QuietRun], keep: Int, config: SegmentationConfig) -> SegmentCut? {
-    let ends = trustedSentenceEnds(tokens)
-    let last = ends.count - 1 - max(0, keep)
-    guard last >= 0 else { return nil }
-    for index in ends[...last].reversed() {
-        // The pause lies somewhere between this word's end and the next word's start. Neither timestamp is exact.
+private func sentenceCut(tokens: [TimedToken], quiet: [QuietRun], minimumCut: Double, duration: Double, config: SegmentationConfig) -> SegmentCut? {
+    var best: SegmentCut?
+    for index in trustedSentenceEnds(tokens) {
+        // Associate each sentence with the pause nearest the next word's start.
+        // Do not select a different, later pause merely to meet the duration limit.
         let end = tokens[index].end
         let nextStart = tokens[index + 1].start
         let low = min(end, nextStart) - config.searchWindow
         let high = max(end, nextStart) + config.searchWindow
         let candidates = quiet.filter { $0.end > low && $0.start < high }
-        // Word start times are the trustworthy ones, so the right pause is the one that ends where the next word begins.
         guard let run = candidates.min(by: { abs($0.end - nextStart) < abs($1.end - nextStart) }) else { continue }
-        let time = min(high, max(low, run.middle))
-        guard time > 0 else { continue }
-        return SegmentCut(
+        let start = max(low, run.start)
+        let finish = min(high, run.end)
+        let time = max(minimumCut, (start + finish) / 2)
+        guard time >= start, time < finish, time < duration else { continue }
+        if let best, best.time <= time { continue }
+        best = SegmentCut(
             time: time,
             committed: tokens[...index].map(\.text),
             pending: tokens[(index + 1)...].map(\.text),
-            reason: keep == config.keepSentences ? "sentence" : "sentence, no context"
+            reason: "sentence"
         )
     }
-    return nil
+    return best
 }
 
 /// Splits by word start: a word that began before the cut was spoken before it, however far Whisper stretched its end.

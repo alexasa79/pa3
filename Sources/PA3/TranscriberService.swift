@@ -151,10 +151,10 @@ final class TranscriberService {
         }
     }
 
-    /// How many complete sentences stay in the audio buffer as context for Whisper. Applies from the next round.
-    func setKeepSentences(_ count: Int) {
+    /// Audio duration limit in seconds. Applies from the next transcription round.
+    func setContextSeconds(_ seconds: Int) {
         stateLock.lock()
-        segmentationConfig.keepSentences = max(0, count)
+        segmentationConfig.maxBuffer = Double(SegmentationConfig.contextSecondsRange.clamped(seconds))
         stateLock.unlock()
     }
 

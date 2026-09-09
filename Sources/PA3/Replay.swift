@@ -3,7 +3,7 @@ import Foundation
 
 /// Offline replay: pushes a recording through the live transcription worker and checks the result.
 ///
-///   pa3 --replay file.wav [--reference file.txt] [--speed 4] [--max-wer 0.1] [--keep 2]
+///   pa3 --replay file.wav [--reference file.txt] [--speed 4] [--max-wer 0.1] [--context-seconds 28]
 ///   pa3 --replay-test [dir]        replays every dir/*.wav that has a matching .txt reference
 enum Replay {
     struct Outcome {
@@ -18,15 +18,26 @@ enum Replay {
         var seconds: Double
     }
 
-    /// Context sentences kept in the buffer during replay. Set with `--keep N`.
-    nonisolated(unsafe) static var keepSentences = SegmentationConfig.default.keepSentences
+    /// Audio duration limit during replay. Set with `--context-seconds N`.
+    nonisolated(unsafe) static var contextSeconds = Int(SegmentationConfig.default.maxBuffer)
 
     static func main(arguments: [String]) -> Int32 {
         Logger.setup()
         defer { Logger.close() }
         let speed = value(after: "--speed", in: arguments).flatMap(Double.init) ?? 4
         let maxWER = value(after: "--max-wer", in: arguments).flatMap(Double.init) ?? 0.1
-        keepSentences = value(after: "--keep", in: arguments).flatMap(Int.init) ?? SegmentationConfig.default.keepSentences
+        if arguments.contains("--keep") {
+            print("--keep was replaced by --context-seconds (5...28 seconds)")
+            return 2
+        }
+        if arguments.contains("--context-seconds") {
+            guard let raw = value(after: "--context-seconds", in: arguments),
+                  let seconds = Int(raw), SegmentationConfig.contextSecondsRange.contains(seconds) else {
+                print("--context-seconds must be an integer from 5 to 28")
+                return 2
+            }
+            contextSeconds = seconds
+        }
 
         if arguments.contains("--replay-test") {
             let dir = value(after: "--replay-test", in: arguments).map { URL(fileURLWithPath: $0) }
@@ -34,7 +45,7 @@ enum Replay {
             return runDirectory(dir, speed: speed, maxWER: maxWER)
         }
         guard let path = value(after: "--replay", in: arguments) else {
-            print("usage: pa3 --replay file.wav [--reference file.txt] [--speed 4] [--max-wer 0.1] [--keep 2]")
+            print("usage: pa3 --replay file.wav [--reference file.txt] [--speed 4] [--max-wer 0.1] [--context-seconds 28]")
             return 2
         }
         let wav = URL(fileURLWithPath: path)
@@ -95,7 +106,7 @@ enum Replay {
             var latest = ""
         }
         let collector = Collector()
-        transcriber.setKeepSentences(keepSentences)
+        transcriber.setContextSeconds(contextSeconds)
         transcriber.cutHandler = { time, cut in
             collector.lock.lock()
             collector.cuts.append((time, cut))

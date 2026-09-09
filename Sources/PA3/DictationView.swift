@@ -278,28 +278,28 @@ struct DictationView: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    /// Up and down control for how many sentences of audio stay in the clip as context for Whisper.
+    /// Duration limit for the audio clip sent to Whisper.
     private var contextControl: some View {
         HStack(spacing: 4) {
             Text("Context")
                 .foregroundStyle(.secondary)
             Button {
-                controller.adjustKeepSentences(by: -1)
+                controller.adjustContextSeconds(by: -1)
             } label: {
                 Image(systemName: "minus")
             }
-            .disabled(controller.keepSentences <= DictationController.keepSentencesRange.lowerBound)
-            Text("\(controller.keepSentences)")
+            .disabled(controller.contextSeconds <= DictationController.contextSecondsRange.lowerBound)
+            Text("\(controller.contextSeconds)s")
                 .font(.system(size: 14, design: .monospaced))
-                .frame(minWidth: 16)
+                .frame(minWidth: 36)
             Button {
-                controller.adjustKeepSentences(by: 1)
+                controller.adjustContextSeconds(by: 1)
             } label: {
                 Image(systemName: "plus")
             }
-            .disabled(controller.keepSentences >= DictationController.keepSentencesRange.upperBound)
+            .disabled(controller.contextSeconds >= DictationController.contextSecondsRange.upperBound)
         }
-        .help("Sentences of audio kept in the clip as context for Whisper. More context, longer clip.")
+        .help("Maximum audio context in seconds. When exceeded, trim at the earliest suitable sentence boundary and retain the rest.")
     }
 
     private var footer: some View {
