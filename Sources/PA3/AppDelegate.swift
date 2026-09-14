@@ -1,5 +1,5 @@
 import AppKit
-import ApplicationServices
+@preconcurrency import ApplicationServices
 import Carbon
 import SwiftUI
 
@@ -8,7 +8,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var window: NSWindow?
     private var controller: DictationController?
+    private let narration = NarrationService()
+    private let downloads = ModelDownloadManager()
+    private var downloadWindow: NSWindow?
     private var hotKey: GlobalHotKey?
+    private var narrationHotKey: GlobalHotKey?
+    private var selectionRequest: UUID?
+    private var narrationNotice: NSPanel?
     private var previousApp: NSRunningApplication?
     private var previousWindow: AXUIElement?
     private var lastExternalApp: NSRunningApplication?
@@ -31,6 +37,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.quit()
         }
         self.controller = controller
+        downloads.onPresent = { [weak self] in self?.showModelDownloads() }
+        controller.prepareModels = { [weak self] in self?.downloads.ensure(["whisper"]) ?? false }
+        narration.prepareModels = { [weak self] in self?.downloads.ensure(["qwen", "audio"]) ?? false }
+        narration.modelDownloadHealth = { [weak self] in self?.downloads.health ?? [:] }
+        narration.isDictationBusy = { [weak controller] in controller?.narrationIsBlocked ?? false }
+        controller.onDictationWillStart = { [weak self] in self?.narration.stopAll() }
+        narration.onSelectionFailure = { [weak self] _ in
+            self?.showNarrationNotice("Could not finish narration. Select the text and try again.")
+        }
+        narration.start()
 
         setupWorkspaceTracking()
         setupStatusItem()
@@ -39,14 +55,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Logger.info("window set up")
         setupHotKey()
         Logger.info("launch complete; waiting for activation")
+        downloads.ensureModels()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        downloads.cancel()
+        narration.shutdown()
         if let workspaceObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver)
         }
         controller?.shutdown()
         hotKey?.unregister()
+        narrationHotKey?.unregister()
         Logger.close()
     }
 
@@ -63,6 +83,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Start dictation", action: #selector(startFromMenu), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Read selection / Stop   ⌃⌥⌘N", action: #selector(readSelection), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Stop narration", action: #selector(stopNarrationFromMenu), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Speech models…", action: #selector(showModelDownloads), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitFromMenu), keyEquivalent: "q"))
         for item in menu.items {
             item.target = self
@@ -154,10 +177,87 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         hotKey?.register()
         Logger.info("global hotkey registered Ctrl+Option+Command+P")
+        narrationHotKey = GlobalHotKey(keyCode: 45, modifiers: modifiers) { [weak self] in
+            DispatchQueue.main.async { self?.readSelection() }
+        }
+        narrationHotKey?.register()
+        Logger.info("narration hotkey registered Ctrl+Option+Command+N")
+    }
+
+    @objc private func readSelection() {
+        if selectionRequest != nil || narration.hasNarration {
+            selectionRequest = nil
+            narration.stopAll()
+            showNarrationNotice("Narration stopped")
+            return
+        }
+        guard controller?.narrationIsBlocked != true else {
+            showNarrationNotice("Stop dictation before narrating a selection.")
+            return
+        }
+        guard AXIsProcessTrusted() else {
+            AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+            showNarrationNotice("Allow PA3 in System Settings → Privacy & Security → Accessibility.")
+            return
+        }
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let source = frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? lastExternalApp : frontmost
+        guard let source, !source.isTerminated else { showNarrationNotice("No active app to read from."); return }
+        let pid = source.processIdentifier
+        let request = UUID()
+        selectionRequest = request
+        showNarrationNotice("Reading selection…")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = SelectedText.read(pid: pid)
+            Task { @MainActor in
+                guard let self, self.selectionRequest == request else { return }
+                self.selectionRequest = nil
+                guard let text = result.text else { self.showNarrationNotice(result.message); return }
+                let response = self.narration.narrateSelection(result)
+                if response.status == 202 {
+                    self.showNarrationNotice("Narrating selection · ⌃⌥⌘N to stop")
+                    Logger.info("Selection narration accepted pid=\(pid) chars=\(text.count)")
+                } else {
+                    let error = (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any]
+                    self.showNarrationNotice(error?["error"] as? String ?? "Could not start narration.")
+                }
+            }
+        }
+    }
+
+    private func showNarrationNotice(_ message: String) {
+        narrationNotice?.orderOut(nil)
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 76),
+                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.level = .floating
+        panel.isReleasedWhenClosed = false
+        panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.contentView = NSHostingView(rootView:
+            HStack(spacing: 12) {
+                Image(systemName: "speaker.wave.2.fill").foregroundStyle(.blue)
+                Text(message).font(.system(size: 13, weight: .medium)).fixedSize(horizontal: false, vertical: true)
+            }.padding(18).frame(width: 460).background(.regularMaterial))
+        if let screen = NSScreen.main {
+            panel.setFrameOrigin(NSPoint(x: screen.visibleFrame.midX - 230, y: screen.visibleFrame.maxY - 106))
+        }
+        panel.orderFrontRegardless()
+        narrationNotice = panel
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self, weak panel] in
+            guard let self, let panel, self.narrationNotice === panel else { return }
+            panel.orderOut(nil)
+            self.narrationNotice = nil
+        }
     }
 
     @objc private func statusButtonClicked() {
         showWindow()
+    }
+
+    @objc private func stopNarrationFromMenu() {
+        selectionRequest = nil
+        narration.stopAll()
+        showNarrationNotice("Narration stopped")
     }
 
     @objc private func showFromMenu() {
@@ -183,6 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showWindow() {
+        guard downloads.ensure(["whisper"]) else { return }
         let frontmost = NSWorkspace.shared.frontmostApplication
         if frontmost?.processIdentifier != NSRunningApplication.current.processIdentifier {
             previousApp = frontmost
@@ -196,6 +297,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window?.makeKeyAndOrderFront(nil)
         controller?.beginNewSession()
         controller?.startDictation()
+    }
+
+    @objc private func showModelDownloads() {
+        if downloadWindow == nil {
+            let content = ModelDownloadView(manager: downloads) { [weak self] in self?.downloadWindow?.orderOut(nil) }
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 556, height: 530),
+                                  styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.title = "PA3 · Speech models"
+            window.titlebarAppearsTransparent = true
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: content)
+            window.center()
+            self.downloadWindow = window
+        }
+        downloads.refresh()
+        downloadWindow?.orderFrontRegardless()
     }
 
     private func hideWindow() {

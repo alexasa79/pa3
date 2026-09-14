@@ -2,6 +2,20 @@ import AppKit
 import AVFoundation
 import SwiftUI
 
+if CommandLine.arguments.contains("--narration-recovery-test") {
+    let testApp = NSApplication.shared
+    testApp.setActivationPolicy(.accessory)
+    Task { @MainActor in exit(await runNarrationRecoveryTests()) }
+    testApp.run()
+}
+
+if CommandLine.arguments.contains("--model-download-test") {
+    let testApp = NSApplication.shared
+    testApp.setActivationPolicy(.accessory)
+    Task { @MainActor in exit(await runModelDownloadTests()) }
+    testApp.run()
+}
+
 if CommandLine.arguments.contains("--audio-smoke-test") {
     Logger.setup()
     let seconds = smokeTestDuration(flag: "--audio-smoke-test")
@@ -104,7 +118,7 @@ if CommandLine.arguments.contains("--replay") || CommandLine.arguments.contains(
 }
 
 if CommandLine.arguments.contains("--whisper-text-test") {
-    let failures = runWhisperTextTests() + runSegmentationTests()
+    let failures = runWhisperTextTests() + runSegmentationTests() + runNarrationTests()
     print("whisper-text-test")
     if failures.isEmpty {
         print("ok")

@@ -120,6 +120,13 @@ final class TranscriberService {
     var cutHandler: (@Sendable (Double, SegmentCut) -> Void)?
     private var language = "en"
     private var isStopping = false
+    private var captureRequested = false
+    private var captureStopsInFlight = 0
+    var captureIsBusy: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return captureRequested || captureStopsInFlight > 0
+    }
     private var generation = 0
     private var statusHandler: (@Sendable (String) -> Void)?
 
@@ -193,6 +200,7 @@ final class TranscriberService {
         stableRunes = 0
         pendingText = ""
         isStopping = false
+        captureRequested = true
         self.skipWhisper = skipWhisper
         stateLock.unlock()
         debugLock.lock()
@@ -225,6 +233,8 @@ final class TranscriberService {
         Logger.info("TranscriberService.stopTranscribe")
         stateLock.lock()
         isStopping = true
+        captureRequested = false
+        captureStopsInFlight += 1
         generation += 1
         stateLock.unlock()
 
@@ -245,10 +255,8 @@ final class TranscriberService {
         workerThread = nil
         sampleQueue = nil
 
-        if let session = captureSession {
-            DispatchQueue.global(qos: .utility).async {
-                session.stopRunning()
-            }
+        let stoppingSession = captureSession
+        if stoppingSession != nil {
             captureSession = nil
             captureDelegate = nil
         }
@@ -258,6 +266,20 @@ final class TranscriberService {
             engine.stop()
             audioEngine = nil
         }
+        if let stoppingSession {
+            DispatchQueue.global(qos: .utility).async { [self] in
+                stoppingSession.stopRunning()
+                finishCaptureStop()
+            }
+        } else {
+            finishCaptureStop()
+        }
+    }
+
+    private func finishCaptureStop() {
+        stateLock.lock()
+        captureStopsInFlight -= 1
+        stateLock.unlock()
     }
 
     func close() {
@@ -712,25 +734,21 @@ final class TranscriberService {
             return false
         }
 
-        let installDir = appResourceDirectory()
-        let buildDir = installDir.appendingPathComponent("whisper.cpp/build")
-        let server = buildDir.appendingPathComponent("bin/whisper-server")
-        let model = installDir.appendingPathComponent("models/whisper.ggml")
-        let args = ["-m", model.path, "--port", "\(whisperPort)"]
+        guard let server = SpeechRuntime.executable("whisper-server") else {
+            reportStatus("Install speech tools: brew install whisper.cpp")
+            return false
+        }
+        let model = SpeechRuntime.whisperModel
+        guard FileManager.default.fileExists(atPath: model.path) else {
+            reportStatus("Whisper model missing; run make speech-setup")
+            return false
+        }
+        let args = ["-m", model.path, "--host", "127.0.0.1", "--port", "\(whisperPort)"]
 
         let process = Process()
         process.executableURL = server
-        process.currentDirectoryURL = installDir.appendingPathComponent("whisper.cpp")
         process.arguments = args
-        let libraryPaths = [
-            buildDir.appendingPathComponent("src").path,
-            buildDir.appendingPathComponent("ggml/src").path,
-            buildDir.appendingPathComponent("ggml/src/ggml-blas").path,
-            buildDir.appendingPathComponent("ggml/src/ggml-metal").path
-        ]
-        process.environment = ProcessInfo.processInfo.environment.merging([
-            "DYLD_LIBRARY_PATH": libraryPaths.joined(separator: ":")
-        ]) { _, new in new }
+        Logger.info("Whisper executable=\(server.path) model=\(model.path)")
         let outputPipes = attachWhisperLogging(to: process)
         process.terminationHandler = { process in
             Logger.warn("whisper-server pid \(process.processIdentifier) exited status \(process.terminationStatus)")

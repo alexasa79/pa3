@@ -5,29 +5,41 @@ CONTENTS := $(APP)/Contents
 MACOS := $(CONTENTS)/MacOS
 RESOURCES := $(CONTENTS)/Resources
 ASSETS := Assets
-WHISPER_DIR := whisper.cpp
-WHISPER_SERVER := $(WHISPER_DIR)/build/bin/whisper-server
-WHISPER_CMAKE_FLAGS ?= -DWHISPER_BUILD_TESTS=OFF -DGGML_CCACHE=OFF -DGGML_OPENMP=OFF
+BREW ?= brew
 SIGN_IDENTITY ?= PA3 Local Code Signing Trusted
 KEYCHAIN ?= $(HOME)/Library/Keychains/login.keychain-db
 CODESIGN_CERT_DAYS ?= 3650
 CODESIGN_P12_PASSWORD ?= pa3-local-codesign
 
-.PHONY: all build app icons whisper link-pa2-assets codesign-identity clean run test fixtures replay-test
+.PHONY: all build native-narrator app icons speech-tools-check speech-setup tts-setup codesign-identity clean run test fixtures replay-test narration-test
 
 all: app
 
-build:
+native-narrator: Native/Narrator.mm
+	mkdir -p .build/native
+	clang++ -std=c++17 -O2 -fobjc-arc -framework Foundation -I"$$($(BREW) --prefix llama.cpp)/include" -I"$$($(BREW) --prefix ggml)/include" Native/Narrator.mm -L"$$($(BREW) --prefix llama.cpp)/lib" -L"$$($(BREW) --prefix ggml)/lib" -Wl,-rpath,"$$($(BREW) --prefix llama.cpp)/lib" -Wl,-rpath,"$$($(BREW) --prefix ggml)/lib" -lllama -lmtmd -lggml -lggml-base -o .build/native/pa3-narrator
+
+build: native-narrator
 	swift build -c release
 
 test:
 	swift build
 	.build/debug/pa3 --whisper-text-test
+	.build/debug/pa3 --narration-recovery-test
+	.build/debug/pa3 --model-download-test
+
+tts-setup: speech-setup
+
+speech-setup: speech-tools-check
+	sh Tools/setup-speech.sh
+
+narration-test:
+	swift Tools/test-narration-http.swift
 
 fixtures:
 	sh Tests/make-fixtures.sh Tests/fixtures
 
-replay-test: whisper
+replay-test: speech-tools-check
 	swift build
 	@if [ -z "$$(ls Tests/fixtures/*.wav 2>/dev/null)" ]; then $(MAKE) fixtures; fi
 	PA3_INSTALL_DIR="$$(pwd)" .build/debug/pa3 --replay-test Tests/fixtures $(REPLAY_FLAGS)
@@ -37,10 +49,8 @@ icons:
 	swift Tools/IconGenerator.swift
 	iconutil -c icns "$(ASSETS)/PA3.iconset" -o "$(ASSETS)/AppIcon.icns"
 
-whisper:
-	git submodule update --init --recursive "$(WHISPER_DIR)"
-	cmake -Wno-deprecated -S "$(WHISPER_DIR)" -B "$(WHISPER_DIR)/build" $(WHISPER_CMAKE_FLAGS)
-	cmake --build "$(WHISPER_DIR)/build" --target whisper-server --config Release
+speech-tools-check:
+	@test -x "$$($(BREW) --prefix whisper.cpp)/bin/whisper-server" && test -x "$$($(BREW) --prefix llama.cpp)/bin/llama-tts" || { echo 'Install speech tools: brew install whisper.cpp'; exit 1; }
 
 codesign-identity:
 	@set -e; \
@@ -72,19 +82,16 @@ codesign-identity:
 		security add-trusted-cert -d -r trustRoot -p codeSign -k "$(KEYCHAIN)" "$$tmpdir/cert.pem"; \
 	fi
 
-app: build icons whisper link-pa2-assets codesign-identity
+app: build icons speech-tools-check codesign-identity
 	rm -rf "$(APP)"
 	mkdir -p "$(MACOS)" "$(RESOURCES)"
 	cp "$(PRODUCT)" "$(MACOS)/pa3"
+	cp .build/native/pa3-narrator "$(MACOS)/pa3-narrator"
 	cp Info.plist "$(CONTENTS)/Info.plist"
 	cp "$(ASSETS)/AppIcon.icns" "$(RESOURCES)/AppIcon.icns"
 	cp "$(ASSETS)/MenuBarIcon.png" "$(RESOURCES)/MenuBarIcon.png"
-	if [ -e whisper.cpp ]; then ln -s "$$(pwd)/whisper.cpp" "$(RESOURCES)/whisper.cpp"; fi
-	if [ -e models ]; then ln -s "$$(pwd)/models" "$(RESOURCES)/models"; fi
+	cp -R Resources/Voices "$(RESOURCES)/tts-voices"
 	codesign --force --deep --sign "$(SIGN_IDENTITY)" "$(APP)"
-
-link-pa2-assets:
-	if [ ! -e models ] && [ -e ../pa2/models ]; then ln -s ../pa2/models models; fi
 
 run: app
 	open "$(APP)"

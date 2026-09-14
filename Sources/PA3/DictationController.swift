@@ -71,6 +71,9 @@ final class DictationController: ObservableObject {
     var onPasteAndHide: ((String) -> Void)?
     var onHide: (() -> Void)?
     var onQuit: (() -> Void)?
+    var onDictationWillStart: (() -> Void)?
+    var prepareModels: (() -> Bool)?
+    var narrationIsBlocked: Bool { dictating || runningStop || muter.isActive || transcriber.captureIsBusy }
 
     private let transcriber: TranscriberService
     private let vocabulary: Vocabulary
@@ -404,6 +407,12 @@ final class DictationController: ObservableObject {
     func startDictation() {
         Logger.info("startDictation requested")
         if dictating { return }
+        guard prepareModels?() ?? true else {
+            serviceMessage = "Downloading speech models. Start dictation when the download finishes."
+            debugMessage = serviceMessage
+            return
+        }
+        onDictationWillStart?()
         if editMode { cancelEditMode() }
         segment = ""
         dictating = true
@@ -421,6 +430,7 @@ final class DictationController: ObservableObject {
     func stopDictation() {
         Logger.info("stopDictation requested")
         if !dictating { return }
+        runningStop = true
         dictating = false
         restoreOutput()
         serviceMessage = ""
@@ -429,6 +439,7 @@ final class DictationController: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             transcriber.stopTranscribe()
             DispatchQueue.main.async {
+                self.runningStop = false
                 self.commitSegment()
                 self.updateDisplay()
                 self.debugMessage = "Dictation stopped"

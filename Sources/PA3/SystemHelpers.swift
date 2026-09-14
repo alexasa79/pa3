@@ -113,19 +113,25 @@ final class GlobalHotKey {
     func register() {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         let callback: EventHandlerUPP = { _, event, userData in
-            guard let userData else { return noErr }
+            guard let userData, let event else { return OSStatus(eventNotHandledErr) }
             let hotKey = Unmanaged<GlobalHotKey>.fromOpaque(userData).takeUnretainedValue()
+            var identifier = EventHotKeyID()
+            guard GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                                    nil, MemoryLayout<EventHotKeyID>.size, nil, &identifier) == noErr,
+                  identifier.signature == 0x50413348, identifier.id == hotKey.keyCode + 1 else {
+                return OSStatus(eventNotHandledErr)
+            }
             hotKey.handler()
             return noErr
         }
         InstallEventHandler(GetApplicationEventTarget(), callback, 1, &eventType, Unmanaged.passUnretained(self).toOpaque(), &eventHandler)
 
-        let hotKeyID = EventHotKeyID(signature: OSType(0x50413348), id: 1)
+        let hotKeyID = EventHotKeyID(signature: OSType(0x50413348), id: keyCode + 1)
         let status = RegisterEventHotKey(keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hotKeyRef)
         if status != noErr {
             Logger.warn("RegisterEventHotKey failed: \(status)")
         } else {
-            Logger.info("RegisterEventHotKey succeeded")
+            Logger.info("RegisterEventHotKey succeeded keyCode=\(keyCode)")
         }
     }
 
