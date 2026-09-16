@@ -4,6 +4,7 @@ import Network
 struct NarrationHTTPResponse: Sendable {
     let status: Int
     let body: Data
+    var contentType = "application/json"
 
     static func json(_ status: Int, _ value: [String: Any]) -> Self {
         Self(status: status, body: (try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])) ?? Data())
@@ -18,7 +19,7 @@ struct NarrationHTTPResponse: Sendable {
                       403: "Forbidden", 404: "Not Found", 408: "Request Timeout", 409: "Conflict",
                       413: "Content Too Large", 415: "Unsupported Media Type", 422: "Unprocessable Content",
                       429: "Too Many Requests", 500: "Internal Server Error", 503: "Service Unavailable"][status] ?? "Error"
-        var result = Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n".utf8)
+        var result = Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n".utf8)
         result.append(body)
         return result
     }

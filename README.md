@@ -72,7 +72,8 @@ The response is HTTP 202 with a job `id` and its current `state`. Accepted jobs 
 | --- | --- |
 | `GET /health` | Configuration, runtime readiness, dictation status, and queue depth. `model_loaded` becomes true after preloading. No token required. |
 | `POST /v1/narrations` | Queue text for playback. |
-| `GET /v1/narrations/ID` | Job state, number of pieces, and pieces played. |
+| `GET /v1/narrations/ID` | Job state, number of pieces generated/played, and audio availability. |
+| `GET /v1/narrations/ID/audio` | Download WAV for a completed audio-only job. |
 | `DELETE /v1/narrations/ID` | Cancel a queued or active job. |
 | `POST /v1/narrations/stop` with `{}` | Stop playback and cancel all queued jobs. |
 
@@ -81,6 +82,10 @@ All job endpoints require the bearer token. POST requests require JSON and a Con
 Optional JSON fields are `voice`, `language`, `instruct`, `mode`, and `pronunciations`. Defaults are `senior-engineer-american`, `English`, and `enqueue`. Omitting `voice` uses sample 4; `"voice":"4"` and `"voice":"04-senior-engineer-american"` select it explicitly. Use `mode: "replace"` to cancel existing narration before speaking the new text. The default inherits its delivery from the saved reference recording. Nonempty `instruct` returns 422 because this native runtime has no delivery-instruction option. `pronunciations` maps literal written words or phrases to spoken spellings; matches are case-sensitive and do not replace parts of larger words. Longer matching phrases win, and substitutions do not run recursively.
 
 The previous named preset voices and `Auto` language are no longer supported and return 422. Languages are English, Russian, Chinese, Japanese, Korean, German, French, Portuguese, Spanish, and Italian. Hebrew is unsupported. Voice and language names are case-insensitive.
+
+Reedah can request `"output":"audio"` to generate a WAV without PA3 playing it. This mode accepts up to 4,000 characters per request. Poll the job until `completed`, then fetch `/v1/narrations/ID/audio` with the same bearer token. The response is `audio/wav`; DELETE the job after downloading to release the file. Audio expires after five minutes, and exports are limited to 32 MiB per job and 128 MiB of retained/generated audio. `pieces_generated` reports generation progress; `pieces_played` stays zero for audio-only jobs. The default `"output":"playback"` keeps normal PA3 playback. Audio-only completion means generation finished, not that a client has played the audio.
+
+Reedah's Chrome native messaging bridge uses this API and keeps the token outside the browser. Chrome handles playback, pause, navigation, and speed. The bridge requires only Python 3's standard library; Qwen runs exclusively in PA3. Install the bridge and reload the extension as described in Reedah's `native/README.md`.
 
 Jobs can be queued, loading, generating, playing, completed, cancelled, or failed. Completion means playback finished. Generation can overlap playback. History keeps the latest 100 jobs in memory; restarting clears it. The queue holds ten waiting jobs, plus one active job. Requests allow 100,000 text characters and 512 KB of JSON. Queue overflow returns 429; invalid fields return 422; missing runtime files return 503.
 
@@ -96,3 +101,5 @@ Starting dictation cancels narration. While dictation is active or its audio out
 - `Context`: audio duration limit in seconds (5–28; default 28). No sentence-count limit is used. When the clip exceeds the setting, PA3 removes audio through the earliest suitable sentence boundary that gets the remaining clip below the limit. If no suitable sentence boundary exists, it uses the earliest sufficient pause, or a minimal time cut when there is no pause. The old sentence-count preference is ignored.
 - The audio capture callback feeds a bounded queue while a separate worker drains accumulated audio and talks to Whisper, matching the important `pa2` threading model.
 - macOS may prompt for Microphone and Accessibility permissions. Accessibility is needed for paste automation through System Events.
+
+For immediate client playback, use `"output":"pieces"`. Job status includes `audio_pieces`, an ordered array of ready pieces with `start`/`end` fractions of the submitted text (UTF-16 positions, for approximate highlighting). Fetch each `/v1/narrations/ID/audio/INDEX` as soon as it appears, including while the job is `generating`. Each response is a standalone WAV. `pieces` gives the total count; apply sentence pauses only after the last piece. This mode has the same authentication, limits, deletion, and five-minute retention as audio export. Reedah uses this mode so it can play the opening clause while Qwen generates the rest of the sentence.

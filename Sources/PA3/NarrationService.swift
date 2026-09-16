@@ -8,6 +8,7 @@ struct NarrationInput: Decodable {
     var mode: String?
     var instruct: String?
     var pronunciations: [String: String]?
+    var output: String?
 }
 
 enum NarrationVoice {
@@ -30,6 +31,9 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         let instruct: String?
         var chunks: [NarrationPiece]
         let isSelection: Bool
+        let output: String
+        var audioExpires: Date?
+        var audioPieces: [[String: Double]] = []
         var state = "queued"
         var generated = 0
         var played = 0
@@ -38,7 +42,9 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         var error: String?
         var json: [String: Any] {
             var value: [String: Any] = ["id": id, "state": state, "characters": characters,
-                "voice": voice, "language": language, "pieces": total, "pieces_played": played]
+                "voice": voice, "language": language, "pieces": total, "pieces_played": played,
+                "pieces_generated": generated, "output": output, "audio_available": audioExpires != nil]
+            if output == "pieces" { value["audio_pieces"] = Array(audioPieces.prefix(generated)) }
             if let error { value["error"] = error }
             return value
         }
@@ -69,8 +75,9 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     var onSelectionFailure: (String) -> Void = { _ in }
     var hasNarration: Bool { active != nil || !pending.isEmpty }
 
-    init(isConfigured: @escaping () -> Bool = { TTSWorker.configured },
+    init(isConfigured: @escaping () -> Bool = { TTSWorker.configured }, token: String = "",
          makeWorker: @escaping (@escaping @Sendable (UUID, TTSWorkerEvent) -> Void) -> any NarrationWorker = { TTSWorker(onEvent: $0) }) {
+        self.token = token
         self.isConfigured = isConfigured
         self.makeWorker = makeWorker
         super.init()
@@ -102,6 +109,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    self.expireAudio()
                     if self.active != nil && self.isDictationBusy() { self.stopAll() }
                     if let deadline = self.workerDeadline, Date() > deadline { self.workerFailed("Qwen worker timed out") }
                     if !self.warmupAttempted, TTSWorker.configured, !self.isDictationBusy() {
@@ -137,8 +145,16 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             if request.path == "/v1/narrations" { return submit(request.body) }
         }
         if request.path.hasPrefix("/v1/narrations/") {
-            let id = String(request.path.dropFirst("/v1/narrations/".count))
+            let suffix = String(request.path.dropFirst("/v1/narrations/".count))
+            let components = suffix.split(separator: "/", omittingEmptySubsequences: false)
+            let id = String(components[0])
             guard let job = jobs[id] else { return .error(404, "Unknown narration job") }
+            if components.count > 1 {
+                guard request.method == "GET", components[1] == "audio" else { return .error(404, "Unknown endpoint") }
+                if components.count == 2 { return audioResponse(id) }
+                if components.count == 3, let index = Int(components[2]) { return pieceResponse(id, index: index) }
+                return .error(404, "Unknown endpoint")
+            }
             if request.method == "GET" { return .json(200, job.json) }
             if request.method == "DELETE" {
                 cancel(id)
@@ -150,6 +166,8 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
 
     func submit(_ data: Data, selection: SelectedTextResult? = nil) -> NarrationHTTPResponse {
         guard let input = try? JSONDecoder().decode(NarrationInput.self, from: data) else { return .error(400, "Invalid JSON; text must be a string") }
+        guard ["playback", "audio", "pieces"].contains(input.output ?? "playback") else { return .error(422, "Output must be playback, audio, or pieces") }
+        if ["audio", "pieces"].contains(input.output ?? ""), input.text.count > 4000 { return .error(422, "Audio requests are limited to 4,000 characters") }
         guard ["enqueue", "replace"].contains(input.mode ?? "enqueue") else { return .error(422, "Mode must be enqueue or replace") }
         guard let voice = NarrationVoice.resolve(input.voice),
               let language = languages.first(where: { $0.lowercased() == (input.language ?? "English").lowercased() }) else {
@@ -168,7 +186,11 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             if input.mode == "replace" { stopAll() }
             let id = UUID().uuidString.lowercased()
             jobs[id] = Job(id: id, characters: input.text.count, voice: voice, language: language,
-                           instruct: input.instruct, chunks: chunks, isSelection: selection != nil, total: chunks.count)
+                           instruct: input.instruct, chunks: chunks, isSelection: selection != nil, output: input.output ?? "playback", total: chunks.count)
+            jobs[id]?.audioPieces = chunks.map {
+                ["start": Double($0.sourceRange.location) / Double(input.text.utf16.count),
+                 "end": Double(NSMaxRange($0.sourceRange)) / Double(input.text.utf16.count)]
+            }
             order.append(id)
             pending.append(id)
             pruneHistory()
@@ -203,7 +225,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             return
         }
         guard workerReady else { jobs[id]?.state = "loading"; return }
-        if player == nil, !prepared.isEmpty {
+        if job.output == "playback", player == nil, !prepared.isEmpty {
             let path = prepared.removeFirst()
             do {
                 let player = try AVAudioPlayer(contentsOf: path)
@@ -217,7 +239,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             } catch { failActive("Could not play generated audio"); return }
         }
         job = jobs[id]!
-        if generatingPath == nil, prepared.count < 3, job.generated < job.total {
+        if generatingPath == nil, (job.output != "playback" || prepared.count < 3), job.generated < job.total {
             let directory = audioDirectory.appendingPathComponent(id)
             do { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
             catch { failActive("Could not create temporary audio directory"); return }
@@ -228,6 +250,20 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             worker?.generate(id: id, text: job.chunks[job.generated].text, voice: job.voice,
                              language: job.language, instruct: job.instruct, path: path,
                              pause: job.chunks[job.generated].pauseAfter, seed: 7 + job.silenceRetries)
+        } else if job.output != "playback", generatingPath == nil, job.generated == job.total {
+            let directory = audioDirectory.appendingPathComponent(id)
+            do {
+                if job.output == "audio" {
+                    try NarrationAudio.concatenate(prepared, to: directory.appendingPathComponent("audio.wav"))
+                    for path in prepared { try FileManager.default.removeItem(at: path) }
+                }
+            } catch { failActive("Could not assemble generated audio: \(error)"); return }
+            prepared = []
+            jobs[id]?.state = "completed"
+            jobs[id]?.chunks = []
+            jobs[id]?.audioExpires = Date().addingTimeInterval(300)
+            active = nil
+            pump()
         } else if player == nil, prepared.isEmpty, generatingPath == nil, job.played == job.total {
             jobs[id]?.state = "completed"
             jobs[id]?.chunks = []
@@ -249,6 +285,9 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         case "audio":
             guard let active, event.id == active, let path = generatingPath, event.path == path.path else {
                 workerFailed("Unexpected audio response from Qwen"); return
+            }
+            if jobs[active]?.output != "playback", !audioWithinLimit(active) {
+                failActive("Generated audio exceeds storage limit"); return
             }
             jobs[active]?.generated += 1
             prepared.append(path)
@@ -342,7 +381,54 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         onSelectionFailure(message)
     }
 
+    func audioResponse(_ id: String) -> NarrationHTTPResponse {
+        expireAudio()
+        guard let job = jobs[id], job.output == "audio", job.state == "completed", job.audioExpires != nil else {
+            return .error(404, "Audio is not ready or has expired")
+        }
+        do {
+            return NarrationHTTPResponse(status: 200, body: try Data(contentsOf: audioDirectory.appendingPathComponent(id).appendingPathComponent("audio.wav")), contentType: "audio/wav")
+        } catch { return .error(500, "Could not read generated audio") }
+    }
+
+    func pieceResponse(_ id: String, index: Int) -> NarrationHTTPResponse {
+        expireAudio()
+        guard let job = jobs[id], job.output == "pieces", index >= 0, index < job.generated,
+              ["generating", "completed"].contains(job.state),
+              job.state != "completed" || job.audioExpires != nil else {
+            return .error(404, "Audio piece is not ready or has expired")
+        }
+        do {
+            return NarrationHTTPResponse(status: 200, body: try Data(contentsOf: audioDirectory.appendingPathComponent(id).appendingPathComponent("\(index).wav")), contentType: "audio/wav")
+        } catch { return .error(500, "Could not read generated audio piece") }
+    }
+
+    private func audioWithinLimit(_ id: String) -> Bool {
+        // Bound both a single export and all retained exports, including pending audio.
+        var total = 0, jobTotal = 0
+        guard let files = FileManager.default.enumerator(at: audioDirectory, includingPropertiesForKeys: [.fileSizeKey]) else { return false }
+        for case let file as URL in files where file.pathExtension == "wav" {
+            let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            total += size
+            if file.deletingLastPathComponent().lastPathComponent == id { jobTotal += size }
+        }
+        return jobTotal <= 32 * 1024 * 1024 && total <= 128 * 1024 * 1024
+    }
+
+    private func expireAudio() {
+        for (id, job) in jobs where job.audioExpires.map({ $0 <= Date() }) == true {
+            removeAudio(id)
+        }
+    }
+
+    private func removeAudio(_ id: String) {
+        try? FileManager.default.removeItem(at: audioDirectory.appendingPathComponent(id))
+        jobs[id]?.audioExpires = nil
+    }
+
     private func cancel(_ id: String) {
+        if jobs[id]?.audioExpires != nil { removeAudio(id) }
+
         guard pending.contains(id) || active == id else { return }
         pending.removeAll { $0 == id }
         if active == id {
@@ -367,7 +453,9 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     private func pruneHistory() {
         while order.count > 100 {
             guard let index = order.firstIndex(where: { $0 != active && !pending.contains($0) }) else { break }
-            jobs.removeValue(forKey: order.remove(at: index))
+            let id = order.remove(at: index)
+            removeAudio(id)
+            jobs.removeValue(forKey: id)
         }
     }
 

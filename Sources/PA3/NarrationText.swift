@@ -128,7 +128,10 @@ enum NarrationText {
                 while start < end {
                     while start < end, text[start].isWhitespace { start = text.index(after: start) }
                     guard start < end else { break }
-                    let limit = text.index(start, offsetBy: pieces.isEmpty ? 160 : 300, limitedBy: end) ?? end
+                    // Client playback needs a short opening and enough following pieces to
+                    // keep generation ahead of playback, even for technical prose.
+                    let budget = input.output == "pieces" ? (pieces.isEmpty ? 64 : 96) : (pieces.isEmpty ? 160 : 300)
+                    let limit = text.index(start, offsetBy: budget, limitedBy: end) ?? end
                     var cut = limit
                     if limit < end {
                         let clause = text[start..<limit].lastIndex(where: { ",;:".contains($0) })

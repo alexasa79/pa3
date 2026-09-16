@@ -6,6 +6,28 @@ enum NarrationAudio {
         case silence
         var errorDescription: String? { "The speech model returned silence." }
     }
+    // Export ordinary PCM WAV for browser playback, preserving generated piece order.
+    static func concatenate(_ paths: [URL], to destination: URL) throws {
+        guard let first = paths.first else { throw NarrationText.Invalid("No generated audio") }
+        let source = try AVAudioFile(forReading: first)
+        let format = source.processingFormat
+        let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: format.sampleRate, AVNumberOfChannelsKey: format.channelCount,
+            AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false]
+        let output = try AVAudioFile(forWriting: destination, settings: settings)
+        for path in paths {
+            let input = try AVAudioFile(forReading: path)
+            guard input.processingFormat == format,
+                  let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8192) else {
+                throw NarrationText.Invalid("Inconsistent generated audio format")
+            }
+            while input.framePosition < input.length {
+                try input.read(into: buffer)
+                try output.write(from: buffer)
+            }
+        }
+    }
+
     // Detect speech in 10 ms windows, retaining 40 ms before and 80 ms after it.
     // Never remove interior pauses or breaths. Keep quiet consonants with the padding.
     static func speechRange(_ samples: [Float], rate: Double) -> Range<Int>? {
