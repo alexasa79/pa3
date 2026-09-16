@@ -1,4 +1,3 @@
-const voiceInput = document.getElementById("voice");
 const rateInput = document.getElementById("rate");
 const statusEl = document.getElementById("status");
 const clearButton = document.getElementById("clear");
@@ -14,67 +13,10 @@ const vocabResetButton = document.getElementById("vocab-reset");
 const vocabListEl = document.getElementById("vocab-list");
 const vocabCancelButton = document.getElementById("vocab-cancel");
 
-const DEFAULT_VOICE = "am_adam";
 const NIGHT_START_HOUR = 19;
 const NIGHT_END_HOUR = 6;
 const THEME_REFRESH_INTERVAL_MS = 60 * 1000;
-const SETTINGS_KEYS = ["nativeVoice", "nativeRate", "nativeCustomVocab"];
-const KOKORO_VOICES = [
-  "af_alloy",
-  "af_aoede",
-  "af_bella",
-  "af_heart",
-  "af_jessica",
-  "af_kore",
-  "af_nicole",
-  "af_nova",
-  "af_river",
-  "af_sarah",
-  "af_sky",
-  "am_adam",
-  "am_echo",
-  "am_eric",
-  "am_fenrir",
-  "am_liam",
-  "am_michael",
-  "am_onyx",
-  "am_puck",
-  "am_santa",
-  "bf_alice",
-  "bf_emma",
-  "bf_isabella",
-  "bf_lily",
-  "bm_daniel",
-  "bm_fable",
-  "bm_george",
-  "bm_lewis",
-  "ef_dora",
-  "em_alex",
-  "em_santa",
-  "ff_siwis",
-  "hf_alpha",
-  "hf_beta",
-  "hm_omega",
-  "hm_psi",
-  "if_sara",
-  "im_nicola",
-  "jf_alpha",
-  "jf_gongitsune",
-  "jf_nezumi",
-  "jf_tebukuro",
-  "jm_kumo",
-  "pf_dora",
-  "pm_alex",
-  "pm_santa",
-  "zf_xiaobei",
-  "zf_xiaoni",
-  "zf_xiaoxiao",
-  "zf_xiaoyi",
-  "zm_yunjian",
-  "zm_yunxi",
-  "zm_yunxia",
-  "zm_yunyang"
-];
+const SETTINGS_KEYS = ["pa3Rate", "pa3CustomVocab"];
 
 let themeTimer = null;
 let customVocabEntries = [];
@@ -113,25 +55,6 @@ function setStatus(message, isError = false) {
   }, 2000);
 }
 
-function populateVoiceOptions() {
-  voiceInput.textContent = "";
-  for (const voice of KOKORO_VOICES) {
-    const option = document.createElement("option");
-    option.value = voice;
-    option.textContent = voice;
-    voiceInput.appendChild(option);
-  }
-  voiceInput.value = DEFAULT_VOICE;
-}
-
-function normalizeVoice(value) {
-  if (typeof value !== "string") return DEFAULT_VOICE;
-  const trimmed = value.trim();
-  if (!trimmed) return DEFAULT_VOICE;
-  if (!KOKORO_VOICES.includes(trimmed)) return DEFAULT_VOICE;
-  return trimmed;
-}
-
 function normalizeSpelling(value, label) {
   if (typeof value !== "string") {
     throw new Error(`${label} spelling must be a string.`);
@@ -139,9 +62,6 @@ function normalizeSpelling(value, label) {
   const normalized = value.trim();
   if (!normalized) {
     throw new Error(`${label} spelling must be non-empty.`);
-  }
-  if (normalized.includes("[") || normalized.includes("]")) {
-    throw new Error(`${label} spelling must not contain '[' or ']'.`);
   }
   if (normalized.includes("\n") || normalized.includes("\r")) {
     throw new Error(`${label} spelling must be a single line.`);
@@ -154,14 +74,8 @@ function normalizePronunciation(value, label) {
     throw new Error(`${label} pronunciation must be a string.`);
   }
   let normalized = value.trim();
-  if (normalized.startsWith("/") && normalized.endsWith("/") && normalized.length >= 2) {
-    normalized = normalized.slice(1, -1).trim();
-  }
   if (!normalized) {
     throw new Error(`${label} pronunciation must be non-empty.`);
-  }
-  if (normalized.includes("/")) {
-    throw new Error(`${label} pronunciation must not contain '/'.`);
   }
   if (normalized.includes("\n") || normalized.includes("\r")) {
     throw new Error(`${label} pronunciation must be a single line.`);
@@ -339,6 +253,7 @@ function playNextPreviewAudio(session) {
   session.currentAudio = audio;
   session.currentAudioUrl = audioUrl;
   audio.src = audioUrl;
+  audio.playbackRate = session.rate;
 
   audio.onended = () => {
     if (previewSession !== session) return;
@@ -407,6 +322,7 @@ function startPreviewRequest({
   const session = {
     utteranceId,
     previewType,
+    rate: rate ?? 1,
     entryIndex,
     completed: false,
     closing: false,
@@ -495,8 +411,7 @@ function startPreviewRequest({
     type: "start",
     text,
     utteranceId,
-    sentenceRanges: [{ start: 0, end: text.length }],
-    voice: normalizeVoice(voiceInput.value)
+    sentenceRanges: [{ start: 0, end: text.length }]
   };
   if (Array.isArray(customVocab)) {
     payload.customVocab = customVocab;
@@ -603,7 +518,7 @@ function renderVocabList() {
     spellingCode.textContent = entry.spelling;
     const arrow = document.createTextNode(" -> ");
     const pronunciationCode = document.createElement("code");
-    pronunciationCode.textContent = `/${entry.pronunciation}/`;
+    pronunciationCode.textContent = entry.pronunciation;
     text.appendChild(spellingCode);
     text.appendChild(arrow);
     text.appendChild(pronunciationCode);
@@ -742,7 +657,7 @@ function persistCustomVocabDraft(successMessage) {
     return false;
   }
 
-  chrome.storage.local.set({ nativeCustomVocab: normalizedEntries }, () => {
+  chrome.storage.local.set({ pa3CustomVocab: normalizedEntries }, () => {
     if (chrome.runtime.lastError) {
       console.error(
         "Reedah: Failed to save custom vocabulary.",
@@ -767,14 +682,13 @@ function loadSettings() {
       return;
     }
 
-    voiceInput.value = normalizeVoice(items.nativeVoice);
-    if (items.nativeRate == null) {
+    if (items.pa3Rate == null) {
       rateInput.value = "";
     } else {
-      rateInput.value = String(items.nativeRate);
+      rateInput.value = String(items.pa3Rate);
     }
     try {
-      customVocabEntries = normalizeCustomVocabEntries(items.nativeCustomVocab);
+      customVocabEntries = normalizeCustomVocabEntries(items.pa3CustomVocab);
     } catch (error) {
       console.error("Reedah: Failed to parse custom vocabulary settings.", error);
       setStatus(`Failed to load custom vocabulary: ${error.message}`, true);
@@ -785,9 +699,6 @@ function loadSettings() {
 }
 
 function persistSettings(successMessage) {
-  const voice = normalizeVoice(voiceInput.value);
-  voiceInput.value = voice;
-
   let rate = null;
   try {
     rate = parseRateInputValue();
@@ -798,8 +709,7 @@ function persistSettings(successMessage) {
 
   chrome.storage.local.set(
     {
-      nativeVoice: voice,
-      nativeRate: rate
+      pa3Rate: rate
     },
     () => {
       if (chrome.runtime.lastError) {
@@ -819,10 +729,6 @@ function persistSettings(successMessage) {
   return true;
 }
 
-function handleVoiceChange() {
-  persistSettings("Settings saved.");
-}
-
 function handleRateChange() {
   persistSettings("Settings saved.");
 }
@@ -835,7 +741,6 @@ function clearSettings() {
       return;
     }
 
-    voiceInput.value = DEFAULT_VOICE;
     rateInput.value = "";
     customVocabEntries = [];
     vocabDraftEntries = [];
@@ -852,7 +757,6 @@ vocabResetButton.addEventListener("click", resetVocabEditor);
 vocabListEl.addEventListener("click", handleVocabListClick);
 vocabCancelButton.addEventListener("click", closeVocabDialog);
 testNarrateButton.addEventListener("click", handleTestNarrationClick);
-voiceInput.addEventListener("change", handleVoiceChange);
 rateInput.addEventListener("change", handleRateChange);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
@@ -860,7 +764,6 @@ document.addEventListener("visibilitychange", () => {
 });
 
 startThemeScheduler();
-populateVoiceOptions();
 updateCustomVocabSummary();
 updateTestNarrateButtonState();
 loadSettings();

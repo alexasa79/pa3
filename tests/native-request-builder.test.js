@@ -5,8 +5,8 @@ const {
   buildSentenceJobs
 } = require("../native_request_builder");
 
-test("applyCustomVocab wraps whole-word matches with Kokoro pronunciation tags", () => {
-  const customVocab = [{ spelling: "REPL", pronunciation: "ˈɹɛpəl" }];
+test("applyCustomVocab replaces whole-word matches with spoken spellings", () => {
+  const customVocab = [{ spelling: "REPL", pronunciation: "repul" }];
   const result = applyCustomVocab(
     "It must support REPL workflow. PREPL should stay unchanged.",
     customVocab
@@ -14,14 +14,14 @@ test("applyCustomVocab wraps whole-word matches with Kokoro pronunciation tags",
 
   assert.equal(
     result,
-    "It must support [REPL](/ˈɹɛpəl/) workflow. PREPL should stay unchanged."
+    "It must support repul workflow. PREPL should stay unchanged."
   );
 });
 
 test("buildSentenceJobs keeps original location/length while transforming sentence text", () => {
   const text = "It must support REPL workflow.";
   const sentenceRanges = [{ start: 0, end: text.length }];
-  const customVocab = [{ spelling: "REPL", pronunciation: "ˈɹɛpəl" }];
+  const customVocab = [{ spelling: "REPL", pronunciation: "repul" }];
 
   const jobs = buildSentenceJobs(text, sentenceRanges, customVocab);
 
@@ -30,7 +30,7 @@ test("buildSentenceJobs keeps original location/length while transforming senten
     index: 0,
     location: 0,
     length: text.length,
-    text: "It must support [REPL](/ˈɹɛpəl/) workflow."
+    text: "It must support repul workflow."
   });
 });
 

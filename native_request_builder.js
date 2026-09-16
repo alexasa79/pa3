@@ -76,7 +76,7 @@
       if (typeof pronunciation !== "string" || !pronunciation) {
         throw new Error(`Missing pronunciation mapping for '${matchedSpelling}'.`);
       }
-      return `[${matchedSpelling}](/${pronunciation}/)`;
+      return pronunciation;
     });
   }
 

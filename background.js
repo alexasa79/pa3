@@ -1,6 +1,6 @@
-importScripts("native_request_builder.js");
+importScripts("native_request_builder.js", "audio_transfer.js");
 
-const TTS_SERVER_URL = "http://127.0.0.1:7865";
+const NATIVE_HOST = "com.reedah.sayer";
 const ICON_SIZES = [16, 32, 48];
 const tabState = new Map();
 let iconCache = null;
@@ -154,7 +154,12 @@ function relayServerEvent(port, event) {
       audioBase64: event.audioBase64,
       mimeType: event.mimeType || "audio/wav",
       location: event.location,
-      length: event.length
+      length: event.length,
+      pieceIndex: event.pieceIndex,
+      pieceCount: event.pieceCount,
+      progressStart: event.progressStart,
+      progressEnd: event.progressEnd,
+      rate: event.rate
     });
     return;
   }
@@ -177,57 +182,39 @@ function relayServerEvent(port, event) {
   }
 }
 
-async function streamTTSResponse(port, response) {
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop();
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-          relayServerEvent(port, JSON.parse(trimmed));
-        } catch (parseError) {
-          console.error("Reedah: Failed to parse server event.", { error: parseError, raw: trimmed.slice(0, 200) });
-        }
-      }
-    }
-    if (buffer.trim()) {
-      try {
-        relayServerEvent(port, JSON.parse(buffer.trim()));
-      } catch (parseError) {
-        console.error("Reedah: Failed to parse final server event.", { error: parseError, raw: buffer.trim().slice(0, 200) });
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "reedah-native") return;
 
-  let abortController = null;
+  let session = null;
+  let disconnected = false;
+  function stopSession() {
+    if (!session) return;
+    const old = session;
+    session = null;
+    if (old.host) {
+      // Give the bridge time to delete its PA3 job before Chrome terminates it.
+      old.closeTimer = setTimeout(() => old.host.disconnect(), 25000);
+      try { old.host.postMessage({ action: "stop" }); }
+      catch (error) {
+        console.error("Reedah: Could not stop PA3 bridge.", error);
+        clearTimeout(old.closeTimer);
+        old.host.disconnect();
+      }
+    }
+  }
 
   port.onMessage.addListener(async (message) => {
     if (!message || typeof message.type !== "string") return;
 
     if (message.type === "stop") {
-      if (abortController) {
-        abortController.abort();
-        abortController = null;
-      }
+      stopSession();
       return;
     }
 
     if (message.type !== "start") return;
+    stopSession();
+    const current = {};
+    session = current;
 
     const text = typeof message.text === "string" ? message.text.trim() : "";
     const sentenceRanges = Array.isArray(message.sentenceRanges)
@@ -244,6 +231,7 @@ chrome.runtime.onConnect.addListener((port) => {
 
     const utteranceId = message.utteranceId || `${Date.now()}`;
     const settings = await getSettings();
+    if (disconnected || session !== current) return;
     const hasCustomVocabOverride = Object.prototype.hasOwnProperty.call(message, "customVocab");
     let customVocab = settings.customVocab;
     if (hasCustomVocabOverride) {
@@ -271,11 +259,6 @@ chrome.runtime.onConnect.addListener((port) => {
       return;
     }
 
-    let resolvedVoice = settings.voice;
-    if (typeof message.voice === "string") {
-      resolvedVoice = message.voice.trim();
-    }
-
     let resolvedRate = settings.rate;
     if (Object.prototype.hasOwnProperty.call(message, "rate")) {
       resolvedRate = parseRate(message.rate);
@@ -292,6 +275,11 @@ chrome.runtime.onConnect.addListener((port) => {
       }
     }
 
+    if (resolvedRate != null && (resolvedRate < 0.5 || resolvedRate > 2)) {
+      console.error("Reedah: Invalid playback speed.");
+      port.postMessage({ type: "error", utteranceId, error: "invalid_rate" });
+      return;
+    }
     let sentenceJobs;
     try {
       sentenceJobs = nativeRequestBuilder.buildSentenceJobs(text, sentenceRanges, customVocab);
@@ -332,93 +320,72 @@ chrome.runtime.onConnect.addListener((port) => {
       );
     }
 
-    const requestBody = { utteranceId, sentenceJobs };
-    if (resolvedVoice) {
-      requestBody.voice = resolvedVoice;
-    }
-    if (resolvedRate != null) {
-      requestBody.speed = resolvedRate;
-    }
-    if (settings.langCode) {
-      requestBody.langCode = settings.langCode;
-    }
-
-    if (abortController) {
-      abortController.abort();
-    }
-    abortController = new AbortController();
-    const { signal } = abortController;
-
+    const assembler = new ReedahAudioTransfer.Assembler();
     try {
-      const response = await fetch(`${TTS_SERVER_URL}/tts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-        signal
-      });
-
-      if (!response.ok) {
-        let errorDetail = `HTTP ${response.status}`;
-        try {
-          const errorBody = await response.json();
-          errorDetail = errorBody.details || errorBody.error || errorDetail;
-        } catch (_ignored) {
-          // Use status code as detail.
+      const host = chrome.runtime.connectNative(NATIVE_HOST);
+      current.host = host;
+      host.onMessage.addListener((event) => {
+        if (event.event === "cancelled") {
+          clearTimeout(current.closeTimer);
+          host.disconnect();
+          return;
         }
-        console.error("Reedah: TTS server error.", { status: response.status, detail: errorDetail, utteranceId });
-        port.postMessage({
-          type: "error",
-          utteranceId,
-          error: "server_error",
-          details: errorDetail
-        });
-        return;
-      }
-
-      await streamTTSResponse(port, response);
-    } catch (error) {
-      if (error.name === "AbortError") {
-        port.postMessage({ type: "cancelled", utteranceId });
-        return;
-      }
-      console.error("Reedah: TTS server request failed.", { error, utteranceId });
-      port.postMessage({
-        type: "error",
-        utteranceId,
-        error: "server_unavailable",
-        details: "Kokoro TTS server is not running. Start it with: python native/kokoro_server.py"
+        if (session !== current || disconnected) return;
+        try {
+          if (event.event === "audio_chunk") {
+            const audio = assembler.accept(event);
+            if (audio) relayServerEvent(port, { ...audio, rate: resolvedRate ?? 1 });
+          } else {
+            if (event.event === "finished" && assembler.pending) throw new Error("Incomplete audio transfer");
+            relayServerEvent(port, event);
+            if (event.event === "finished" || event.event === "error") {
+              session = null;
+              host.disconnect();
+            }
+          }
+        } catch (error) {
+          console.error("Reedah: Invalid PA3 audio transfer.", error);
+          port.postMessage({ type: "error", utteranceId, error: "invalid_audio", details: error.message });
+          stopSession();
+        }
       });
-    } finally {
-      abortController = null;
+      host.onDisconnect.addListener(() => {
+        const error = chrome.runtime.lastError;
+        clearTimeout(current.closeTimer);
+        if (session !== current || disconnected) return;
+        session = null;
+        console.error("Reedah: PA3 bridge disconnected.", error?.message);
+        port.postMessage({ type: "error", utteranceId, error: "bridge_unavailable",
+          details: error?.message || "PA3 bridge disconnected. Install the native host and start PA3." });
+      });
+      host.postMessage({ action: "speak", utteranceId, sentenceJobs });
+    } catch (error) {
+      console.error("Reedah: Could not connect to PA3 bridge.", error);
+      port.postMessage({ type: "error", utteranceId, error: "bridge_unavailable", details: error.message });
+      stopSession();
     }
   });
 
   port.onDisconnect.addListener(() => {
-    if (abortController) {
-      abortController.abort();
-      abortController = null;
-    }
+    disconnected = true;
+    stopSession();
   });
 });
 
 function getSettings() {
   return new Promise((resolve) => {
     chrome.storage.local.get(
-      ["nativeVoice", "nativeRate", "nativePythonPath", "nativeModel", "nativeLangCode", "nativeCustomVocab"],
+      ["pa3Rate", "pa3CustomVocab"],
       (items) => {
-        const voice = (items.nativeVoice || "").trim();
-        const rate = parseRate(items.nativeRate);
-        const pythonPath = (items.nativePythonPath || "").trim();
-        const model = (items.nativeModel || "").trim();
-        const langCode = (items.nativeLangCode || "").trim();
+        const rate = parseRate(items.pa3Rate);
         let customVocab = [];
         let customVocabError = null;
         try {
-          customVocab = normalizeCustomVocab(items.nativeCustomVocab);
+          customVocab = normalizeCustomVocab(items.pa3CustomVocab);
         } catch (error) {
           customVocabError = error.message || String(error);
         }
-        resolve({ voice, rate, pythonPath, model, langCode, customVocab, customVocabError });
+        resolve({ rate, customVocab, customVocabError });
       }
     );
   });
@@ -444,18 +411,8 @@ function normalizeCustomVocab(rawValue) {
         ? rawEntry.pronunciation.trim()
         : "";
 
-    if (pronunciation.startsWith("/") && pronunciation.endsWith("/") && pronunciation.length >= 2) {
-      pronunciation = pronunciation.slice(1, -1).trim();
-    }
-
     if (!spelling || !pronunciation) {
       throw new Error(`Custom vocabulary entry ${index + 1} must have spelling and pronunciation.`);
-    }
-    if (spelling.includes("[") || spelling.includes("]")) {
-      throw new Error(`Custom vocabulary entry ${index + 1} spelling must not contain '[' or ']'.`);
-    }
-    if (pronunciation.includes("/")) {
-      throw new Error(`Custom vocabulary entry ${index + 1} pronunciation must not contain '/'.`);
     }
 
     const spellingKey = spelling.toLocaleLowerCase();

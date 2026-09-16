@@ -1,69 +1,14 @@
-# Reedah Native Host (macOS)
+# Reedah → PA3 bridge (macOS)
 
-Reedah uses a Python native messaging host on macOS.
-Sentence audio is generated with Kokoro (`mlx-audio`) and sent to the extension for playback.
-The host is started on demand by Chrome when narration begins.
+Reedah uses PA3's persistent Qwen3-TTS model. Chrome plays the returned audio, preserving pause/resume, sentence navigation, highlighting, and playback speed. There is no separate speech server or model environment.
 
-## No Build Step
+1. Build and start PA3 with the progressive audio-pieces API, and let its speech models finish downloading.
+2. Load this directory as an unpacked extension in `chrome://extensions` (or reload the existing extension). Accept the native messaging permission.
+3. Copy its extension ID and run `./scripts/install_native_host.sh <extension-id>`.
+4. Enable Reedah on a web page with Alt+X and use its paragraph narration controls. Test Narration in extension options is also available.
 
-There is no compile/build step now. Chrome runs the Python host directly:
+The bridge uses Python 3's standard library only. Chrome launches it on demand; it connects to PA3 on `127.0.0.1:65462` and reads `~/Library/Application Support/PA3/narration-token`. The token stays outside the extension and web pages. No localhost browser permissions or CORS exceptions are needed. If using a custom PA3 port, set `PA3_NARRATION_PORT` in Chrome's launch environment too.
 
-- `native/reedah_native_host.py`
-- `native/kokoro_worker.py`
+The voice is PA3's American senior engineer. Speed is applied during browser playback. Custom vocabulary now uses plain spoken spellings (for example, `PA3` → `P A three`). Old model-specific voice, speed, and phoneme settings are not imported; configure them again in options.
 
-## Install (Chrome)
-
-1. Load the extension in Chrome (Developer Mode).
-2. Copy the extension ID from `chrome://extensions`.
-3. Install the native host manifest:
-
-```bash
-./scripts/install_native_host.sh <chrome-extension-id>
-```
-
-The install script sets executable permissions for host and worker automatically.
-
-That writes the manifest to:
-
-```
-~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.reedah.sayer.json
-```
-
-## Settings
-
-Open the extension options page to configure:
-
-- Kokoro voice (for example `am_adam`, `af_heart`)
-- Speed multiplier (`0.5` to `2.0`)
-- Python path for Kokoro runtime
-- Model repo/path (default `mlx-community/Kokoro-82M-bf16`)
-- Language code (default `a`)
-
-Set up a local environment in this repo:
-
-```bash
-./scripts/setup_native_env.sh
-```
-
-This installs the `tts` dependency set for `mlx-audio` and runs a Python preflight check.
-It also installs the required spaCy English model (`en_core_web_sm`) if missing.
-
-To run preflight manually:
-
-```bash
-native/.venv/bin/python native/check_native_env.py
-```
-
-Default Python path used by the host:
-
-```
-native/.venv/bin/python
-```
-
-That Python environment must have `mlx-audio` installed.
-
-## Notes
-
-- The host runs only while narration is active.
-- If the native host is not installed, the extension logs an error and stops.
-- On Kokoro failures, the host logs the error to stderr, emits an error event, and stops.
+Playback starts when the opening audio piece is ready, while the remainder of the sentence is still being generated. Each original sentence is sent as an `output: pieces` PA3 job (up to 4,000 characters); the bridge polls every 50 ms and transfers each ready WAV in bounded native messages. Chrome queues the pieces without a sentence pause between them. Highlight progress is estimated from each piece's text fraction, including when custom vocabulary changes spoken text length. The server files are deleted after the sentence is transferred. PA3 never plays these jobs itself. Closing the tab or stopping narration cancels only that connection's current job. Errors are logged and narration stops; there is no alternate speech engine. Downloads expire on PA3 after five minutes if a client disappears.

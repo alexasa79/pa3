@@ -7,9 +7,8 @@
   const MIN_TEXT_LENGTH = 5;
   const MIN_HEADING_LENGTH = 3;
   const OVERLAY_OFFSET = 8;
-  const AUDIO_BUFFER_TARGET = 2;
   const SENTENCE_PAUSE_MS = 500;
-  const PARAGRAPH_LEAD_IN_MS = 400;
+  const PARAGRAPH_LEAD_IN_MS = 0;
   const PARAGRAPH_LEAD_OUT_MS = 400;
   const WORD_UNDERLINE_WINDOW_CHARS = 30;
   const WORD_UNDERLINE_EDGE_CHARS = 8;
@@ -28,6 +27,7 @@
     activeEl: null,
     currentNativePort: null,
     currentUtteranceId: null,
+    skippedSentences: new Set(),
     audioQueue: [],
     currentAudio: null,
     currentAudioUrl: null,
@@ -776,6 +776,7 @@
   }
 
   function resetSentenceState() {
+    state.skippedSentences.clear();
     state.currentSentenceRanges = [];
     state.currentSentenceIndex = -1;
     state.currentSentenceLength = 0;
@@ -929,9 +930,9 @@
 
       const duration = audio.duration;
       if (Number.isFinite(duration) && duration > 0) {
-        applyHighlightWordFocus(audio.currentTime / duration);
+        applyHighlightWordFocus(playbackHistory.pieceProgress(state.currentAudioItem, audio.currentTime / duration));
       } else {
-        applyHighlightWordFocus(0);
+        applyHighlightWordFocus(playbackHistory.pieceProgress(state.currentAudioItem, 0));
       }
 
       state.highlightFrameId = requestAnimationFrame(tick);
@@ -1052,6 +1053,8 @@
     const port = chrome.runtime.connect({ name: "reedah-native" });
     const session = {
       port,
+      startedAt: performance.now(),
+      firstPlaybackLogged: false,
       utteranceId,
       sentenceRanges,
       highlightTextOffset,
@@ -1094,7 +1097,7 @@
     if (message.type === "started") {
       if (session.logVoice && (message.voiceName || message.voiceIdentifier)) {
         console.info(
-          "Reedah: Using Kokoro voice:",
+          "Reedah: Using PA3 voice:",
           message.voiceName || message.voiceIdentifier
         );
       }
@@ -1128,7 +1131,12 @@
         audioBase64: message.audioBase64,
         mimeType: message.mimeType,
         location: message.location,
-        length: message.length
+        length: message.length,
+        pieceIndex: message.pieceIndex,
+        pieceCount: message.pieceCount,
+        progressStart: message.progressStart,
+        progressEnd: message.progressEnd,
+        rate: message.rate
       });
       return;
     }
@@ -1194,6 +1202,7 @@
     state.currentUtteranceId = session.utteranceId;
     state.activeEl = el;
 
+    state.skippedSentences.clear();
     state.currentSentenceRanges = session.sentenceRanges;
     state.currentSentenceIndex = -1;
     state.currentHighlightTextOffset = session.highlightTextOffset;
@@ -1356,11 +1365,21 @@
       ? parsedIndex
       : findSentenceIndexForOffset(payload.location);
 
-    session.audioQueue.push({
+    const item = {
       url,
       index,
-      location: payload.location
-    });
+      location: payload.location,
+      rate: payload.rate ?? 1,
+      pieceIndex: payload.pieceIndex,
+      pieceCount: payload.pieceCount,
+      progressStart: payload.progressStart,
+      progressEnd: payload.progressEnd
+    };
+    if (session.active && state.skippedSentences.has(index)) {
+      rememberPlayed(item);
+      return;
+    }
+    session.audioQueue.push(item);
 
     if (session.active && session.playbackId === state.playbackId) {
       maybeStartPlayback(session.playbackId);
@@ -1405,11 +1424,7 @@
       return;
     }
 
-    if (!state.playbackStarted && !state.nativeEnded && state.audioQueue.length + 1 < AUDIO_BUFFER_TARGET) {
-      state.audioQueue.unshift(next);
-      return;
-    }
-
+    // Start with the first ready sentence; generation continues behind playback.
     playNextAudio(playbackId, next);
   }
 
@@ -1442,15 +1457,16 @@
     state.currentAudioUrl = audioUrl;
     state.playbackStarted = true;
     audio.src = audioUrl;
+    audio.playbackRate = next.rate;
     startHighlightWordFocusLoop(playbackId, audio);
 
     audio.onended = () => {
       if (state.playbackId !== playbackId) return;
       if (state.currentAudio !== audio) return;
-      applyHighlightWordFocus(1);
+      applyHighlightWordFocus(playbackHistory.pieceProgress(next, 1));
       rememberPlayed(next);
       cleanupCurrentAudio();
-      if (SENTENCE_PAUSE_MS > 0) {
+      if (playbackHistory.isSentenceEnd(next) && SENTENCE_PAUSE_MS > 0) {
         setTimeout(() => {
           if (state.playbackId !== playbackId) return;
           if (state.isPaused) return;
@@ -1472,6 +1488,12 @@
       clearActiveNarration();
     };
 
+    audio.onplaying = () => {
+      const session = state.activeSession;
+      if (state.currentAudio !== audio || !session || session.firstPlaybackLogged) return;
+      session.firstPlaybackLogged = true;
+      console.info("Reedah: First audio playing after", ((performance.now() - session.startedAt) / 1000).toFixed(2), "seconds", {utteranceId: session.utteranceId});
+    };
     audio.play().catch((error) => {
       if (state.playbackId !== playbackId) return;
       if (state.currentAudio !== audio) return;
@@ -2093,12 +2115,9 @@
     if (!state.activeEl) return;
     if (!state.playedHistory.length) return;
 
-    const previous = state.playedHistory.pop();
+    const previous = playbackHistory.rewindSentence(state.playedHistory, state.currentAudioItem, state.audioQueue);
     if (!previous) return;
-
-    if (state.currentAudioItem) {
-      state.audioQueue.unshift(state.currentAudioItem);
-    }
+    state.skippedSentences.delete(previous.index);
 
     if (state.currentAudio) {
       try {
@@ -2127,7 +2146,11 @@
       console.error("Reedah: No sentence available to skip.");
       return;
     }
+    state.skippedSentences.add(skipped.index);
     rememberPlayed(skipped);
+    while (state.audioQueue[0]?.index === skipped.index) {
+      rememberPlayed(state.audioQueue.shift());
+    }
 
     if (state.currentAudio) {
       try {

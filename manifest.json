@@ -3,8 +3,11 @@
   "name": "Reedah",
   "version": "0.1.0",
   "description": "Overlay controls to narrate paragraph text on a page.",
-  "permissions": ["tabs", "storage"],
-  "host_permissions": ["http://127.0.0.1:7865/*"],
+  "permissions": [
+    "tabs",
+    "storage",
+    "nativeMessaging"
+  ],
   "action": {
     "default_title": "Reedah"
   },
@@ -30,16 +33,50 @@
   "options_page": "options.html",
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["frame_detection.js", "sentence.js", "ordered_list_narration.js", "overlay_geometry.js", "hover_bounds.js", "highlight_ranges.js", "highlight_progress.js", "highlight_theme.js", "playback_history.js", "controls_navigation.js", "narration_text.js", "content.js"],
-      "css": ["content.css"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "frame_detection.js",
+        "sentence.js",
+        "ordered_list_narration.js",
+        "overlay_geometry.js",
+        "hover_bounds.js",
+        "highlight_ranges.js",
+        "highlight_progress.js",
+        "highlight_theme.js",
+        "playback_history.js",
+        "controls_navigation.js",
+        "narration_text.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_idle"
     },
     {
-      "matches": ["*://*.officeapps.live.com/*"],
+      "matches": [
+        "*://*.officeapps.live.com/*"
+      ],
       "all_frames": true,
-      "js": ["frame_detection.js", "sentence.js", "ordered_list_narration.js", "overlay_geometry.js", "hover_bounds.js", "highlight_ranges.js", "highlight_progress.js", "highlight_theme.js", "playback_history.js", "controls_navigation.js", "narration_text.js", "content.js"],
-      "css": ["content.css"],
+      "js": [
+        "frame_detection.js",
+        "sentence.js",
+        "ordered_list_narration.js",
+        "overlay_geometry.js",
+        "hover_bounds.js",
+        "highlight_ranges.js",
+        "highlight_progress.js",
+        "highlight_theme.js",
+        "playback_history.js",
+        "controls_navigation.js",
+        "narration_text.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_idle"
     }
   ]

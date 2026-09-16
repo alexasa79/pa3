@@ -73,3 +73,28 @@ test("takeSkippedItem returns null when no valid skip target exists", () => {
   assert.equal(queue.length, 0);
   assert.equal(takeSkippedItem(null, [{ index: 1 }]), null);
 });
+
+const {pieceProgress, isSentenceEnd, rewindSentence} = require('../playback_history');
+test('pieces advance within a sentence and pause only at its end', () => {
+  const first = {pieceIndex:0, pieceCount:2, progressStart:0, progressEnd:0.4};
+  const second = {pieceIndex:1, pieceCount:2, progressStart:0.4, progressEnd:1};
+  assert.equal(pieceProgress(first, 1), 0.4);
+  assert.equal(pieceProgress(second, 0), 0.4);
+  assert.equal(pieceProgress(second, 0.5), 0.7);
+  assert.equal(isSentenceEnd(first), false);
+  assert.equal(isSentenceEnd(second), true);
+});
+test('previous sentence restores all its pieces before the current sentence', () => {
+  const a = {url:'a', index:0, pieceIndex:0}, b = {url:'b', index:0, pieceIndex:1};
+  const c = {url:'c', index:1, pieceIndex:0}, d = {url:'d', index:1, pieceIndex:1};
+  const history = [a,b,c], queue = [{url:'e', index:2}];
+  assert.equal(rewindSentence(history, d, queue), a);
+  assert.deepEqual(queue.map(x => x.url), ['b','c','d','e']);
+  assert.equal(history.length, 0);
+});
+test('late pieces from skipped sentences retain order without duplicate URLs', () => {
+  const history = [{url:'c',index:1,pieceIndex:0}];
+  const a = {url:'a',index:0,pieceIndex:0}, b = {url:'b',index:0,pieceIndex:1};
+  addPlayedItem(history,b); addPlayedItem(history,a); addPlayedItem(history,b);
+  assert.deepEqual(history.map(x => x.url), ['a','b','c']);
+});

@@ -10,17 +10,20 @@
     <main class="panel">
       <header class="panel__header">
         <h1>Reedah Settings</h1>
-        <p>Configure Kokoro settings for the Python native host.</p>
+        <p>Narrate with PA3’s Qwen model. Keep PA3 running while using Reedah.</p>
       </header>
 
-      <section class="field">
-        <label for="voice">Voice</label>
-        <select id="voice"></select>
-        <p class="hint">Default voice is <code>am_adam</code>.</p>
+      <section class="field" aria-labelledby="narrator-heading">
+        <h2 id="narrator-heading">Narrator</h2>
+        <dl class="narrator-details">
+          <div><dt>Model</dt><dd>Qwen3-TTS · PA3</dd></div>
+          <div><dt>Voice</dt><dd>American senior engineer</dd></div>
+        </dl>
+        <p class="hint">The voice is provided by PA3.</p>
       </section>
 
       <section class="field">
-        <label for="rate">Speech speed (optional)</label>
+        <label for="rate">Playback speed (optional)</label>
         <input
           id="rate"
           type="number"
@@ -31,7 +34,7 @@
           spellcheck="false"
           placeholder="1.0"
         />
-        <p class="hint">Kokoro speed multiplier. Leave blank to use 1.0.</p>
+        <p class="hint">Browser playback speed. Leave blank to use 1.0.</p>
       </section>
 
       <section class="field">
@@ -40,7 +43,7 @@
           <button id="manage-vocab" type="button">Manage Words</button>
           <span id="vocab-count" class="hint">No custom words configured.</span>
         </div>
-        <p class="hint">Define spelling and pronunciation pairs to emit Kokoro tags.</p>
+        <p class="hint">Use ordinary words to guide pronunciation, such as “PA3” → “P A three”.</p>
       </section>
 
       <section class="field">
@@ -66,32 +69,23 @@
     <dialog id="vocab-dialog" class="vocab-dialog">
       <div class="vocab-dialog__surface">
         <h2>Custom Vocabulary</h2>
-        <p class="hint">Entries are applied as <code>[word](/pronunciation/)</code> tags during narration.</p>
+        <p class="hint">Matching words are replaced with their spoken spellings before narration.</p>
 
         <section class="field">
-          <label for="vocab-spelling">Spelling</label>
-          <input id="vocab-spelling" type="text" autocomplete="off" spellcheck="false" placeholder="e.g., Kokoro" />
+          <label for="vocab-spelling">Written word or phrase</label>
+          <input id="vocab-spelling" type="text" autocomplete="off" spellcheck="false" placeholder="e.g., PA3" />
         </section>
 
         <section class="field">
-          <label for="vocab-pronunciation">Pronunciation</label>
+          <label for="vocab-pronunciation">Say it as</label>
           <input
             id="vocab-pronunciation"
             type="text"
             autocomplete="off"
             spellcheck="false"
-            placeholder="e.g., kˈOkəɹO"
+            placeholder="e.g., P A three"
           />
         </section>
-        <p class="hint">
-          Phoneme reference:
-          <a
-            href="https://github.com/hexgrad/misaki/blob/main/EN_PHONES.md"
-            target="_blank"
-            rel="noreferrer noopener"
-            >EN_PHONES.md</a
-          >
-        </p>
 
         <div class="actions">
           <button id="vocab-add-update" class="primary" type="button">Add Word</button>
