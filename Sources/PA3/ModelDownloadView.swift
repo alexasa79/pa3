@@ -72,8 +72,6 @@ struct ModelDownloadView: View {
             }
 
             HStack {
-                Label("Audio stays on this Mac", systemImage: "lock.shield")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
                 Spacer()
                 if manager.running {
                     Button("Cancel") { manager.cancel() }
