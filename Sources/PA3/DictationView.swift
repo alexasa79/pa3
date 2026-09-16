@@ -1,9 +1,12 @@
 import AppKit
 import SwiftUI
 
+// Use the property wrapper without requiring the newer SwiftUIMacros plugin.
+private typealias LegacyState<Value> = SwiftUI.State<Value>
+
 struct DictationView: View {
     @ObservedObject var controller: DictationController
-    @State private var showingShortcuts = false
+    @LegacyState private var showingShortcuts = false
 
     var body: some View {
         VStack(spacing: 0) {
