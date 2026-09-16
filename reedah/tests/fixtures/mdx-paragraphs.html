@@ -1,0 +1,28 @@
+<!doctype html><meta charset="utf-8"><title>MDX narration regression</title>
+<style>body { margin: 50px; max-width: 650px; } .mdx-p { margin: 16px 0; }</style>
+<main>
+<div id="layout">
+<h3 id="intro-heading">Building a square</h3>
+<div id="intro" class="mdx-p">A square of size <span class="mdx-code">k</span> needs three neighboring squares:</div>
+<ul>
+<li id="above">Check the square above.</li>
+<li id="left">Check the square on the left.</li>
+<li id="diagonal">Check the diagonal square.</li>
+</ul>
+<div id="after-list" class="mdx-p">The smallest neighbor determines the next size.</div>
+<h3 id="minimum-heading">Why use the minimum?</h3>
+<div id="example" class="mdx-p">Consider neighboring sizes of <strong>2, 3, and 4</strong>.</div>
+<svg width="100" height="30"><text x="0" y="20">Diagram label</text></svg>
+<div id="explanation" class="mdx-p">The short side limits how far the square can extend.</div>
+<h3 id="recurrence-heading">Calculate the recurrence</h3>
+<div id="recurrence" class="mdx-p">Store the result in <code>dp[i][j]</code>.</div>
+<div id="aria-paragraph" role="paragraph">An accessible custom paragraph also belongs in the reading order.</div>
+<div class="mdx-p" id="wrapper"><p id="semantic-child">A regular paragraph inside a custom wrapper is read once.</p></div>
+<ul><li id="nested-item"><div class="mdx-p" id="nested-paragraph">A paragraph inside a list item is also read once.</div></li></ul>
+<div class="mdx-p" id="link-only"><a href="#intro">Navigation link</a></div>
+<nav><div class="mdx-p" id="navigation">Skip navigation text.</div></nav>
+<pre><div class="mdx-p" id="code-block">Skip block code.</div></pre>
+<div class="mdx-p" id="hidden" hidden>Skip hidden text.</div>
+<div class="mdx-p" id="invisible" style="display:none">Skip invisible text.</div>
+</div>
+</main>

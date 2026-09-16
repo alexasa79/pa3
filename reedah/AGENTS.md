@@ -1,0 +1,8 @@
+# AGENTS.md
+
+Project rules:
+- Do not implement fallback mechanisms. On failure, log the error and stop.
+- Add console printouts that clearly indicate failures and then move on.
+- Every task you do, plan for unit tests that will verify correctness of your implementation.
+- Make your responses shorter and try to make it obvious and straightforward.
+- Keep the native host dumb. Do text preprocessing (including custom vocabulary substitution) in JavaScript before sending requests to the native host.

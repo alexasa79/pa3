@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reedah Settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <header class="panel__header">
+        <h1>Reedah Settings</h1>
+        <p>Narrate with PA3’s Qwen model. Keep PA3 running while using Reedah.</p>
+      </header>
+
+      <section class="field" aria-labelledby="narrator-heading">
+        <h2 id="narrator-heading">Narrator</h2>
+        <dl class="narrator-details">
+          <div><dt>Model</dt><dd>Qwen3-TTS · PA3</dd></div>
+          <div><dt>Voice</dt><dd>American senior engineer</dd></div>
+        </dl>
+        <p class="hint">The voice is provided by PA3.</p>
+      </section>
+
+      <section class="field">
+        <label for="rate">Playback speed (optional)</label>
+        <input
+          id="rate"
+          type="number"
+          min="0.5"
+          max="2"
+          step="0.05"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="1.0"
+        />
+        <p class="hint">Leave blank to use 1.0. Playback speed preserves voice pitch.</p>
+      </section>
+
+      <section class="field">
+        <label>Custom Vocabulary</label>
+        <div class="vocab-summary">
+          <button id="manage-vocab" type="button">Manage Words</button>
+          <span id="vocab-count" class="hint">No custom words configured.</span>
+        </div>
+        <p class="hint">Use ordinary words to guide pronunciation, such as “PA3” → “P A three”.</p>
+      </section>
+
+      <section class="field">
+        <label for="test-narration-text">Test Narration</label>
+        <textarea
+          id="test-narration-text"
+          rows="4"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Type text to narrate from options."
+        ></textarea>
+        <div class="actions test-narration-actions">
+          <button id="test-narrate" class="primary" type="button">Narrate Text</button>
+        </div>
+      </section>
+
+      <div class="actions">
+        <button id="clear" type="button">Clear</button>
+        <span id="status" role="status" aria-live="polite"></span>
+      </div>
+    </main>
+
+    <dialog id="vocab-dialog" class="vocab-dialog">
+      <div class="vocab-dialog__surface">
+        <h2>Custom Vocabulary</h2>
+        <p class="hint">Matching words are replaced with their spoken spellings before narration.</p>
+
+        <section class="field">
+          <label for="vocab-spelling">Written word or phrase</label>
+          <input id="vocab-spelling" type="text" autocomplete="off" spellcheck="false" placeholder="e.g., PA3" />
+        </section>
+
+        <section class="field">
+          <label for="vocab-pronunciation">Say it as</label>
+          <input
+            id="vocab-pronunciation"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="e.g., P A three"
+          />
+        </section>
+
+        <div class="actions">
+          <button id="vocab-add-update" class="primary" type="button">Add Word</button>
+          <button id="vocab-reset" type="button">Reset Entry</button>
+        </div>
+
+        <div id="vocab-list" class="vocab-list" role="list"></div>
+
+        <div class="actions vocab-dialog__actions">
+          <button id="vocab-cancel" type="button">Close</button>
+        </div>
+      </div>
+    </dialog>
+
+    <script src="time_stretch.js"></script>
+    <script src="stream_audio.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

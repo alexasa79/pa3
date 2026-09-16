@@ -1,0 +1,58 @@
+const assert = require("node:assert/strict");
+const test = require("node:test");
+const { buildSentenceRanges } = require("../sentence");
+
+function extractSentences(text, options) {
+  return buildSentenceRanges(text, options).map((range) => text.slice(range.start, range.end));
+}
+
+test("buildSentenceRanges keeps abbreviations and decimals intact", () => {
+  const text = "Use e.g. 3.14 in a sentence that is long enough to stay intact. " +
+    "Another sentence that is also long enough to be separate.";
+  const sentences = extractSentences(text);
+
+  assert.equal(sentences.length, 2);
+  assert.ok(sentences[0].includes("e.g."));
+  assert.ok(sentences[0].includes("3.14"));
+});
+
+test("buildSentenceRanges keeps Mr. attached to the following name", () => {
+  const text = "Mr. Smith delivered a detailed update during the weekly planning meeting. " +
+    "The next sentence is also long enough to be separate.";
+  const sentences = extractSentences(text);
+
+  assert.equal(sentences.length, 2);
+  assert.equal(sentences[0], "Mr. Smith delivered a detailed update during the weekly planning meeting.");
+  assert.equal(sentences[1], "The next sentence is also long enough to be separate.");
+});
+
+test("buildSentenceRanges does not split on mid-word periods", () => {
+  const text = "Vert.x is a reactive toolkit for the JVM. " +
+    "It also supports Node.js style APIs and ASP.NET patterns.";
+  const sentences = extractSentences(text);
+
+  assert.equal(sentences.length, 2);
+  assert.ok(sentences[0].includes("Vert.x"));
+  assert.ok(sentences[1].includes("Node.js"));
+  assert.ok(sentences[1].includes("ASP.NET"));
+});
+
+test("buildSentenceRanges does not split on acronym-ending periods", () => {
+  const text = "The U.S. economy grew steadily through the decade. " +
+    "The A.I. sector also expanded rapidly in the same period.";
+  const sentences = extractSentences(text);
+
+  assert.equal(sentences.length, 2);
+  assert.ok(sentences[0].includes("U.S."));
+  assert.ok(sentences[1].includes("A.I."));
+});
+
+test("buildSentenceRanges ends a sentence after a decimal number", () => {
+  const text = "The ratio was 1.5 for the sample set. " +
+    "The following sentence is also long enough to be separate.";
+  const sentences = extractSentences(text);
+
+  assert.equal(sentences.length, 2);
+  assert.equal(sentences[0], "The ratio was 1.5 for the sample set.");
+  assert.equal(sentences[1], "The following sentence is also long enough to be separate.");
+});
