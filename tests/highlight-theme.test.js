@@ -1,26 +1,26 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { detectHighlightModeFromBackgroundColors } = require("../highlight_theme");
+const {detectHighlightModeFromColors} = require("../highlight_theme");
+const color=(red,green,blue,alpha=1)=>({red,green,blue,alpha});
 
-test("detectHighlightModeFromBackgroundColors returns light for bright backgrounds", () => {
-  const mode = detectHighlightModeFromBackgroundColors(["rgb(248, 250, 252)"]);
-  assert.equal(mode, "light");
+test("highlight theme uses light mode for bright sRGB backgrounds",()=>{
+  assert.equal(detectHighlightModeFromColors([color(248,250,252)]),"light");
 });
-
-test("detectHighlightModeFromBackgroundColors returns dark for dark backgrounds", () => {
-  const mode = detectHighlightModeFromBackgroundColors(["rgb(15, 23, 42)"]);
-  assert.equal(mode, "dark");
+test("highlight theme uses dark mode for dark sRGB backgrounds",()=>{
+  assert.equal(detectHighlightModeFromColors([color(15,23,42)]),"dark");
 });
-
-test("detectHighlightModeFromBackgroundColors blends translucent foreground layers", () => {
-  const mode = detectHighlightModeFromBackgroundColors([
-    "rgba(0, 0, 0, 0.68)",
-    "rgb(250, 250, 250)"
-  ]);
-  assert.equal(mode, "dark");
+test("highlight theme composites translucent child backgrounds over ancestors",()=>{
+  assert.equal(detectHighlightModeFromColors([color(0,0,0,0.68),color(250,250,250)]),"dark");
+  assert.equal(detectHighlightModeFromColors([color(255,255,255,0.8),color(0,0,0)]),"light");
 });
-
-test("detectHighlightModeFromBackgroundColors returns null for invalid colors", () => {
-  const mode = detectHighlightModeFromBackgroundColors(["linear-gradient(red, blue)"]);
-  assert.equal(mode, null);
+test("opaque child background determines theme regardless of ancestor colors",()=>{
+  assert.equal(detectHighlightModeFromColors([color(255,255,255),color(0,0,0)]),"light");
+});
+test("fully transparent backgrounds use the default white page canvas",()=>{
+  assert.equal(detectHighlightModeFromColors([color(0,0,0,0)]),"light");
+});
+test("invalid color samples fail explicitly",()=>{
+  for(const samples of [[],null,[null],[color(NaN,0,0)],[color(0,0,0,2)]]) {
+    assert.equal(detectHighlightModeFromColors(samples),null);
+  }
 });

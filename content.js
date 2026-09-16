@@ -16,7 +16,8 @@
   const HIGHLIGHT_MODE_LIGHT = "light";
   const HIGHLIGHT_MODE_DARK = "dark";
   const DEFAULT_OL_START = 1;
-  const CANDIDATE_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6";
+  const CUSTOM_PARAGRAPH_SELECTOR = "div.mdx-p, [role='paragraph']";
+  const CANDIDATE_SELECTOR = `p, li, blockquote, h1, h2, h3, h4, h5, h6, ${CUSTOM_PARAGRAPH_SELECTOR}`;
   const HOVER_BOX_PADDING = 32;
   const LIST_OVERLAY_MAX_GAP = 32;
   const HIDDEN_TEXT_SELECTOR =
@@ -269,6 +270,9 @@
       return false;
     }
 
+    // MDX renderers and accessible custom components can use divs for paragraphs.
+    // If such a wrapper contains semantic blocks, narrate those children instead.
+    if (el.matches(CUSTOM_PARAGRAPH_SELECTOR) && el.querySelector(CANDIDATE_SELECTOR)) return false;
     if (isLinkOnly(el)) return false;
 
     const text = getText(el);

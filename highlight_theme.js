@@ -7,54 +7,25 @@
     return Math.max(min, Math.min(max, value));
   }
 
-  function parseColorChannel(token) {
-    if (typeof token !== "string" || token.length === 0) return null;
-    const trimmed = token.trim();
-    if (!trimmed) return null;
-    if (trimmed.endsWith("%")) {
-      const percent = Number.parseFloat(trimmed.slice(0, -1));
-      if (!Number.isFinite(percent)) return null;
-      return clamp(Math.round((percent / 100) * 255), 0, 255);
+  let colorContext;
+
+  function resolveBrowserColor(value) {
+    if (typeof value !== "string" || !CSS.supports("color", value)) {
+      throw new Error(`Invalid computed background color: ${value}`);
     }
-    const value = Number.parseFloat(trimmed);
-    if (!Number.isFinite(value)) return null;
-    return clamp(Math.round(value), 0, 255);
-  }
-
-  function parseAlphaChannel(token) {
-    if (typeof token !== "string" || token.length === 0) return null;
-    const trimmed = token.trim();
-    if (!trimmed) return null;
-    if (trimmed.endsWith("%")) {
-      const percent = Number.parseFloat(trimmed.slice(0, -1));
-      if (!Number.isFinite(percent)) return null;
-      return clamp(percent / 100, 0, 1);
+    if (!colorContext) {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      colorContext = canvas.getContext("2d", {colorSpace: "srgb", willReadFrequently: true});
+      if (!colorContext) throw new Error("Color conversion canvas unavailable");
     }
-    const value = Number.parseFloat(trimmed);
-    if (!Number.isFinite(value)) return null;
-    return clamp(value, 0, 1);
-  }
-
-  function parseColor(colorValue) {
-    if (typeof colorValue !== "string") return null;
-    const value = colorValue.trim().toLowerCase();
-    if (!value) return null;
-    if (value === "transparent") {
-      return { red: 0, green: 0, blue: 0, alpha: 0 };
-    }
-    const colorMatch = value.match(/^rgba?\((.*)\)$/);
-    if (!colorMatch) return null;
-
-    const rawTokens = colorMatch[1].split(/[\s,/]+/).filter(Boolean);
-    if (rawTokens.length !== 3 && rawTokens.length !== 4) return null;
-
-    const red = parseColorChannel(rawTokens[0]);
-    const green = parseColorChannel(rawTokens[1]);
-    const blue = parseColorChannel(rawTokens[2]);
-    const alpha = rawTokens.length === 4 ? parseAlphaChannel(rawTokens[3]) : 1;
-    if (red == null || green == null || blue == null || alpha == null) return null;
-
-    return { red, green, blue, alpha };
+    // Let Chrome interpret all supported CSS color spaces instead of parsing
+    // getComputedStyle strings, which can preserve color(), oklch() or color-mix().
+    colorContext.clearRect(0, 0, 1, 1);
+    colorContext.fillStyle = value;
+    colorContext.fillRect(0, 0, 1, 1);
+    const [red, green, blue, alpha] = colorContext.getImageData(0, 0, 1, 1).data;
+    return {red, green, blue, alpha: alpha / 255};
   }
 
   function blendColors(top, bottom) {
@@ -86,14 +57,15 @@
     return red * 0.2126 + green * 0.7152 + blue * 0.0722;
   }
 
-  function detectHighlightModeFromBackgroundColors(backgroundColors) {
+  function detectHighlightModeFromColors(backgroundColors) {
     if (!Array.isArray(backgroundColors) || !backgroundColors.length) return null;
 
     // The page canvas is white when no opaque background is declared.
     let composite = { red: 255, green: 255, blue: 255, alpha: 1 };
     for (let i = backgroundColors.length - 1; i >= 0; i -= 1) {
-      const parsed = parseColor(backgroundColors[i]);
-      if (!parsed) return null;
+      const parsed = backgroundColors[i];
+      if (!parsed || ![parsed.red, parsed.green, parsed.blue, parsed.alpha].every(Number.isFinite) ||
+          parsed.alpha < 0 || parsed.alpha > 1) return null;
       if (parsed.alpha <= 0) continue;
       composite = blendColors(parsed, composite);
     }
@@ -117,12 +89,17 @@
       current = current.parentElement;
     }
 
-    return detectHighlightModeFromBackgroundColors(backgroundColors);
+    try {
+      return detectHighlightModeFromColors(backgroundColors.map(resolveBrowserColor));
+    } catch (error) {
+      console.error("Reedah: Could not resolve page background colors.", error);
+      return null;
+    }
   }
 
   const api = {
     detectHighlightMode,
-    detectHighlightModeFromBackgroundColors
+    detectHighlightModeFromColors
   };
 
   if (typeof module !== "undefined" && module.exports) {

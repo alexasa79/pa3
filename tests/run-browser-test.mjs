@@ -3,6 +3,8 @@ import {spawn} from 'node:child_process';
 import {mkdtemp,readFile,rm,open} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {checkParagraphs} from './paragraph-detection-browser.mjs';
+import {checkHighlights} from './highlight-browser.mjs';
 const profile=await mkdtemp(join(tmpdir(),'reedah-audio-browser-'));
 const log=await open(join(profile,'diagnostics.log'),'w');
 const browser=spawn(process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',[
@@ -45,6 +47,8 @@ try {
   }
   if(!result.startsWith('PASS:'))throw Error(result);
   console.log(result);
+  await checkParagraphs(call);
+  await checkHighlights(call);
 } finally {
   socket?.close();
   if(browser.pid){try{process.kill(-browser.pid,'SIGTERM');}catch(error){if(error.code!=='ESRCH')throw error;}}
