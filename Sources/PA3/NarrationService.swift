@@ -23,6 +23,12 @@ enum NarrationVoice {
 
 @MainActor
 final class NarrationService: NSObject, AVAudioPlayerDelegate {
+    private struct StreamChunk {
+        let path: URL
+        let samples: Int
+        let sampleRate: Int
+        var json: [String: Int] { ["samples": samples, "sample_rate": sampleRate] }
+    }
     private struct Job {
         let id: String
         let characters: Int
@@ -33,6 +39,8 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         let isSelection: Bool
         let output: String
         var audioExpires: Date?
+        var streamChunks: [StreamChunk] = []
+        var nextStreamChunk = 0
         var audioPieces: [[String: Double]] = []
         var state = "queued"
         var generated = 0
@@ -44,6 +52,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             var value: [String: Any] = ["id": id, "state": state, "characters": characters,
                 "voice": voice, "language": language, "pieces": total, "pieces_played": played,
                 "pieces_generated": generated, "output": output, "audio_available": audioExpires != nil]
+            if output == "stream" { value["audio_chunks"] = streamChunks.map(\.json) }
             if output == "pieces" { value["audio_pieces"] = Array(audioPieces.prefix(generated)) }
             if let error { value["error"] = error }
             return value
@@ -150,7 +159,11 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             let id = String(components[0])
             guard let job = jobs[id] else { return .error(404, "Unknown narration job") }
             if components.count > 1 {
-                guard request.method == "GET", components[1] == "audio" else { return .error(404, "Unknown endpoint") }
+                guard request.method == "GET", ["audio", "chunks"].contains(String(components[1])) else { return .error(404, "Unknown endpoint") }
+                if components[1] == "chunks" {
+                    if components.count == 3, let index = Int(components[2]) { return streamResponse(id, index: index) }
+                    return .error(404, "Unknown endpoint")
+                }
                 if components.count == 2 { return audioResponse(id) }
                 if components.count == 3, let index = Int(components[2]) { return pieceResponse(id, index: index) }
                 return .error(404, "Unknown endpoint")
@@ -166,8 +179,8 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
 
     func submit(_ data: Data, selection: SelectedTextResult? = nil) -> NarrationHTTPResponse {
         guard let input = try? JSONDecoder().decode(NarrationInput.self, from: data) else { return .error(400, "Invalid JSON; text must be a string") }
-        guard ["playback", "audio", "pieces"].contains(input.output ?? "playback") else { return .error(422, "Output must be playback, audio, or pieces") }
-        if ["audio", "pieces"].contains(input.output ?? ""), input.text.count > 4000 { return .error(422, "Audio requests are limited to 4,000 characters") }
+        guard ["playback", "audio", "pieces", "stream"].contains(input.output ?? "playback") else { return .error(422, "Output must be playback, audio, pieces, or stream") }
+        if ["audio", "pieces", "stream"].contains(input.output ?? ""), input.text.count > 4000 { return .error(422, "Audio requests are limited to 4,000 characters") }
         guard ["enqueue", "replace"].contains(input.mode ?? "enqueue") else { return .error(422, "Mode must be enqueue or replace") }
         guard let voice = NarrationVoice.resolve(input.voice),
               let language = languages.first(where: { $0.lowercased() == (input.language ?? "English").lowercased() }) else {
@@ -245,11 +258,12 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             catch { failActive("Could not create temporary audio directory"); return }
             let path = directory.appendingPathComponent("\(job.generated).wav")
             generatingPath = path
+            jobs[id]?.nextStreamChunk = 0
             workerDeadline = Date().addingTimeInterval(120)
             if player == nil { jobs[id]?.state = "generating" }
             worker?.generate(id: id, text: job.chunks[job.generated].text, voice: job.voice,
                              language: job.language, instruct: job.instruct, path: path,
-                             pause: job.chunks[job.generated].pauseAfter, seed: 7 + job.silenceRetries)
+                             pause: job.chunks[job.generated].pauseAfter, seed: 7 + job.silenceRetries, stream: job.output == "stream")
         } else if job.output != "playback", generatingPath == nil, job.generated == job.total {
             let directory = audioDirectory.appendingPathComponent(id)
             do {
@@ -282,6 +296,20 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             workerDeadline = nil
             Logger.info("Qwen worker ready")
             pump()
+        case "partial":
+            guard let active, event.id == active, let path = generatingPath,
+                  let job = jobs[active], job.output == "stream", event.chunk == job.nextStreamChunk,
+                  let samples = event.samples, samples > 0, samples <= 192000,
+                  let rate = event.sampleRate, rate == 24000,
+                  event.path == path.path + ".part-\(job.nextStreamChunk).pcm" else {
+                workerFailed("Unexpected streaming audio response from Qwen"); return
+            }
+            let chunkPath = URL(fileURLWithPath: event.path!)
+            guard (try? chunkPath.resourceValues(forKeys: [.fileSizeKey]).fileSize) == samples * 4,
+                  audioWithinLimit(active) else { failActive("Invalid streaming audio or storage limit exceeded"); return }
+            jobs[active]?.streamChunks.append(StreamChunk(path: chunkPath, samples: samples, sampleRate: rate))
+            jobs[active]?.nextStreamChunk += 1
+            workerDeadline = Date().addingTimeInterval(120)
         case "audio":
             guard let active, event.id == active, let path = generatingPath, event.path == path.path else {
                 workerFailed("Unexpected audio response from Qwen"); return
@@ -290,7 +318,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
                 failActive("Generated audio exceeds storage limit"); return
             }
             jobs[active]?.generated += 1
-            prepared.append(path)
+            if jobs[active]?.output != "stream" { prepared.append(path) }
             generatingPath = nil
             workerDeadline = nil
             pump()
@@ -403,11 +431,23 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         } catch { return .error(500, "Could not read generated audio piece") }
     }
 
+    func streamResponse(_ id: String, index: Int) -> NarrationHTTPResponse {
+        expireAudio()
+        guard let job = jobs[id], job.output == "stream", index >= 0, index < job.streamChunks.count,
+              ["generating", "completed"].contains(job.state),
+              job.state != "completed" || job.audioExpires != nil else {
+            return .error(404, "Audio chunk is not ready or has expired")
+        }
+        do {
+            return NarrationHTTPResponse(status: 200, body: try Data(contentsOf: job.streamChunks[index].path), contentType: "application/octet-stream")
+        } catch { return .error(500, "Could not read streaming audio") }
+    }
+
     private func audioWithinLimit(_ id: String) -> Bool {
         // Bound both a single export and all retained exports, including pending audio.
         var total = 0, jobTotal = 0
         guard let files = FileManager.default.enumerator(at: audioDirectory, includingPropertiesForKeys: [.fileSizeKey]) else { return false }
-        for case let file as URL in files where file.pathExtension == "wav" {
+        for case let file as URL in files where ["wav", "pcm"].contains(file.pathExtension) {
             let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             total += size
             if file.deletingLastPathComponent().lastPathComponent == id { jobTotal += size }

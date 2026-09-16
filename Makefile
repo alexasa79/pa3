@@ -8,21 +8,30 @@ ASSETS := Assets
 BREW ?= brew
 SIGN_IDENTITY ?= PA3 Local Code Signing Trusted
 KEYCHAIN ?= $(HOME)/Library/Keychains/login.keychain-db
+PA3_MODEL_DIR ?= $(HOME)/Library/Application Support/PA3/models
 CODESIGN_CERT_DAYS ?= 3650
 CODESIGN_P12_PASSWORD ?= pa3-local-codesign
 
-.PHONY: all build native-narrator app icons speech-tools-check speech-setup tts-setup codesign-identity clean run test fixtures replay-test narration-test
+.PHONY: all build native-narrator app icons speech-tools-check speech-setup tts-setup codesign-identity clean run test fixtures replay-test narration-test native-stream-test decoder-test
 
 all: app
 
-native-narrator: Native/Narrator.mm
+native-narrator: Native/Narrator.mm Native/NarrationStream.h
 	mkdir -p .build/native
 	clang++ -std=c++17 -O2 -fobjc-arc -framework Foundation -I"$$($(BREW) --prefix llama.cpp)/include" -I"$$($(BREW) --prefix ggml)/include" Native/Narrator.mm -L"$$($(BREW) --prefix llama.cpp)/lib" -L"$$($(BREW) --prefix ggml)/lib" -Wl,-rpath,"$$($(BREW) --prefix llama.cpp)/lib" -Wl,-rpath,"$$($(BREW) --prefix ggml)/lib" -lllama -lmtmd -lggml -lggml-base -o .build/native/pa3-narrator
 
 build: native-narrator
 	swift build -c release
 
-test:
+native-stream-test:
+	mkdir -p .build/native
+	clang++ -std=c++17 -O2 -I"$$($(BREW) --prefix llama.cpp)/include" -I"$$($(BREW) --prefix ggml)/include" Native/NarrationStreamTests.cpp -L"$$($(BREW) --prefix llama.cpp)/lib" -L"$$($(BREW) --prefix ggml)/lib" -Wl,-rpath,"$$($(BREW) --prefix llama.cpp)/lib" -Wl,-rpath,"$$($(BREW) --prefix ggml)/lib" -lllama -lmtmd -lggml -lggml-base -o .build/native/narration-stream-test
+	.build/native/narration-stream-test
+
+decoder-test: native-stream-test
+	.build/native/narration-stream-test "$(PA3_MODEL_DIR)/qwen3-tts/Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf" "$(PA3_MODEL_DIR)/qwen3-tts/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf"
+
+test: decoder-test
 	swift build
 	.build/debug/pa3 --whisper-text-test
 	.build/debug/pa3 --narration-recovery-test

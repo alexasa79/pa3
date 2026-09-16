@@ -9,6 +9,9 @@
 #include <stdexcept>
 #include <vector>
 #include <limits>
+#include <cmath>
+#include <algorithm>
+#include "NarrationStream.h"
 
 static void emit(NSDictionary *value) {
     NSData *data = [NSJSONSerialization dataWithJSONObject:value options:0 error:nil];
@@ -26,6 +29,8 @@ int main(int argc, char **argv) {
     @autoreleasepool {
         try {
             require(argc == 4, "Expected model, projector and speaker WAV paths");
+            require(narrationDecoderSupported(llama_version()),
+                    "Unsupported llama.cpp version. PA3 streaming requires tested llama.cpp 0.4.1; validate the decoder before upgrading.");
             llama_log_set(logMessage, nullptr);
             mtmd_helper_log_set(logMessage, nullptr);
             ggml_backend_load_all();
@@ -89,13 +94,48 @@ int main(int argc, char **argv) {
                     input.top_k = 50;
                     input.top_p = 1;
                     input.seed = seed;
-                    input.out_type = MTMD_HELPER_GEN_AUDIO_OUTTYPE_WAV;
+                    const bool streaming = [request[@"stream"] boolValue];
+                    input.out_type = streaming ? MTMD_HELPER_GEN_AUDIO_OUTTYPE_PCM : MTMD_HELPER_GEN_AUDIO_OUTTYPE_WAV;
                     require(mtmd_helper_gen_audio_set_input(gen, &input) == 0, "Speech input failed");
                     int remaining;
                     do {
                         remaining = mtmd_helper_gen_audio_step_prompt(gen, 512);
                         require(remaining >= 0, "Speech prompt failed");
                     } while (remaining > 0);
+                    int64_t emittedSamples = 0;
+                    int chunkIndex = 0;
+                    bool speechStarted = false;
+                    auto publish = [&](bool final = false) {
+                        int32_t rate; const char *bytes; size_t length; int64_t samples;
+                        require(mtmd_helper_gen_audio_get_output(gen, &rate, &bytes, &length, &samples) == 0,
+                                "Could not decode streaming audio");
+                        require(rate > 0 && samples >= emittedSamples && length == (size_t)samples * sizeof(float),
+                                "Invalid streaming PCM");
+                        const float *pcm = reinterpret_cast<const float *>(bytes);
+                        int64_t begin = emittedSamples;
+                        // Trim only initial silence. Never trim the joins between streamed blocks.
+                        if (!speechStarted) {
+                            const int window = std::max(1, rate / 100);
+                            int64_t onset = -1;
+                            for (int64_t i = 0; i < samples; i += window) {
+                                double energy = 0;
+                                const int64_t end = std::min(samples, i + window);
+                                for (int64_t j = i; j < end; ++j) energy += pcm[j] * pcm[j];
+                                if (energy / (end - i) > 0.0000032) { onset = i; break; }
+                            }
+                            if (onset < 0) return;
+                            begin = std::max<int64_t>(0, onset - rate * 0.04);
+                            if (!final && samples - begin < rate * 0.6) return;
+                            speechStarted = true;
+                        }
+                        if (samples == begin) return;
+                        NSString *path = [request[@"path"] stringByAppendingFormat:@".part-%d.pcm", chunkIndex];
+                        NSData *data = [NSData dataWithBytes:pcm + begin length:(samples - begin) * sizeof(float)];
+                        require([data writeToFile:path options:NSDataWritingAtomic error:nil], "Could not write streaming audio");
+                        emit(@{@"event": @"partial", @"id": request[@"id"], @"path": path,
+                               @"chunk": @(chunkIndex++), @"samples": @(samples - begin), @"sampleRate": @(rate)});
+                        emittedSamples = samples;
+                    };
                     bool stop = false;
                     int frames = 0;
                     const float *hidden = llama_get_embeddings_ith(ctx, -1);
@@ -106,14 +146,21 @@ int main(int argc, char **argv) {
                         if (!next) break;
                         hidden = next;
                         ++frames;
+                        // Only complete decoder windows may advance state before end-of-speech.
+                        if (streaming && narrationCanPublish(frames)) publish();
                     }
                     llama_sampler_free(sampler);
                     require(frames < 1024, "Speech exceeded the generation limit");
-                    int32_t rate; const char *bytes; size_t length; int64_t samples;
-                    require(mtmd_helper_gen_audio_get_output(gen, &rate, &bytes, &length, &samples) == 0 && samples > 0,
-                            "Speech produced no audio");
-                    NSData *wav = [NSData dataWithBytes:bytes length:length];
-                    require([wav writeToFile:request[@"path"] options:NSDataWritingAtomic error:nil], "Could not write narration audio");
+                    if (streaming) {
+                        publish(true);
+                        require(speechStarted, "The speech model returned silence");
+                    } else {
+                        int32_t rate; const char *bytes; size_t length; int64_t samples;
+                        require(mtmd_helper_gen_audio_get_output(gen, &rate, &bytes, &length, &samples) == 0 && samples > 0,
+                                "Speech produced no audio");
+                        NSData *wav = [NSData dataWithBytes:bytes length:length];
+                        require([wav writeToFile:request[@"path"] options:NSDataWritingAtomic error:nil], "Could not write narration audio");
+                    }
                     emit(@{@"event": @"audio", @"id": request[@"id"], @"path": request[@"path"]});
                 }
             }

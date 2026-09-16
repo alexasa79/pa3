@@ -4,13 +4,13 @@ import AVFoundation
 private final class RecoveryTestWorker: NarrationWorker {
     let id = UUID()
     let onEvent: @Sendable (UUID, TTSWorkerEvent) -> Void
-    var requests: [(text: String, path: URL, seed: Int)] = []
+    var requests: [(text: String, path: URL, seed: Int, stream: Bool)] = []
     var stopped = false
     init(_ onEvent: @escaping @Sendable (UUID, TTSWorkerEvent) -> Void) { self.onEvent = onEvent }
     func start() throws {}
     func stop() { stopped = true }
-    func generate(id: String, text: String, voice: String, language: String, instruct: String?, path: URL, pause: Double, seed: Int) {
-        requests.append((text, path, seed))
+    func generate(id: String, text: String, voice: String, language: String, instruct: String?, path: URL, pause: Double, seed: Int, stream: Bool) {
+        requests.append((text, path, seed, stream))
     }
     func emit(_ event: TTSWorkerEvent) { onEvent(id, event) }
 }
@@ -168,6 +168,63 @@ private func runNarrationPieceTests() async -> Int32 {
         guard request("DELETE", nextPath).status == 200,
               request("GET", nextPath + "/audio/0").status == 404, worker.stopped else { return 1 }
         print("PASS pieces available before completion, ordered metadata, no playback, deletion, and cancellation")
-        return 0
+        return await runNarrationStreamTests()
     } catch { print("FAIL audio pieces: \(error)"); return 1 }
+}
+
+@MainActor
+private func runNarrationStreamTests() async -> Int32 {
+    var worker: RecoveryTestWorker!
+    let service = NarrationService(isConfigured: { true }, token: "test-token") { callback in
+        worker = RecoveryTestWorker(callback)
+        return worker
+    }
+    defer { service.shutdown() }
+    func request(_ method: String, _ path: String, auth: Bool = true) -> NarrationHTTPResponse {
+        service.handle(NarrationHTTPRequest(method: method, path: path,
+            headers: auth ? ["authorization": "Bearer test-token"] : [:], body: Data()))
+    }
+    do {
+        let text = "The day we discovered we had been designated a global terrorist organization, we promised that we would try to resist as long as this was possible."
+        let body = try JSONSerialization.data(withJSONObject: ["text": text, "output": "stream"])
+        func submit() throws -> String {
+            let response = service.submit(body)
+            guard response.status == 202 else { throw NarrationText.Invalid("Stream submit failed") }
+            return (try JSONSerialization.jsonObject(with: response.body) as! [String: Any])["id"] as! String
+        }
+        let id = try submit(), path = "/v1/narrations/" + id
+        worker.emit(TTSWorkerEvent(event: "ready"))
+        try await Task.sleep(for: .milliseconds(30))
+        guard worker.requests.count == 1, worker.requests[0].text == text, worker.requests[0].stream else { return 1 }
+        let base = worker.requests[0].path
+        let pcm = Data(repeating: 0, count: 16)
+        for index in 0..<2 {
+            let chunk = base.path + ".part-\(index).pcm"
+            try pcm.write(to: URL(fileURLWithPath: chunk))
+            worker.emit(TTSWorkerEvent(event: "partial", id: id, path: chunk, chunk: index, samples: 4, sampleRate: 24000))
+            try await Task.sleep(for: .milliseconds(30))
+            let response = request("GET", path + "/chunks/\(index)")
+            guard response.status == 200, response.body == pcm, response.contentType == "application/octet-stream",
+                  request("GET", path + "/chunks/\(index)", auth: false).status == 401,
+                  request("GET", path + "/chunks/\(index + 1)").status == 404,
+                  service.hasNarration else { return 1 }
+        }
+        worker.emit(TTSWorkerEvent(event: "audio", id: id, path: base.path))
+        try await Task.sleep(for: .milliseconds(30))
+        let status = try JSONSerialization.jsonObject(with: request("GET", path).body) as! [String: Any]
+        guard status["state"] as? String == "completed", status["pieces_played"] as? Int == 0,
+              (status["audio_chunks"] as? [[String: Int]])?.count == 2, !service.hasNarration,
+              request("DELETE", path).status == 200, request("GET", path + "/chunks/0").status == 404 else { return 1 }
+        let next = try submit(), nextPath = "/v1/narrations/" + next
+        let chunk = worker.requests.last!.path.path + ".part-0.pcm"
+        try pcm.write(to: URL(fileURLWithPath: chunk))
+        worker.emit(TTSWorkerEvent(event: "partial", id: next, path: chunk, chunk: 0, samples: 4, sampleRate: 24000))
+        try await Task.sleep(for: .milliseconds(30))
+        guard request("GET", nextPath + "/chunks/0").status == 200,
+              request("DELETE", nextPath).status == 200,
+              request("GET", nextPath + "/chunks/0").status == 404,
+              !FileManager.default.fileExists(atPath: chunk), worker.stopped else { return 1 }
+        print("PASS whole-sentence streaming, early PCM, auth, ordering, completion, and partial cancellation")
+        return 0
+    } catch { print("FAIL narration streaming: \(error)"); return 1 }
 }

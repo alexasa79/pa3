@@ -151,7 +151,7 @@ enum NarrationText {
                     guard start < end else { break }
                     let streaming = input.output == "pieces"
                     let budget = streaming ? (pieces.isEmpty ? 64 : 96) : (pieces.isEmpty ? 160 : 300)
-                    let limit = text.index(start, offsetBy: budget, limitedBy: end) ?? end
+                    let limit = input.output == "stream" ? end : (text.index(start, offsetBy: budget, limitedBy: end) ?? end)
                     var cut = limit
                     if limit < end {
                         if streaming {

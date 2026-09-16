@@ -7,13 +7,16 @@ struct TTSWorkerEvent: Codable, Sendable {
     var path: String?
     var error: String?
     var retryable: Bool?
+    var chunk: Int?
+    var samples: Int?
+    var sampleRate: Int?
 }
 
 protocol NarrationWorker: AnyObject {
     var id: UUID { get }
     func start() throws
     func stop()
-    func generate(id: String, text: String, voice: String, language: String, instruct: String?, path: URL, pause: Double, seed: Int)
+    func generate(id: String, text: String, voice: String, language: String, instruct: String?, path: URL, pause: Double, seed: Int, stream: Bool)
 }
 
 final class TTSWorker: NarrationWorker, @unchecked Sendable {
@@ -22,6 +25,7 @@ final class TTSWorker: NarrationWorker, @unchecked Sendable {
     private var process: Process?
     private var input: FileHandle?
     private var stopped = false
+    private var streamingPaths: Set<String> = [] // accessed only on writer
     private var pauses: [String: Double] = [:] // accessed only on writer
     private let writer = DispatchQueue(label: "pa3.tts.native")
     private let onEvent: @Sendable (UUID, TTSWorkerEvent) -> Void
@@ -77,7 +81,7 @@ final class TTSWorker: NarrationWorker, @unchecked Sendable {
         readLines(responses.fileHandleForReading, diagnostics: false)
     }
 
-    func generate(id requestID: String, text: String, voice: String, language: String, instruct: String?, path: URL, pause: Double, seed: Int = 7) {
+    func generate(id requestID: String, text: String, voice: String, language: String, instruct: String?, path: URL, pause: Double, seed: Int = 7, stream: Bool = false) {
         writer.async { [self] in
             do {
                 lock.lock()
@@ -87,8 +91,8 @@ final class TTSWorker: NarrationWorker, @unchecked Sendable {
                       (instruct ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let input else {
                     throw NarrationText.Invalid("Invalid native narration request")
                 }
-                pauses[path.path] = pause
-                var data = try JSONSerialization.data(withJSONObject: ["id": requestID, "text": text, "language": languageCode, "path": path.path, "seed": seed])
+                if stream { streamingPaths.insert(path.path) } else { pauses[path.path] = pause }
+                var data = try JSONSerialization.data(withJSONObject: ["id": requestID, "text": text, "language": languageCode, "path": path.path, "seed": seed, "stream": stream])
                 data.append(10)
                 try input.write(contentsOf: data)
             } catch { onEvent(id, TTSWorkerEvent(event: "error", error: "Could not send narration request: \(error)")) }
@@ -121,7 +125,7 @@ final class TTSWorker: NarrationWorker, @unchecked Sendable {
         guard !cancelled else { return }
         do {
             let event = try JSONDecoder().decode(TTSWorkerEvent.self, from: line)
-            if event.event == "audio", let path = event.path {
+            if event.event == "audio", let path = event.path, streamingPaths.remove(path) == nil {
                 guard let pause = pauses.removeValue(forKey: path) else { throw NarrationText.Invalid("Unexpected audio path") }
                 try NarrationAudio.trim(URL(fileURLWithPath: path), pause: pause)
             }
