@@ -10,9 +10,9 @@
   const SENTENCE_PAUSE_MS = 500;
   const PARAGRAPH_LEAD_IN_MS = 0;
   const PARAGRAPH_LEAD_OUT_MS = 400;
-  const WORD_UNDERLINE_WINDOW_CHARS = 30;
-  const WORD_UNDERLINE_EDGE_CHARS = 8;
-  const WORD_UNDERLINE_MIN_STRENGTH = 0.02;
+  const WORD_FOCUS_WINDOW_CHARS = 30;
+  const WORD_FOCUS_EDGE_CHARS = 8;
+  const WORD_FOCUS_MIN_STRENGTH = 0.02;
   const HIGHLIGHT_MODE_LIGHT = "light";
   const HIGHLIGHT_MODE_DARK = "dark";
   const DEFAULT_OL_START = 1;
@@ -664,6 +664,17 @@
         match = matcher.exec(text);
       }
     }
+    // Tint the spaces along with their preceding word. This also covers text
+    // nodes containing only whitespace between inline elements, so the active
+    // phrase forms one continuous band instead of separate islands of color.
+    if (ranges.length) {
+      ranges[0].start = entries[0].startOffset;
+      for (let index = 0; index < ranges.length; index += 1) {
+        ranges[index].end = index + 1 < ranges.length
+          ? ranges[index + 1].start
+          : entries[entries.length - 1].endOffset;
+      }
+    }
     return ranges;
   }
 
@@ -879,7 +890,7 @@
     }
 
     const clampedProgress = Math.max(0, Math.min(1, progress));
-    const windowLength = Math.max(1, Math.min(WORD_UNDERLINE_WINDOW_CHARS, sentenceLength));
+    const windowLength = Math.max(1, Math.min(WORD_FOCUS_WINDOW_CHARS, sentenceLength));
     const maxStart = Math.max(0, sentenceLength - windowLength);
     const desiredStart = (clampedProgress * sentenceLength) - (windowLength * 0.5);
     const focusStart = Math.max(0, Math.min(desiredStart, maxStart));
@@ -892,14 +903,14 @@
         entry.endOffset,
         focusStart,
         focusEnd,
-        WORD_UNDERLINE_EDGE_CHARS
+        WORD_FOCUS_EDGE_CHARS
       );
       if (!Number.isFinite(strength)) {
         console.error("Reedah: Invalid word focus strength.");
         clearWordFocusStyles(entry.span);
         continue;
       }
-      if (strength <= WORD_UNDERLINE_MIN_STRENGTH) {
+      if (strength <= WORD_FOCUS_MIN_STRENGTH) {
         clearWordFocusStyles(entry.span);
         continue;
       }

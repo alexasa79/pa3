@@ -11,7 +11,7 @@ export async function checkParagraphs(call) {
     await new Promise(resolve=>setTimeout(resolve,50));
   }
   const setup=`globalThis.chrome={runtime:{onMessage:{addListener(){}},sendMessage(){}}};`;
-  const content=scripts.pop().replace(/\}\)\(\);\s*$/,`globalThis.candidateTest={getCandidates,getNextCandidate,getPreviousCandidate,getFullText,highlightSentence,clearHighlight,enable,state};})();`);
+  const content=scripts.pop().replace(/\}\)\(\);\s*$/,`globalThis.candidateTest={getCandidates,getNextCandidate,getPreviousCandidate,getFullText,highlightSentence,applyHighlightWordFocus,clearHighlight,enable,state};})();`);
   const loaded=await call('Runtime.evaluate',{expression:setup+scripts.join('\n')+'\n'+content});
   assert.ok(!loaded.exceptionDetails,JSON.stringify(loaded.exceptionDetails));
   const result=await call('Runtime.evaluate',{expression:`(() => {

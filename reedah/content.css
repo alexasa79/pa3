@@ -50,14 +50,14 @@
 
 .reedah-highlight.reedah-highlight-on-light {
   --reedah-highlight-base: rgba(219, 234, 254, 0.93);
-  --reedah-word-underline: rgba(59, 130, 246, 0.62);
-  --reedah-word-underline-strong: rgba(37, 99, 235, 0.95);
+  --reedah-word-focus-rgb: 59, 130, 246;
+  --reedah-word-focus-opacity: 0.26;
 }
 
 .reedah-highlight.reedah-highlight-on-dark {
   --reedah-highlight-base: rgba(18, 35, 68, 0.91);
-  --reedah-word-underline: rgba(147, 197, 253, 0.7);
-  --reedah-word-underline-strong: rgba(191, 219, 254, 0.98);
+  --reedah-word-focus-rgb: 96, 165, 250;
+  --reedah-word-focus-opacity: 0.3;
 }
 
 .reedah-highlight.reedah-highlight-start {
@@ -71,31 +71,15 @@
 }
 
 .reedah-highlight-word {
-  position: relative;
+  display: inline;
   --reedah-word-focus: 0;
-}
-
-.reedah-highlight-word::after {
-  content: "";
-  position: absolute;
-  left: -0.16em;
-  right: -0.16em;
-  bottom: 0.01em;
-  height: calc(0.06em + (var(--reedah-word-focus) * 0.08em));
-  border-radius: 999px;
-  opacity: var(--reedah-word-focus);
-  transform: scaleX(calc(0.72 + (var(--reedah-word-focus) * 0.5)));
-  transform-origin: center;
-  pointer-events: none;
-  background: linear-gradient(
-    90deg,
-    rgba(0, 0, 0, 0) 0%,
-    var(--reedah-word-underline) 18%,
-    var(--reedah-word-underline-strong) 50%,
-    var(--reedah-word-underline) 82%,
-    rgba(0, 0, 0, 0) 100%
+  background-color: rgba(
+    var(--reedah-word-focus-rgb),
+    calc(var(--reedah-word-focus) * var(--reedah-word-focus-opacity))
   );
-  transition: opacity 70ms linear, transform 70ms linear, height 70ms linear;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  transition: background-color 90ms linear;
 }
 
 .reedah-overlay__icon {
