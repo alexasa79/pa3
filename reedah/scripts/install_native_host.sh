@@ -6,7 +6,7 @@ if [[ ! "$EXTENSION_ID" =~ ^[a-p]{32}$ ]]; then
   echo "Expected a Chrome extension ID (32 lowercase letters a-p)." >&2
   exit 1
 fi
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
 HOST_PATH="$ROOT_DIR/native/reedah_native_host.py"
 MANIFEST_DIR="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
 MANIFEST_PATH="$MANIFEST_DIR/com.reedah.sayer.json"

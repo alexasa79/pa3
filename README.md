@@ -1,6 +1,14 @@
 # pa3
 
-Native macOS personal assistant dictation app copied from `pa2`.
+Native macOS dictation and narration, with the Reedah Chrome extension for reading web pages aloud. PA3 runs Whisper and Qwen locally; Reedah requests narration through a small native messaging bridge and plays the audio in Chrome.
+
+## Repository layout
+
+- `Sources/`, `Native/`, and `Resources/`: the PA3 macOS app and native speech helper.
+- `reedah/`: the Chrome extension, Python native messaging bridge, and extension tests.
+- `Tools/` and `Tests/`: app setup and validation tools.
+
+Reedah is a regular directory in this repository. Its original Git history is preserved; there is no submodule or separate checkout to update. App and extension changes can be reviewed and committed together while keeping their builds separate.
 
 ## Build and Run
 
@@ -26,7 +34,17 @@ The app stays resident after paste. Use `Ctrl+Option+Command+P` to show it again
 
 ## Testing
 
-`make test` builds and runs unit tests and a local HTTP download fixture. It checks segmentation, model download progress, integrity verification, interrupted transfers, cancellation, retry, and the missing-model microphone guard.
+Run `make test` from this repository's root to check both PA3 and Reedah. It requires the Homebrew speech tools, installed Qwen models, Node.js, and Python 3. The app checks include segmentation, HTTP framing, pronunciation, model-backed streaming decoder comparisons, model download integrity, interrupted transfers, cancellation, retry, and the missing-model microphone guard. The extension checks cover text extraction, highlighting, audio playback, and native bridge lifecycle.
+
+| Command | Scope |
+| --- | --- |
+| `make test` | PA3 checks plus Reedah JavaScript and Python tests. |
+| `make pa3-test` | PA3 checks only. |
+| `make reedah-test` | Reedah JavaScript and Python tests only; no running app or models needed. |
+| `make browser-test` | Audio, paragraph detection, and highlighting in isolated headless Chrome; requires Node.js 22+ and Chrome. Set `CHROME` for a custom executable. |
+| `make integration-test` | Reedah bridge → running PA3 → real Qwen audio, including flow control and independent cancellation. Run with PA3 ready and idle; this does not play sound. |
+
+See [Reedah setup](reedah/README.md) to install the extension and register its native bridge. Browser and live-model integration checks are explicit targets because they need Chrome or a running PA3 instance.
 
 `make replay-test` pushes spoken clips through the real transcription worker and checks that every cut lands in silence and that the words match the reference. Clips are built with the macOS `say` command by `make fixtures` and land in `Tests/fixtures`, together with `.txt` files holding the words spoken. The test needs the Homebrew speech tools and installed Whisper model. It uses recorded audio without opening the microphone.
 
@@ -85,7 +103,7 @@ The previous named preset voices and `Auto` language are no longer supported and
 
 Reedah can request `"output":"audio"` to generate a WAV without PA3 playing it. This mode accepts up to 4,000 characters per request. Poll the job until `completed`, then fetch `/v1/narrations/ID/audio` with the same bearer token. The response is `audio/wav`; DELETE the job after downloading to release the file. Audio expires after five minutes, and exports are limited to 32 MiB per job and 128 MiB of retained/generated audio. `pieces_generated` reports generation progress; `pieces_played` stays zero for audio-only jobs. The default `"output":"playback"` keeps normal PA3 playback. Audio-only completion means generation finished, not that a client has played the audio.
 
-Reedah's Chrome native messaging bridge uses this API and keeps the token outside the browser. Chrome handles playback, pause, navigation, and speed. The bridge requires only Python 3's standard library; Qwen runs exclusively in PA3. Install the bridge and reload the extension as described in Reedah's `native/README.md`.
+Reedah's Chrome native messaging bridge uses this API and keeps the token outside the browser. Chrome handles playback, pause, navigation, and speed. The bridge requires only Python 3's standard library; Qwen runs exclusively in PA3. Follow [Reedah setup](reedah/README.md) to install it. The [bridge documentation](reedah/native/README.md) describes streaming and playback flow control.
 
 Jobs can be queued, loading, generating, playing, completed, cancelled, or failed. Completion means playback finished. Generation can overlap playback. History keeps the latest 100 jobs in memory; restarting clears it. The queue holds ten waiting jobs, plus one active job. Requests allow 100,000 text characters and 512 KB of JSON. Queue overflow returns 429; invalid fields return 422; missing runtime files return 503.
 

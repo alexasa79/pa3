@@ -12,7 +12,7 @@ PA3_MODEL_DIR ?= $(HOME)/Library/Application Support/PA3/models
 CODESIGN_CERT_DAYS ?= 3650
 CODESIGN_P12_PASSWORD ?= pa3-local-codesign
 
-.PHONY: all build native-narrator app icons speech-tools-check speech-setup tts-setup codesign-identity clean run test fixtures replay-test narration-test native-stream-test decoder-test
+.PHONY: all build native-narrator app icons speech-tools-check speech-setup tts-setup codesign-identity clean run test pa3-test reedah-test browser-test integration-test reedah-install fixtures replay-test narration-test native-stream-test decoder-test
 
 all: app
 
@@ -31,11 +31,26 @@ native-stream-test:
 decoder-test: native-stream-test
 	.build/native/narration-stream-test "$(PA3_MODEL_DIR)/qwen3-tts/Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf" "$(PA3_MODEL_DIR)/qwen3-tts/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf"
 
-test: decoder-test
+test: pa3-test reedah-test
+
+pa3-test: decoder-test
 	swift build
 	.build/debug/pa3 --whisper-text-test
 	.build/debug/pa3 --narration-recovery-test
 	.build/debug/pa3 --model-download-test
+
+reedah-test:
+	$(MAKE) -C reedah test
+
+browser-test:
+	$(MAKE) -C reedah browser-test
+
+integration-test:
+	$(MAKE) -C reedah integration-test
+
+reedah-install:
+	@test -n "$(EXTENSION_ID)" || { echo 'Usage: make reedah-install EXTENSION_ID=<chrome-extension-id>'; exit 1; }
+	./reedah/scripts/install_native_host.sh "$(EXTENSION_ID)"
 
 tts-setup: speech-setup
 
