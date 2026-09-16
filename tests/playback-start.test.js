@@ -14,7 +14,14 @@ function setup(realAudio = false) {
     ReedahPlaybackHistory:'playback_history', ReedahControlsNavigation:'controls_navigation',
     ReedahNarrationText:'narration_text'
   })) window[name] = require('../' + file);
+  const streamContext = {currentTime:0, destination:{}, resume:async()=>{},
+    createBuffer() { return {copyToChannel() {}}; },
+    createBufferSource() { return {playbackRate:{},connect(){},disconnect(){},start(){},stop(){}}; }};
+  const {StreamAudio} = require('../stream_audio');
   const context = vm.createContext({window, console,
+    ReedahStreamAudio:{StreamAudio:class extends StreamAudio {
+      constructor(options) { super({...options, getContext:()=>streamContext}); }
+    }},
     document:{readyState:'complete'},
     chrome:{runtime:{onMessage:{addListener() {}}, sendMessage() {}}},
     setTimeout(callback) { timers.push(callback); },
@@ -36,7 +43,7 @@ function setup(realAudio = false) {
     startHighlightWordFocusLoop = () => {};
     updateControls = () => {};
     createAudioUrl = text => text;
-    globalThis.queueTest = {state, maybeStartPlayback, skipSentence, enqueueAudio};
+    globalThis.queueTest = {state, maybeStartPlayback, skipSentence, enqueueAudio, handleSessionMessage, stopNativeNarration, rememberPlayed, trimStreamHistory};
   })();`), context);
   const {state, maybeStartPlayback} = context.queueTest;
   state.playbackId = 1;
@@ -109,4 +116,37 @@ test('skip omits queued and late pieces of the same sentence', () => {
   assert.deepEqual(Array.from(state.playedHistory, x => x.url), ['a','b','late']);
   enqueueAudio(session, {audioBase64:'next',index:1,pieceIndex:0,pieceCount:1});
   assert.equal(state.currentAudio.src, 'next');
+});
+
+test('content keeps all PCM blocks in one sentence player and skip suppresses late blocks', async () => {
+  const {state, handleSessionMessage, skipSentence, stopNativeNarration} = setup(true);
+  const session = {utteranceId:'stream', active:true, playbackId:1, streams:new Map(), audioQueue:state.audioQueue};
+  state.activeSession=session;
+  const pcm = Buffer.alloc(24000 * 4).toString('base64');
+  const message = {type:'audio',stream:true,index:0,pieceIndex:0,sampleRate:24000,samples:24000,audioBase64:pcm,length:100,rate:1};
+  handleSessionMessage(session, message); await Promise.resolve();
+  const first=state.currentAudio;
+  handleSessionMessage(session, {...message,pieceIndex:1});
+  assert.equal(state.currentAudio,first); assert.equal(first.buffers.length,2); assert.equal(state.audioQueue.length,0);
+  skipSentence();
+  handleSessionMessage(session,{...message,pieceIndex:2});
+  assert.equal(state.currentAudio,null); assert.equal(first.playing,false);
+  handleSessionMessage(session,{type:'audio_end',index:0,chunks:3});
+  handleSessionMessage(session,{...message,index:1}); await Promise.resolve();
+  assert.notEqual(state.currentAudio,first);
+  stopNativeNarration();
+  assert.equal(first.disposed,true);
+});
+
+test('finished sentences return exactly one queue slot and old replay audio is released', () => {
+  const {state,rememberPlayed,trimStreamHistory}=setup(true), sent=[], freed=[];
+  state.activeSession={port:{postMessage:m=>sent.push(m)},streams:new Map()};
+  for(let i=0;i<6;i++) {
+    const item={index:i,url:`stream:${i}`,stream:{finished:true,dispose:()=>freed.push(i)}};
+    state.activeSession.streams.set(i,item);rememberPlayed(item);rememberPlayed(item);
+  }
+  trimStreamHistory();
+  assert.deepEqual(sent.map(m=>m.index),[0,1,2,3,4,5]);
+  assert.deepEqual(freed,[0,1,2,3]);
+  assert.equal(state.playedHistory.length,2); assert.equal(state.activeSession.streams.size,2);
 });

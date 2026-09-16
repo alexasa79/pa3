@@ -85,8 +85,8 @@ class PA3Client:
                 detail = json.loads(data).get("error", "Request failed")
                 raise RuntimeError(f"PA3 HTTP {response.status}: {detail}")
             if audio:
-                if response.getheader("Content-Type") != "audio/wav" or not data.startswith(b"RIFF"):
-                    raise ValueError("PA3 did not return WAV audio")
+                if response.getheader("Content-Type") != "application/octet-stream" or not data or len(data) % 4:
+                    raise ValueError("PA3 did not return float32 PCM audio")
                 return data
             return json.loads(data)
         finally:
@@ -96,6 +96,7 @@ class PA3Client:
 def validate_jobs(value):
     if not isinstance(value, list) or not value or len(value) > 1000:
         raise ValueError("Expected 1–1000 sentence jobs")
+    indices = set()
     for job in value:
         if not isinstance(job, dict) or not isinstance(job.get("text"), str) or not job["text"].strip():
             raise ValueError("Each sentence needs text")
@@ -104,10 +105,43 @@ def validate_jobs(value):
         for key in ("index", "location", "length"):
             if type(job.get(key)) is not int or job[key] < 0:
                 raise ValueError("Invalid sentence position")
+        if job["index"] in indices: raise ValueError("Duplicate sentence index")
+        indices.add(job["index"])
     return value
 
 
-def narrate(message, messenger, cancelled, client_factory=PA3Client):
+class SentenceWindow:
+    """Bound unconsumed sentences; the browser returns a slot after play/skip."""
+    def __init__(self, limit=2):
+        self.condition = threading.Condition()
+        self.pending = set()
+        self.set_limit(limit)
+
+    def set_limit(self, limit):
+        if type(limit) is not int or not 1 <= limit <= 2:
+            raise ValueError("Sentence window must be 1 or 2")
+        with self.condition:
+            self.limit = limit
+            self.condition.notify_all()
+
+    def acquire(self, index, cancelled):
+        with self.condition:
+            while len(self.pending) >= self.limit:
+                if cancelled.is_set(): return False
+                self.condition.wait(0.05)
+            if cancelled.is_set(): return False
+            self.pending.add(index)
+            return True
+
+    def consumed(self, index):
+        with self.condition:
+            if type(index) is not int or index not in self.pending:
+                raise ValueError("Unexpected consumed sentence")
+            self.pending.remove(index)
+            self.condition.notify_all()
+
+
+def narrate(message, messenger, cancelled, client_factory=PA3Client, flow=None):
     utterance = message.get("utteranceId")
     client = None
     path = None
@@ -116,13 +150,14 @@ def narrate(message, messenger, cancelled, client_factory=PA3Client):
         if not isinstance(utterance, str) or not utterance:
             raise ValueError("Missing utterance ID")
         jobs = validate_jobs(message.get("sentenceJobs"))
+        flow = flow or SentenceWindow(message.get("window", 2))
         client = client_factory()
         messenger.send({"event": "started", "utteranceId": utterance,
                         "voiceName": "PA3 · American senior engineer", "voiceIdentifier": "senior-engineer-american"})
         for sentence in jobs:
-            if cancelled.is_set():
+            if not flow.acquire(sentence["index"], cancelled):
                 return
-            result = client.request("POST", "/v1/narrations", {"text": sentence["text"], "output": "pieces"})
+            result = client.request("POST", "/v1/narrations", {"text": sentence["text"], "output": "stream"})
             job_id = result.get("id")
             if not isinstance(job_id, str) or not job_id or any(c not in "0123456789abcdef-" for c in job_id):
                 raise ValueError("PA3 returned an invalid job ID")
@@ -134,17 +169,19 @@ def narrate(message, messenger, cancelled, client_factory=PA3Client):
                     return
                 if result["state"] in ("failed", "cancelled"):
                     raise RuntimeError(result.get("error", "PA3 narration " + result["state"]))
-                pieces = result.get("audio_pieces")
-                total = result.get("pieces")
-                if not isinstance(pieces, list) or type(total) is not int or total < 1 or len(pieces) > total or len(pieces) < sent:
+                pieces = result.get("audio_chunks")
+                if not isinstance(pieces, list) or len(pieces) < sent:
                     raise ValueError("PA3 returned invalid audio piece metadata")
                 while sent < len(pieces):
                     if cancelled.is_set():
                         return
                     bounds = pieces[sent]
-                    if not (0 <= bounds["start"] < bounds["end"] <= 1):
-                        raise ValueError("PA3 returned invalid audio progress")
-                    audio = client.request("GET", path + "/audio/" + str(sent), audio=True)
+                    samples, rate = bounds.get("samples"), bounds.get("sample_rate")
+                    if type(samples) is not int or not 0 < samples <= 192000 or rate != 24000:
+                        raise ValueError("PA3 returned invalid PCM metadata")
+                    audio = client.request("GET", path + "/chunks/" + str(sent), audio=True)
+                    if len(audio) != samples * 4:
+                        raise ValueError("PA3 returned truncated PCM audio")
                     encoded = base64.b64encode(audio).decode("ascii")
                     chunk_size = 256 * 1024
                     for part, offset in enumerate(range(0, len(encoded), chunk_size)):
@@ -152,14 +189,15 @@ def narrate(message, messenger, cancelled, client_factory=PA3Client):
                             return
                         messenger.send({"event": "audio_chunk", "utteranceId": utterance,
                                         "index": sentence["index"], "location": sentence["location"], "length": sentence["length"],
-                                        "pieceIndex": sent, "pieceCount": total,
-                                        "progressStart": bounds["start"], "progressEnd": bounds["end"],
+                                        "pieceIndex": sent, "stream": True, "samples": samples, "sampleRate": rate,
                                         "part": part, "final": offset + chunk_size >= len(encoded),
                                         "audioBase64": encoded[offset:offset + chunk_size]})
                     sent += 1
                 if result["state"] == "completed":
-                    if sent != total:
-                        raise ValueError("PA3 completed with missing audio pieces")
+                    if not sent:
+                        raise ValueError("PA3 completed without audio")
+                    messenger.send({"event": "audio_end", "utteranceId": utterance,
+                                    "index": sentence["index"], "chunks": sent})
                     break
                 if cancelled.wait(0.05):
                     return
@@ -190,14 +228,20 @@ def main():
     messenger = NativeMessenger()
     cancelled = threading.Event()
     worker = None
+    flow = None
     try:
         while (message := messenger.read_message()) is not None:
             if message.get("action") == "stop":
                 cancelled.set()
+            elif message.get("action") == "consumed" and flow is not None:
+                flow.consumed(message.get("index"))
+            elif message.get("action") == "window" and flow is not None:
+                flow.set_limit(message.get("window"))
             elif message.get("action") == "speak":
                 if worker is not None:
                     raise ValueError("Use a new connection for each narration")
-                worker = threading.Thread(target=narrate, args=(message, messenger, cancelled))
+                flow = SentenceWindow(message.get("window", 2))
+                worker = threading.Thread(target=narrate, args=(message, messenger, cancelled), kwargs={"flow": flow})
                 worker.start()
             else:
                 raise ValueError("Unknown native action")

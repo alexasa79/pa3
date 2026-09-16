@@ -13,9 +13,18 @@ function setup() {
   }
   for (const [, id] of html.matchAll(/id="([^"]+)"/g)) elements.set(id, element());
   const writes = [], messages = [], reads = [];
-  const port = {onMessage:{addListener() {}}, onDisconnect:{addListener() {}},
+  let onMessage;
+  const port = {onMessage:{addListener(fn) { onMessage=fn; }}, onDisconnect:{addListener() {}},
     postMessage(message) { messages.push(message); }, disconnect() {}};
-  const context = vm.createContext({console,
+  const nodes=[];
+  const audioContext={currentTime:0,destination:{},resume:async()=>{},
+    createBuffer() { return {copyToChannel(){}}; },
+    createBufferSource() { const node={playbackRate:{},start(){},stop(){},connect(){},disconnect(){}}; nodes.push(node); return node; }};
+  const {StreamAudio}=require('../stream_audio');
+  const context = vm.createContext({console, URL:{revokeObjectURL(){}},
+    ReedahStreamAudio:{unlock:()=>Promise.resolve(),StreamAudio:class extends StreamAudio {
+      constructor(options) {super({...options,getContext:()=>audioContext});}
+    }},
     document:{getElementById(id) { assert.ok(elements.has(id), `Missing element: ${id}`); return elements.get(id); },
       documentElement:{dataset:{}}, addEventListener() {}, createElement:element, createTextNode(text) { return {textContent:text}; }},
     window:{setTimeout() {}, clearTimeout() {}, setInterval() {}, clearInterval() {}},
@@ -25,7 +34,7 @@ function setup() {
     }}}
   });
   vm.runInContext(source, context);
-  return {context, elements, writes, messages, reads};
+  return {context, elements, writes, messages, reads, nodes, deliver:message=>onMessage(message)};
 }
 test('Qwen settings initialize without any voice picker or stored preset dependency', () => {
   const {elements, reads} = setup();
@@ -56,4 +65,18 @@ test('custom vocabulary displays plain spoken spellings without phoneme delimite
   vm.runInContext('vocabDraftEntries = [{spelling:"PA3", pronunciation:"P A three"}]; renderVocabList()', context);
   const row = elements.get('vocab-list').children[0];
   assert.equal(row.children[0].children[2].textContent, 'P A three');
+});
+
+test('settings preview plays one continuous PCM sentence and stops scheduled sources', async () => {
+  const {context,deliver,nodes}=setup();
+  vm.runInContext('startPreviewRequest({text:"PA3 is ready."})',context);
+  const message={type:'audio',stream:true,index:0,pieceIndex:0,samples:24000,sampleRate:24000,audioBase64:Buffer.alloc(96000).toString('base64')};
+  deliver(message); await Promise.resolve();
+  deliver({...message,pieceIndex:1});
+  assert.equal(nodes.length,2);
+  deliver({type:'audio_end',index:0,chunks:2});
+  deliver({type:'end'});
+  assert.equal(vm.runInContext('previewSession !== null',context),true);
+  vm.runInContext('stopPreview()',context);
+  assert.equal(vm.runInContext('previewSession',context),null);
 });

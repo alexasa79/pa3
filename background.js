@@ -155,12 +155,20 @@ function relayServerEvent(port, event) {
       mimeType: event.mimeType || "audio/wav",
       location: event.location,
       length: event.length,
+      stream: event.stream,
+      samples: event.samples,
+      sampleRate: event.sampleRate,
       pieceIndex: event.pieceIndex,
       pieceCount: event.pieceCount,
       progressStart: event.progressStart,
       progressEnd: event.progressEnd,
       rate: event.rate
     });
+    return;
+  }
+
+  if (event.event === "audio_end") {
+    port.postMessage({type: "audio_end", utteranceId: event.utteranceId, index: event.index, chunks: event.chunks});
     return;
   }
 
@@ -211,9 +219,27 @@ chrome.runtime.onConnect.addListener((port) => {
       return;
     }
 
+    if (message.type === "consumed" || message.type === "window") {
+      if (!session) return;
+      try {
+        if (message.type === "window") {
+          if (![1, 2].includes(message.window)) throw new Error("Invalid sentence window");
+          session.window = message.window;
+          session.host?.postMessage({action:"window", window:message.window});
+        } else if (!session.consumed.has(message.index)) {
+          session.host?.postMessage({action:"consumed", index:message.index});
+          session.consumed.add(message.index);
+        }
+      } catch (error) {
+        console.error("Reedah: Playback flow control failed.", error);
+        port.postMessage({type:"error", error:"flow_control", details:error.message});
+        stopSession();
+      }
+      return;
+    }
     if (message.type !== "start") return;
     stopSession();
-    const current = {};
+    const current = {window:message.window ?? 2, consumed:new Set()};
     session = current;
 
     const text = typeof message.text === "string" ? message.text.trim() : "";
@@ -358,7 +384,7 @@ chrome.runtime.onConnect.addListener((port) => {
         port.postMessage({ type: "error", utteranceId, error: "bridge_unavailable",
           details: error?.message || "PA3 bridge disconnected. Install the native host and start PA3." });
       });
-      host.postMessage({ action: "speak", utteranceId, sentenceJobs });
+      host.postMessage({ action: "speak", utteranceId, sentenceJobs, window:current.window });
     } catch (error) {
       console.error("Reedah: Could not connect to PA3 bridge.", error);
       port.postMessage({ type: "error", utteranceId, error: "bridge_unavailable", details: error.message });

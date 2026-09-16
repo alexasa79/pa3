@@ -4,7 +4,7 @@ import json
 import struct
 import threading
 import unittest
-from native.reedah_native_host import NativeMessenger, narrate, validate_jobs
+from native.reedah_native_host import NativeMessenger, SentenceWindow, narrate, validate_jobs
 
 
 class Messenger:
@@ -13,7 +13,7 @@ class Messenger:
 
 
 class Client:
-    def __init__(self, state="completed", audio=b"RIFF" + b"x" * 900000):
+    def __init__(self, state="completed", audio=b"\0" * 600000):
         self.calls = []
         self.state = state
         self.audio = audio
@@ -21,7 +21,7 @@ class Client:
         self.calls.append((method, path, payload))
         if method == "DELETE": return {}
         if audio: return self.audio
-        return {"id": "abc-123", "state": self.state, "error": "fixture failure", "pieces": 1, "audio_pieces": [{"start": 0, "end": 1}]}
+        return {"id": "abc-123", "state": self.state, "error": "fixture failure", "audio_chunks": [{"samples": len(self.audio) // 4, "sample_rate": 24000}]}
 
 
 class HostTests(unittest.TestCase):
@@ -31,7 +31,7 @@ class HostTests(unittest.TestCase):
     def test_audio_is_chunked_and_job_released(self):
         client, messenger = Client(), Messenger()
         narrate(self.message(), messenger, threading.Event(), lambda: client)
-        self.assertEqual(client.calls[0][2], {"text": "P A three", "output": "pieces"})
+        self.assertEqual(client.calls[0][2], {"text": "P A three", "output": "stream"})
         chunks = [e for e in messenger.events if e["event"] == "audio_chunk"]
         self.assertGreater(len(chunks), 1)
         self.assertEqual(base64.b64decode("".join(c["audioBase64"] for c in chunks)), client.audio)
@@ -48,8 +48,7 @@ class HostTests(unittest.TestCase):
         class SequentialClient(Client):
             def request(inner, method, path, payload=None, audio=False):
                 if method == "POST" and any(call[0] == "POST" for call in inner.calls):
-                    self.assertEqual(messenger.events[-1]["event"], "audio_chunk")
-                    self.assertTrue(messenger.events[-1]["final"])
+                    self.assertEqual(messenger.events[-1]["event"], "audio_end")
                     self.assertEqual(messenger.events[-1]["index"], 2)
                 return super().request(method, path, payload, audio)
         message = self.message()
@@ -67,17 +66,17 @@ class HostTests(unittest.TestCase):
                 result = super().request(method, path, payload, audio)
                 if audio or method == "DELETE": return result
                 if method == "POST":
-                    return {"id": "abc-123", "state": "generating", "pieces": 2,
-                            "audio_pieces": [{"start": 0, "end": 0.4}]}
+                    return {"id": "abc-123", "state": "generating", "audio_chunks": [{"samples":2, "sample_rate":24000}]}
                 self.assertEqual(messenger.events[-1]["event"], "audio_chunk")
                 self.assertEqual(messenger.events[-1]["pieceIndex"], 0)
-                return {"id": "abc-123", "state": "completed", "pieces": 2,
-                        "audio_pieces": [{"start": 0, "end": 0.4}, {"start": 0.4, "end": 1}]}
+                return {"id": "abc-123", "state": "completed", "audio_chunks": [{"samples":2, "sample_rate":24000}, {"samples":2, "sample_rate":24000}]}
         client = ProgressiveClient(audio=b"RIFFtest")
         narrate(self.message(), messenger, threading.Event(), lambda: client)
         chunks = [e for e in messenger.events if e["event"] == "audio_chunk"]
         self.assertEqual([e["pieceIndex"] for e in chunks], [0, 1])
-        self.assertEqual([e["progressEnd"] for e in chunks], [0.4, 1])
+        self.assertEqual([e["samples"] for e in chunks], [2, 2])
+        self.assertTrue(all(e["stream"] for e in chunks))
+        self.assertEqual(messenger.events[-2]["event"], "audio_end")
         self.assertEqual(messenger.events[-1]["event"], "finished")
 
     def test_failure_stops_and_cancels_only_own_job(self):
@@ -99,6 +98,17 @@ class HostTests(unittest.TestCase):
         self.assertEqual(client.calls[-1][:2], ("DELETE", "/v1/narrations/abc-123"))
         self.assertFalse(any(e["event"] == "audio_chunk" for e in messenger.events))
 
+    def test_rejects_pcm_size_mismatch_and_cleans_up(self):
+        class TruncatedClient(Client):
+            def request(inner, method, path, payload=None, audio=False):
+                result = super().request(method, path, payload, audio)
+                return result[:-4] if audio else result
+        client, messenger = TruncatedClient(), Messenger()
+        narrate(self.message(), messenger, threading.Event(), lambda: client)
+        self.assertEqual(messenger.events[-1]["event"], "error")
+        self.assertEqual(client.calls[-1][0], "DELETE")
+        self.assertFalse(any(e["event"] == "audio_chunk" for e in messenger.events))
+
     def test_no_request_when_already_cancelled(self):
         cancelled = threading.Event(); cancelled.set()
         client = Client()
@@ -118,6 +128,45 @@ class HostTests(unittest.TestCase):
     def test_invalid_sentence_jobs(self):
         for value in [[], None, [{"text": "hello", "index": True, "location": 0, "length": 5}]]:
             with self.assertRaises(ValueError): validate_jobs(value)
+
+
+class FlowTests(unittest.TestCase):
+    def test_generation_waits_for_playback_and_stop_interrupts_wait(self):
+        flow = SentenceWindow(1)
+        cancel, acquired = threading.Event(), threading.Event()
+        self.assertTrue(flow.acquire(0, cancel))
+        worker = threading.Thread(target=lambda: (flow.acquire(1, cancel), acquired.set()))
+        worker.start()
+        self.assertFalse(acquired.wait(0.1))
+        flow.consumed(0)
+        self.assertTrue(acquired.wait(1)); worker.join()
+        acquired.clear()
+        worker = threading.Thread(target=lambda: (flow.acquire(2, cancel), acquired.set()))
+        worker.start(); self.assertFalse(acquired.wait(0.1)); cancel.set()
+        self.assertTrue(acquired.wait(1)); worker.join()
+        self.assertEqual(flow.pending, {1})
+
+    def test_prefetch_can_promote_to_two_slots_and_rejects_duplicate_ack(self):
+        flow = SentenceWindow(1); cancel = threading.Event()
+        flow.acquire(0, cancel); flow.set_limit(2); flow.acquire(1, cancel)
+        flow.consumed(0)
+        with self.assertRaises(ValueError): flow.consumed(0)
+        with self.assertRaises(ValueError): flow.set_limit(100)
+
+    def test_long_paragraph_has_at_most_two_unconsumed_sentences(self):
+        flow = SentenceWindow(2); cancel = threading.Event()
+        produced, received = [], threading.Condition()
+        def generate():
+            for i in range(1000):
+                if not flow.acquire(i, cancel): return
+                with received: produced.append(i); received.notify_all()
+        worker = threading.Thread(target=generate); worker.start()
+        for i in range(1000):
+            with received:
+                self.assertTrue(received.wait_for(lambda: len(produced)>i, timeout=2))
+            self.assertLessEqual(len(produced)-i,2)
+            flow.consumed(i)
+        worker.join(timeout=2); self.assertFalse(worker.is_alive())
 
 
 if __name__ == "__main__": unittest.main()

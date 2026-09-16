@@ -19,7 +19,7 @@
       pending.part++;
       if (!event.final) return null;
       this.pending = null;
-      return { ...event, event: "audio", audioBase64: pending.chunks.join(""), mimeType: "audio/wav" };
+      return { ...event, event: "audio", audioBase64: pending.chunks.join(""), mimeType: event.stream ? "application/octet-stream" : "audio/wav" };
     }
   }
   const api = { Assembler };

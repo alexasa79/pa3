@@ -175,6 +175,8 @@ function createAudioUrl(base64, mimeType) {
 
 function closePreviewSession(session, sendStop) {
   session.closing = true;
+  for (const item of session.streams?.values() ?? []) item.stream.dispose();
+  session.streams?.clear();
 
   if (session.currentAudio) {
     try {
@@ -249,7 +251,8 @@ function playNextPreviewAudio(session) {
   }
 
   const audioUrl = session.audioQueue.shift();
-  const audio = new Audio();
+  const streamItem = [...session.streams.values()].find(item => item.url === audioUrl);
+  const audio = streamItem?.stream ?? new Audio();
   session.currentAudio = audio;
   session.currentAudioUrl = audioUrl;
   audio.src = audioUrl;
@@ -263,6 +266,16 @@ function playNextPreviewAudio(session) {
       session.currentAudioUrl = null;
     }
     session.currentAudio = null;
+    if (streamItem) {
+      try { session.port.postMessage({type:"consumed", index:streamItem.index}); }
+      catch (error) {
+        console.error("Reedah: Could not release preview queue slot.", error);
+        finishPreviewSession(session);
+        return;
+      }
+      streamItem.stream.dispose();
+      session.streams.delete(streamItem.index);
+    }
     playNextPreviewAudio(session);
   };
 
@@ -326,6 +339,7 @@ function startPreviewRequest({
     entryIndex,
     completed: false,
     closing: false,
+    streams: new Map(),
     audioQueue: [],
     currentAudio: null,
     currentAudioUrl: null,
@@ -333,6 +347,12 @@ function startPreviewRequest({
   };
   previewSession = session;
   refreshPreviewUi();
+  ReedahStreamAudio.unlock().catch(error => {
+    if (previewSession !== session) return;
+    console.error("Reedah: Could not activate streaming preview.", error);
+    finishPreviewSession(session);
+    setStatus("Could not activate audio.", true);
+  });
 
   port.onMessage.addListener((message) => {
     if (previewSession !== session) return;
@@ -360,6 +380,28 @@ function startPreviewRequest({
       return;
     }
 
+    if (message.type === "audio_end" || (message.type === "audio" && message.stream)) {
+      try {
+        let item = session.streams.get(message.index);
+        if (message.type === "audio_end") {
+          if (!item) throw new Error("Unknown preview stream");
+          item.stream.finish(message.chunks);
+        } else {
+          if (!item) {
+            item = {index:message.index, url:`reedah-preview:${message.index}`, stream:new ReedahStreamAudio.StreamAudio({playbackRate:session.rate})};
+            session.streams.set(message.index, item);
+            item.stream.append(message);
+            session.audioQueue.push(item.url);
+          } else item.stream.append(message);
+          playNextPreviewAudio(session);
+        }
+      } catch (error) {
+        console.error("Reedah: Invalid preview stream.", error);
+        finishPreviewSession(session);
+        setStatus("Streaming preview failed.", true);
+      }
+      return;
+    }
     if (message.type === "audio") {
       if (typeof message.audioBase64 !== "string" || !message.audioBase64) {
         finishPreviewSession(session);

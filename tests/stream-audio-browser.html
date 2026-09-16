@@ -1,0 +1,38 @@
+<!doctype html><meta charset="utf-8"><title>Reedah audio regression</title>
+<pre id="result">PENDING</pre>
+<script src="../time_stretch.js"></script><script src="../stream_audio.js"></script>
+<script>
+(async()=>{
+  try {
+    for (const speed of [0.5,1,1.5,2]) {
+      const offline=new OfflineAudioContext(1,Math.ceil((2/speed+0.2)*24000),24000);
+      const ctx={currentTime:0,destination:offline.destination,resume:async()=>{},
+        createBuffer:(...args)=>offline.createBuffer(...args),createBufferSource:()=>offline.createBufferSource()};
+      const budget=new ReedahStreamAudio.AudioBudget();
+      const stream=new ReedahStreamAudio.StreamAudio({getContext:()=>ctx,playbackRate:speed,budget});
+      const reference=[];
+      for(let part=0;part<2;part++) {
+        const samples=Float32Array.from({length:24000},(_,i)=>0.2*Math.sin(2*Math.PI*220*(i+part*24000)/24000));
+        const bytes=new Uint8Array(samples.buffer);let binary='';for(const b of bytes)binary+=String.fromCharCode(b);
+        stream.append({pieceIndex:part,samples:24000,sampleRate:24000,audioBase64:btoa(binary)});
+        if(!part)await stream.play();
+      }
+      stream.finish(2);
+      for(const chunk of stream.buffers)for(const sample of chunk.pcm)reference.push(sample);
+      let ended=0;stream.onended=()=>ended++;
+      const rendered=await offline.startRendering(),pcm=rendered.getChannelData(0);
+      for(let i=0;i<reference.length;i++)if(Math.abs(pcm[i+960]-reference[i])>0.00003)throw Error('Waveform mismatch at '+speed+'x sample '+i);
+      if(Math.abs(reference.length-48000/speed)>1)throw Error('Wrong duration');
+      // Offline rendering delivers ended events on a subsequent event-loop turn.
+      await new Promise(resolve=>setTimeout(resolve,0));
+      if(ended!==1)throw Error('Missing or duplicate completion at '+speed+'x');
+      stream.dispose();if(budget.used!==0)throw Error('Audio memory retained');
+    }
+    const real=new AudioContext();await real.resume();await real.suspend();
+    const before=real.currentTime;await new Promise(resolve=>setTimeout(resolve,50));
+    if(real.currentTime!==before)throw Error('Suspended context advanced');
+    await real.resume();await real.close();
+    document.querySelector('#result').textContent='PASS: real Chrome Web Audio, four playback speeds, exact PCM joins, completion, memory cleanup and context suspend/resume.';
+  } catch(error) {document.querySelector('#result').textContent='FAIL: '+error.stack;}
+})();
+</script>
