@@ -52,6 +52,27 @@ enum NarrationText {
         var lastLine: String
     }
 
+    // Streaming budgets are targets: never cut a phrase just to meet a character count.
+    private static func clauseCut(_ text: String, start: String.Index, end: String.Index,
+                                  target: String.Index, minimum: Int) -> String.Index {
+        var before: String.Index?
+        var index = start
+        while index < end {
+            let punctuation = text[index]
+            if ",;:，；：、—".contains(punctuation) {
+                var cut = text.index(after: index)
+                while cut < end, "\"'”’)]}".contains(text[cut]) { cut = text.index(after: cut) }
+                // Avoid punctuation inside numbers, URLs, and identifiers.
+                if cut == end || text[cut].isWhitespace || "，；：、—".contains(punctuation) {
+                    if cut >= target { return before ?? cut }
+                    if text.distance(from: start, to: cut) >= minimum { before = cut }
+                }
+            }
+            index = text.index(after: index)
+        }
+        return before ?? end
+    }
+
     static func prepare(_ input: NarrationInput) throws -> [String] { try plan(input).map(\.text) }
 
     static func plan(_ input: NarrationInput) throws -> [NarrationPiece] {
@@ -128,15 +149,22 @@ enum NarrationText {
                 while start < end {
                     while start < end, text[start].isWhitespace { start = text.index(after: start) }
                     guard start < end else { break }
-                    // Client playback needs a short opening and enough following pieces to
-                    // keep generation ahead of playback, even for technical prose.
-                    let budget = input.output == "pieces" ? (pieces.isEmpty ? 64 : 96) : (pieces.isEmpty ? 160 : 300)
+                    let streaming = input.output == "pieces"
+                    let budget = streaming ? (pieces.isEmpty ? 64 : 96) : (pieces.isEmpty ? 160 : 300)
                     let limit = text.index(start, offsetBy: budget, limitedBy: end) ?? end
                     var cut = limit
                     if limit < end {
-                        let clause = text[start..<limit].lastIndex(where: { ",;:".contains($0) })
-                        if let clause, text.distance(from: start, to: clause) >= 60 { cut = text.index(after: clause) }
-                        else if let space = text[start..<limit].lastIndex(where: { $0.isWhitespace }), space > start { cut = space }
+                        if streaming {
+                            cut = clauseCut(text, start: start, end: end, target: limit, minimum: budget / 2)
+                            // Keep a short sentence ending with its preceding clause.
+                            if text[cut..<end].trimmingCharacters(in: .whitespacesAndNewlines).count <= 40 {
+                                cut = end
+                            }
+                        } else {
+                            let clause = text[start..<limit].lastIndex(where: { ",;:".contains($0) })
+                            if let clause, text.distance(from: start, to: clause) >= 60 { cut = text.index(after: clause) }
+                            else if let space = text[start..<limit].lastIndex(where: { $0.isWhitespace }), space > start { cut = space }
+                        }
                     }
                     var spokenEnd = cut
                     while spokenEnd > start, text[text.index(before: spokenEnd)].isWhitespace { spokenEnd = text.index(before: spokenEnd) }

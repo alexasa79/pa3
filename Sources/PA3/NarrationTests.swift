@@ -47,7 +47,37 @@ func runNarrationTests() -> [String] {
         check(chunks.allSatisfy { $0.count <= 300 }, "chunk limit exceeded")
         check(chunks.joined().filter { !$0.isWhitespace } == unicode.filter { !$0.isWhitespace }, "Unicode chunking lost text")
         let streamed = try NarrationText.plan(NarrationInput(text: unicode, output: "pieces"))
-        check((streamed.first?.text.count ?? 0) <= 64 && streamed.allSatisfy { $0.text.count <= 96 }, "streaming chunk budgets")
+        check(streamed.contains { $0.text.contains(String(repeating: "🙂", count: 901)) }, "unpunctuated streaming text stays intact")
+        let paragraph = "The day we discovered we had been designated a global terrorist organization, we promised that we would try to resist as long as this was possible, that we would not back down as long as we could see options to stand our ground."
+        let clauses = try NarrationText.plan(NarrationInput(text: paragraph, output: "pieces"))
+        check(clauses.map(\.text) == [
+            "The day we discovered we had been designated a global terrorist organization,",
+            "we promised that we would try to resist as long as this was possible,",
+            "that we would not back down as long as we could see options to stand our ground."
+        ], "streaming keeps terrorist organization together and splits at commas")
+        check(clauses.allSatisfy { (paragraph as NSString).substring(with: $0.sourceRange) == $0.text }, "clause source ranges preserve highlighting")
+        let unpunctuated = String(repeating: "keep these words together ", count: 8).trimmingCharacters(in: .whitespaces) + "."
+        check(try NarrationText.prepare(NarrationInput(text: unpunctuated, output: "pieces")) == [unpunctuated], "no arbitrary word splits without clause punctuation")
+        let longOpening = "The narration should keep this sufficiently long opening clause together"
+        for punctuation in [",", ";"] {
+            let sentence = longOpening + punctuation + " even now."
+            let pieces = try NarrationText.plan(NarrationInput(text: sentence, output: "pieces"))
+            check(pieces.map(\.text) == [sentence], "short ending stays attached after " + punctuation)
+            check(pieces.first?.sourceRange == NSRange(location: 0, length: sentence.utf16.count), "merged ending source range")
+        }
+        for length in [40, 41] {
+            let sentence = longOpening + ", " + String(repeating: "x", count: length - 1) + "."
+            let pieces = try NarrationText.prepare(NarrationInput(text: sentence, output: "pieces"))
+            check(pieces.count == (length == 40 ? 1 : 2), "short ending threshold at \(length) characters")
+        }
+        let numeric = "The processing system expects a total of exactly 1,000 entries at https://example.org/path before completing this operation."
+        check(try NarrationText.prepare(NarrationInput(text: numeric, output: "pieces")) == [numeric], "number and URL punctuation are not clause boundaries")
+        for punctuation in [";", ":", "—", "，", "；", "："] {
+            let opening = "This opening clause has enough words to exceed the startup target" + punctuation
+            let source = opening + " " + unpunctuated
+            let parts = try NarrationText.plan(NarrationInput(text: source, output: "pieces"))
+            check(parts.first?.text == opening, "streaming clause boundary at " + punctuation)
+        }
         check(streamed.map(\.text).joined().filter { !$0.isWhitespace } == unicode.filter { !$0.isWhitespace }, "streaming Unicode chunks preserve all text")
         check(streamed.allSatisfy { (unicode as NSString).substring(with: $0.sourceRange) == $0.text }, "streaming source ranges match every piece")
         let list = try NarrationText.prepare(NarrationInput(text: "Introduction.\n1. Check the server. It should be ready.\n2) Start the client.\n10. Verify version 3.14 is installed."))
