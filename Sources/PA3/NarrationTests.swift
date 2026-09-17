@@ -131,6 +131,57 @@ func runNarrationTests() -> [String] {
         let noPeriods = try NarrationText.plan(NarrationInput(text: "Options:\n● Faster startup\n● Lower memory\nThe next paragraph begins."))
         check(noPeriods.map(\.text) == ["Options:", "Faster startup", "Lower memory", "The next paragraph begins."], "unpunctuated bullet list followed by prose")
         check(noPeriods.map(\.pauseAfter) == [0.65, 0.40, 0.65, 0.20], "unpunctuated list boundary pauses")
+        for (path, spoken) in [
+            ("a/b/c/something.cpp", "a slash b slash c slash something dot C P P"),
+            ("src/rte/red_app_spdk.cpp", "src slash rte slash red underscore app underscore spdk dot C P P"),
+            ("/usr/local/bin/tool", "slash usr slash local slash bin slash tool"),
+            ("./src/main.cpp", "dot slash src slash main dot C P P"),
+            ("../include/main.hpp", "dot dot slash include slash main dot H P P"),
+            ("~/code/my-project/main.CPP", "tilde slash code slash my dash project slash main dot C P P"),
+            ("src/.config/settings.json", "src slash dot config slash settings dot json"),
+            ("src/version1.2/main.cpp", "src slash version1 dot 2 slash main dot C P P"),
+            ("build/archive.tar.gz", "build slash archive dot tar dot G Z"),
+            ("/Users/山田/main.swift", "slash Users slash 山田 slash main dot swift"),
+            ("src/assets/", "src slash assets slash"),
+            ("something.cpp", "something dot C P P"),
+            ("a/b/c", "a slash b slash c")
+        ] {
+            for output in ["playback", "pieces", "stream"] {
+                let original = "Open \(path)."
+                let parts = try NarrationText.plan(NarrationInput(text: original, output: output))
+                check(parts.map(\.text) == ["Open \(spoken)."], "explicit path pronunciation: \(path), \(output)")
+                check(parts.first?.sourceRange == NSRange(location: 0, length: original.utf16.count), "path expansion preserves source offsets: \(path)")
+                let repeated = try NarrationText.prepare(NarrationInput(text: parts.map(\.text).joined(separator: " "), output: output))
+                check(repeated == parts.map(\.text), "Reedah's prepared path is not expanded twice: \(path)")
+            }
+        }
+        let pathToken = try NarrationPath.tokenRegex()
+        for original in [
+            "Use and/or, read/write, I/O, and TCP/IP.", "On 2026/09/17 use 1/2 of 3.14.",
+            "A..B and A..c are ranges. Wait... Then continue.", "Use ASP.NET and version 3.14.",
+            "Visit https://example.org/src/main.cpp?x=a/b/c and https://example.org/a,b.cpp.",
+            "Visit (https://example.org/a,b.cpp).", "See www.example.org/src/main.cpp or example.org/src/main.cpp.",
+            "See file:///Users/me/main.cpp and ssh://host/a/b/c.", "Email user@example.org."
+        ] {
+            let source = original as NSString
+            check(pathToken.matches(in: original, range: NSRange(location: 0, length: source.length)).allSatisfy {
+                let token = source.substring(with: $0.range)
+                return NarrationPath.pronounce(token) == token
+            }, "non-path tokens remain unchanged: \(original)")
+        }
+        let pathSource = "🙂 Open \"src/main.cpp\" now. Then inspect include/main.hpp carefully."
+        let pathParts = try NarrationText.plan(NarrationInput(text: pathSource, output: "stream"))
+        check(pathParts.map(\.text) == ["🙂 Open \"src slash main dot C P P\" now.", "Then inspect include slash main dot H P P carefully."], "quoted paths retain sentence punctuation")
+        check(pathParts.map { (pathSource as NSString).substring(with: $0.sourceRange) } == ["🙂 Open \"src/main.cpp\" now.", "Then inspect include/main.hpp carefully."], "path expansion maps back to original sentences")
+        let pathOverride = try NarrationText.prepare(NarrationInput(text: "Open src/main.cpp.", pronunciations: ["src/main.cpp": "the main source file"], output: "stream"))
+        check(pathOverride == ["Open the main source file."], "custom path pronunciations take precedence")
+        for path in ["src/main.cpp", "src/main.c", "src/Main.CPP", "../include/main.hpp", "a/B/C.cpp"] {
+            let first = "Open \(path)."
+            let second = "The next sentence describes the implementation."
+            let parts = try NarrationText.plan(NarrationInput(text: first + " " + second, output: "stream"))
+            check(parts.map(\.text) == ["Open \(NarrationPath.pronounce(path)).", second], "spelled extension does not swallow the next sentence: \(path)")
+            check(parts.map(\.pauseAfter) == [0.20, 0.20], "path at sentence end retains a sentence pause: \(path)")
+        }
         check((chunks.first?.count ?? 0) <= 160, "opening piece should start promptly")
     } catch { failures.append("narration: unexpected text preparation error \(error)") }
     let rate = 1000.0
@@ -138,8 +189,9 @@ func runNarrationTests() -> [String] {
         + [Float](repeating: 0, count: 600) + [Float](repeating: 0.1, count: 200) + [Float](repeating: 0, count: 1000)
     check(NarrationAudio.speechRange(signal, rate: rate) == 460..<1580, "trim edges while preserving interior silence and speech padding")
     check(NarrationAudio.speechRange([Float](repeating: 0, count: 100), rate: rate) == nil, "silent output must be rejected")
-    for invalid in [NarrationInput(text: " \n"), NarrationInput(text: String(repeating: "x", count: 100_001)),
+        for invalid in [NarrationInput(text: " \n"), NarrationInput(text: String(repeating: "x", count: 100_001)),
                     NarrationInput(text: "test", pronunciations: ["": "empty"]),
+                    NarrationInput(text: String(repeating: "a/b/c.cpp ", count: 9_999)),
                     NarrationInput(text: String(repeating: "x ", count: 49_999), pronunciations: ["x": String(repeating: "y", count: 256)])] {
         do { _ = try NarrationText.prepare(invalid); failures.append("narration: invalid text input accepted") }
         catch {}

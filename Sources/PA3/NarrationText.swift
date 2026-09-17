@@ -9,7 +9,7 @@ struct NarrationPiece: Sendable {
 enum NarrationText {
     struct Invalid: Error { let message: String; init(_ message: String) { self.message = message } }
 
-    // Keep original UTF-16 positions through pronunciation and list-label substitutions.
+    // Keep original UTF-16 positions through pronunciation, path, and list-label substitutions.
     // Highlighting must address the source document, not the normalized spoken text.
     private struct MappedText {
         var text: String
@@ -24,6 +24,12 @@ enum NarrationText {
             let upper = covered.map(NSMaxRange).max() ?? lower
             return NSRange(location: lower, length: upper - lower)
         }
+        func slice(_ range: NSRange) -> MappedText {
+            var result = self
+            result.text = (text as NSString).substring(with: range)
+            result.origins = Array(origins[range.location..<NSMaxRange(range)])
+            return result
+        }
         mutating func replace(_ regex: NSRegularExpression, with replacement: (NSTextCheckingResult, NSString) -> String) throws {
             let source = text as NSString
             let matches = regex.matches(in: text, range: NSRange(location: 0, length: source.length))
@@ -33,7 +39,11 @@ enum NarrationText {
                 mapping.append(contentsOf: origins[cursor..<match.range.location])
                 let value = replacement(match, source)
                 result += value
-                mapping.append(contentsOf: repeatElement(sourceRange(match.range), count: value.utf16.count))
+                if value == source.substring(with: match.range) {
+                    mapping.append(contentsOf: origins[match.range.location..<NSMaxRange(match.range)])
+                } else {
+                    mapping.append(contentsOf: repeatElement(sourceRange(match.range), count: value.utf16.count))
+                }
                 guard mapping.count <= 400_000 else { throw Invalid("Expanded pronunciation text is too large") }
                 cursor = NSMaxRange(match.range)
             }
@@ -97,6 +107,7 @@ enum NarrationText {
         let marker = try NSRegularExpression(pattern: #"^[ \t]*(?:(\d+)[.)]|[-*+•◦▪‣●○■□⁃–—])(?:[ \t]+|$)"#)
         let newlines = try NSRegularExpression(pattern: #"[\r\n\x{2028}\x{2029}]+[ \t]*"#)
         let rangeOperator = try NSRegularExpression(pattern: #"(?<=[\p{L}\p{N}_)\]}])[ \t]*\.\.[ \t]*(?=[+\-−]?[\p{L}\p{N}_(\[{])"#)
+        let pathToken = try NarrationPath.tokenRegex()
         var blocks: [Block] = [], current: Block?, blankBefore = false
         let source = original as NSString
         // Treat CRLF as one terminator; keep empty lines and AX paragraph separators.
@@ -150,12 +161,12 @@ enum NarrationText {
             if let aliasRegex { try mapped.replace(aliasRegex) { match, value in aliases[value.substring(with: match.range)]! } }
             expandedCount += mapped.text.count
             guard expandedCount <= 200_000 else { throw Invalid("Expanded pronunciation text is too large") }
-            let text = mapped.text
+            let boundaryText = mapped.text
             let firstPiece = pieces.count
             // Foundation can split A..B after the dots. Protect range operators only
             // in the segmentation copy, preserving UTF-16 offsets and spoken text.
-            let protected = NSMutableString(string: text)
-            for match in rangeOperator.matches(in: text, range: NSRange(location: 0, length: protected.length)).reversed() {
+            let protected = NSMutableString(string: boundaryText)
+            for match in rangeOperator.matches(in: boundaryText, range: NSRange(location: 0, length: protected.length)).reversed() {
                 protected.replaceCharacters(in: match.range, with: String(repeating: "x", count: match.range.length))
             }
             let segmentationText = protected as String
@@ -164,9 +175,17 @@ enum NarrationText {
                 sentenceRanges.append(NSRange(range, in: segmentationText))
             }
             for range in sentenceRanges {
-                guard let sentenceRange = Range(range, in: text) else { throw Invalid("Invalid sentence range") }
-                var start = sentenceRange.lowerBound
-                let end = sentenceRange.upperBound
+                guard Range(range, in: boundaryText) != nil else { throw Invalid("Invalid sentence range") }
+                var sentence = mapped.slice(range)
+                let originalCount = sentence.text.count
+                // Detect boundaries before spelling extensions: "C P P." can look
+                // like someone's initials to Foundation and swallow the next sentence.
+                try sentence.replace(pathToken) { match, value in NarrationPath.pronounce(value.substring(with: match.range)) }
+                expandedCount += sentence.text.count - originalCount
+                guard expandedCount <= 200_000 else { throw Invalid("Expanded pronunciation text is too large") }
+                let text = sentence.text
+                var start = text.startIndex
+                let end = text.endIndex
                 while start < end {
                     while start < end, text[start].isWhitespace { start = text.index(after: start) }
                     guard start < end else { break }
@@ -191,7 +210,7 @@ enum NarrationText {
                     while spokenEnd > start, text[text.index(before: spokenEnd)].isWhitespace { spokenEnd = text.index(before: spokenEnd) }
                     let spoken = String(text[start..<spokenEnd])
                     if !spoken.isEmpty {
-                        pieces.append(NarrationPiece(text: spoken, sourceRange: mapped.sourceRange(NSRange(start..<spokenEnd, in: text)),
+                        pieces.append(NarrationPiece(text: spoken, sourceRange: sentence.sourceRange(NSRange(start..<spokenEnd, in: text)),
                                                      pauseAfter: hasSentenceEnding(spoken) ? 0.20 : 0.12))
                     }
                     start = cut
