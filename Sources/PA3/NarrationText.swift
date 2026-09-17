@@ -108,6 +108,7 @@ enum NarrationText {
         let newlines = try NSRegularExpression(pattern: #"[\r\n\x{2028}\x{2029}]+[ \t]*"#)
         let rangeOperator = try NSRegularExpression(pattern: #"(?<=[\p{L}\p{N}_)\]}])[ \t]*\.\.[ \t]*(?=[+\-−]?[\p{L}\p{N}_(\[{])"#)
         let pathToken = try NarrationPath.tokenRegex()
+        let identifiers = try NarrationIdentifier()
         var blocks: [Block] = [], current: Block?, blankBefore = false
         let source = original as NSString
         // Treat CRLF as one terminator; keep empty lines and AX paragraph separators.
@@ -180,7 +181,14 @@ enum NarrationText {
                 let originalCount = sentence.text.count
                 // Detect boundaries before spelling extensions: "C P P." can look
                 // like someone's initials to Foundation and swallow the next sentence.
-                try sentence.replace(pathToken) { match, value in NarrationPath.pronounce(value.substring(with: match.range)) }
+                try sentence.replace(pathToken) { match, value in
+                    let end = NSMaxRange(match.range)
+                    let followedByBoundary = end < value.length && NarrationPath.pauseBoundaries.utf16.contains(value.character(at: end))
+                    return NarrationPath.pronounce(value.substring(with: match.range), followedByBoundary: followedByBoundary)
+                }
+                try sentence.replace(pathToken) { match, value in
+                    identifiers.pronounce(value.substring(with: match.range))
+                }
                 expandedCount += sentence.text.count - originalCount
                 guard expandedCount <= 200_000 else { throw Invalid("Expanded pronunciation text is too large") }
                 let text = sentence.text

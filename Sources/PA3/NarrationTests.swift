@@ -144,7 +144,48 @@ func runNarrationTests() -> [String] {
             ("/Users/山田/main.swift", "slash Users slash 山田 slash main dot swift"),
             ("src/assets/", "src slash assets slash"),
             ("something.cpp", "something dot C P P"),
-            ("a/b/c", "a slash b slash c")
+            ("a_b_c.cpp", "a underscore b underscore c dot C P P"),
+            ("a__b.cpp", "a underscore underscore b dot C P P"),
+            ("a/b/c", "a slash b slash c"),
+            ("setup.bash", "setup dot bash"),
+            ("setup.zsh", "setup dot Z S H"),
+            ("setup.ps1", "setup dot P S one"),
+            ("main.c++", "main dot C plus plus"),
+            ("include/main.h++", "include slash main dot H plus plus"),
+            ("app.py", "app dot P Y"),
+            ("analysis.ipynb", "analysis dot I P Y N B"),
+            ("main.go", "main dot go"),
+            ("go.mod", "go dot mod"),
+            ("types.d.ts", "types dot D dot T S"),
+            ("bundle.min.mjs", "bundle dot min dot M J S"),
+            ("Main.java", "Main dot java"),
+            ("main.rs", "main dot R S"),
+            ("project.csproj", "project dot C S P R O J"),
+            ("report.DOCX", "report dot D O C X"),
+            ("report.docm", "report dot D O C M"),
+            ("template.dotx", "template dot D O T X"),
+            ("budget.xls", "budget dot X L S"),
+            ("budget.xlsx", "budget dot X L S X"),
+            ("budget.xlsm", "budget dot X L S M"),
+            ("budget.xlsb", "budget dot X L S B"),
+            ("slides.pptx", "slides dot P P T X"),
+            ("slides.ppsm", "slides dot P P S M"),
+            ("contacts.accdb", "contacts dot A C C D B"),
+            ("diagram.vsdx", "diagram dot V S D X"),
+            ("notes.one", "notes dot one"),
+            ("report.odt", "report dot O D T"),
+            ("book.epub", "book dot epub"),
+            ("photo.heic", "photo dot heic"),
+            ("clip.mp3", "clip dot M P three"),
+            ("clip.mp4", "clip dot M P four"),
+            ("backup.7z", "backup dot seven Z"),
+            ("build/backup.7z", "build slash backup dot seven Z"),
+            ("archive.tar.bz2", "archive dot tar dot B Z two"),
+            ("data.parquet", "data dot parquet"),
+            ("application.dmg", "application dot D M G"),
+            ("font.woff2", "font dot W O F F two"),
+            ("certificate.p12", "certificate dot P one two"),
+            ("src/custom.unlisted", "src slash custom dot unlisted")
         ] {
             for output in ["playback", "pieces", "stream"] {
                 let original = "Open \(path)."
@@ -161,7 +202,9 @@ func runNarrationTests() -> [String] {
             "A..B and A..c are ranges. Wait... Then continue.", "Use ASP.NET and version 3.14.",
             "Visit https://example.org/src/main.cpp?x=a/b/c and https://example.org/a,b.cpp.",
             "Visit (https://example.org/a,b.cpp).", "See www.example.org/src/main.cpp or example.org/src/main.cpp.",
-            "See file:///Users/me/main.cpp and ssh://host/a/b/c.", "Email user@example.org."
+            "See file:///Users/me/main.cpp and ssh://host/a/b/c.", "Email user@example.org.",
+            "Visit https://example.org/report.docx and www.example.org/backup.7z.",
+            "Unknown custom.unlisted and version 3.7 stay unchanged."
         ] {
             let source = original as NSString
             check(pathToken.matches(in: original, range: NSRange(location: 0, length: source.length)).allSatisfy {
@@ -182,6 +225,104 @@ func runNarrationTests() -> [String] {
             check(parts.map(\.text) == ["Open \(NarrationPath.pronounce(path)).", second], "spelled extension does not swallow the next sentence: \(path)")
             check(parts.map(\.pauseAfter) == [0.20, 0.20], "path at sentence end retains a sentence pause: \(path)")
         }
+        for (original, spoken) in [
+            ("a_b.cpp:888", "a underscore b dot C P P, line 888,"),
+            ("Open src/a_b.cpp:888 next.", "Open src slash a underscore b dot C P P, line 888, next."),
+            ("Open a_b.cpp:888.", "Open a underscore b dot C P P, line 888."),
+            ("a_b.cpp:888, then continue.", "a underscore b dot C P P, line 888, then continue."),
+            ("a_b.cpp:888: error", "a underscore b dot C P P, line 888: error"),
+            ("Read \"a_b.cpp:888\".", "Read \"a underscore b dot C P P, line 888\"."),
+            ("See (a_b.cpp:888).", "See (a underscore b dot C P P, line 888)."),
+            ("Read `a_b.cpp:888` next.", "Read `a underscore b dot C P P, line 888` next."),
+            ("../src/a_b.cpp:888:12", "dot dot slash src slash a underscore b dot C P P, line 888, column 12,"),
+            ("/tmp/Makefile:12", "slash tmp slash Makefile, line 12,"),
+            ("a_b.cpp:888!", "a underscore b dot C P P, line 888!"),
+            ("a_b.cpp:888; next", "a underscore b dot C P P, line 888; next"),
+            ("file.c:100-200", "file dot C, lines 100 to 200,"),
+            ("Check file.c:100-200.", "Check file dot C, lines 100 to 200."),
+            ("src/a_b.cpp:100-200 next.", "src slash a underscore b dot C P P, lines 100 to 200, next."),
+            ("file.c:100-200, then continue.", "file dot C, lines 100 to 200, then continue."),
+            ("file.c:100-200: note", "file dot C, lines 100 to 200: note"),
+            ("Read \"file.c:100-200\".", "Read \"file dot C, lines 100 to 200\"."),
+            ("See (file.c:100-200).", "See (file dot C, lines 100 to 200)."),
+            ("Read `file.c:100-200` next.", "Read `file dot C, lines 100 to 200` next."),
+            ("../src/file.c:100-200", "dot dot slash src slash file dot C, lines 100 to 200,"),
+            ("/tmp/Makefile:100-200", "slash tmp slash Makefile, lines 100 to 200,"),
+            ("file-100-200.c", "file dash 100 dash 200 dot C")
+        ] {
+            for output in ["playback", "pieces", "stream"] {
+                let parts = try NarrationText.plan(NarrationInput(text: original, output: output))
+                check(parts.map(\.text) == [spoken], "line reference pronunciation and punctuation: \(original), \(output)")
+                check(parts.first?.sourceRange == NSRange(location: 0, length: original.utf16.count), "line reference source mapping: \(original)")
+                check(try NarrationText.prepare(NarrationInput(text: spoken, output: output)) == [spoken], "prepared line reference is not expanded twice: \(original)")
+            }
+        }
+        for token in ["https://host:888/src/a_b.cpp:22", "example.org/a_b.cpp:888", "12:34", "3.14:5", "ratio:888",
+                      "a_b.cpp:eight", "a_b.cpp:-8", "a_b.cpp:8:column", "a_b.cpp:8:12:34",
+                      "https://host/src/file.c:100-200", "example.org/file.c:100-200", "100-200", "12:34-56",
+                      "file.c:100-", "file.c:-200", "file.c:100--200", "file.c:100-200-300", "file.c:100-two",
+                      "file.c:100-200:3", "file.c:100:2-200:3"] {
+            check(NarrationPath.pronounce(token) == token, "non-file or malformed line references stay unchanged: \(token)")
+        }
+        let referenceSource = "🙂 Check a_b.cpp:888 before editing. Then inspect src/c_d.hpp:12."
+        let referenceParts = try NarrationText.plan(NarrationInput(text: referenceSource, output: "stream"))
+        check(referenceParts.map(\.text) == ["🙂 Check a underscore b dot C P P, line 888, before editing.", "Then inspect src slash c underscore d dot H P P, line 12."], "line references keep separate sentences")
+        check(referenceParts.map { (referenceSource as NSString).substring(with: $0.sourceRange) } == ["🙂 Check a_b.cpp:888 before editing.", "Then inspect src/c_d.hpp:12."], "line reference expansion retains original UTF-16 offsets")
+        let referenceOverride = try NarrationText.prepare(NarrationInput(text: "Check a_b.cpp:888.", pronunciations: ["a_b.cpp:888": "the failing line"], output: "stream"))
+        check(referenceOverride == ["Check the failing line."], "custom line-reference pronunciation takes precedence")
+        let rangeSource = "🙂 Check file.c:100-200 before editing. Then inspect src/a_b.cpp:300-400."
+        let rangeParts = try NarrationText.plan(NarrationInput(text: rangeSource, output: "stream"))
+        check(rangeParts.map(\.text) == ["🙂 Check file dot C, lines 100 to 200, before editing.", "Then inspect src slash a underscore b dot C P P, lines 300 to 400."], "line ranges keep separate sentences")
+        check(rangeParts.map { (rangeSource as NSString).substring(with: $0.sourceRange) } == ["🙂 Check file.c:100-200 before editing.", "Then inspect src/a_b.cpp:300-400."], "line ranges retain original UTF-16 sentence offsets")
+        let rangeOverride = try NarrationText.prepare(NarrationInput(text: "Check file.c:100-200.", pronunciations: ["file.c:100-200": "the affected lines"], output: "stream"))
+        check(rangeOverride == ["Check the affected lines."], "custom line-range pronunciation takes precedence")
+        for (name, spoken) in [
+            ("type_name_t", "type underscore name underscore tee"),
+            ("uint32_t", "uint32 underscore tee"),
+            ("get_type_name()", "get underscore type underscore name()"),
+            ("get_type_name(type_name_t)", "get underscore type underscore name(type underscore name underscore tee)"),
+            ("ns::get_name_t()", "ns::get underscore name underscore tee()"),
+            ("x_y_t", "ex underscore why underscore tee"),
+            ("TYPE_NAME_T", "TYPE underscore NAME underscore tee"),
+            ("_private_t", "underscore private underscore tee"),
+            ("__init__", "underscore underscore init underscore underscore"),
+            ("type__t", "type underscore underscore tee"),
+            ("type_name_", "type underscore name underscore"),
+            ("value_1", "value underscore 1"),
+            ("naïve_type_t", "naïve underscore type underscore tee"),
+            ("cafe\u{0301}_type_t", "cafe\u{0301} underscore type underscore tee"),
+            ("constructor_t", "constructor underscore tee"),
+            ("__proto__", "underscore underscore proto underscore underscore"),
+            ("\"type_name_t\"", "\"type underscore name underscore tee\""),
+            ("`type_name_t`; (get_name_t())", "`type underscore name underscore tee`; (get underscore name underscore tee())"),
+            ("type_name_t*", "type underscore name underscore tee*"),
+            ("type_name_t,other_type_t", "type underscore name underscore tee,other underscore type underscore tee")
+        ] {
+            let original = "Use \(name)."
+            for output in ["playback", "pieces", "stream"] {
+                let parts = try NarrationText.plan(NarrationInput(text: original, output: output))
+                check(parts.map(\.text) == ["Use \(spoken)."], "identifier pronunciation: \(name), \(output)")
+                check(parts.first?.sourceRange == NSRange(location: 0, length: original.utf16.count), "identifier source mapping: \(name)")
+                check(try NarrationText.prepare(NarrationInput(text: "Use \(spoken).", output: output)) == ["Use \(spoken)."], "prepared identifiers stay unchanged: \(name)")
+            }
+        }
+        let identifiers = try NarrationIdentifier()
+        for text in ["A normal sentence about t and tea.", "1_000 1_name_t _123 ____",
+                     "src/type_name_t.cpp:100-200", "type_name_t.cpp", "type_name_t.unknown", "./type_name_t",
+                     "https://example.org/type_name_t?next=get_name_t", "www.example.org/type_name_t",
+                     "example.org/type_name_t", "user_name@example.org", ".hidden_name", "pkg.type_name_t"] {
+            check(identifiers.pronounce(text) == text, "identifier normalization preserves non-identifiers: \(text)")
+        }
+        let identifierSource = "🙂 Use type_name_t here. Then call get_type_name()."
+        let identifierParts = try NarrationText.plan(NarrationInput(text: identifierSource, output: "stream"))
+        check(identifierParts.map(\.text) == ["🙂 Use type underscore name underscore tee here.", "Then call get underscore type underscore name()."], "identifiers preserve sentence boundaries")
+        check(identifierParts.map { (identifierSource as NSString).substring(with: $0.sourceRange) } == ["🙂 Use type_name_t here.", "Then call get_type_name()."], "identifier expansion retains original UTF-16 sentence offsets")
+        let identifierOverride = try NarrationText.prepare(NarrationInput(text: identifierSource, pronunciations: ["type_name_t": "the type name", "get_type_name": "the lookup function"], output: "stream"))
+        check(identifierOverride == ["🙂 Use the type name here.", "Then call the lookup function()."], "custom identifier pronunciation takes precedence")
+        let mixedSource = "Check type_name_t in src/type_name_t.cpp:100-200."
+        let mixedParts = try NarrationText.plan(NarrationInput(text: mixedSource, output: "stream"))
+        check(mixedParts.map(\.text) == ["Check type underscore name underscore tee in src slash type underscore name underscore t dot C P P, lines 100 to 200."], "standalone identifiers coexist with paths and line ranges")
+        check(mixedParts.first?.sourceRange == NSRange(location: 0, length: mixedSource.utf16.count), "mixed identifier/path source mapping")
         check((chunks.first?.count ?? 0) <= 160, "opening piece should start promptly")
     } catch { failures.append("narration: unexpected text preparation error \(error)") }
     let rate = 1000.0
@@ -190,6 +331,7 @@ func runNarrationTests() -> [String] {
     check(NarrationAudio.speechRange(signal, rate: rate) == 460..<1580, "trim edges while preserving interior silence and speech padding")
     check(NarrationAudio.speechRange([Float](repeating: 0, count: 100), rate: rate) == nil, "silent output must be rejected")
         for invalid in [NarrationInput(text: " \n"), NarrationInput(text: String(repeating: "x", count: 100_001)),
+                    NarrationInput(text: String(repeating: "type_t ", count: 12_000)),
                     NarrationInput(text: "test", pronunciations: ["": "empty"]),
                     NarrationInput(text: String(repeating: "a/b/c.cpp ", count: 9_999)),
                     NarrationInput(text: String(repeating: "x ", count: 49_999), pronunciations: ["x": String(repeating: "y", count: 256)])] {

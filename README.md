@@ -68,6 +68,8 @@ Narration plays in the background without a reader window or changing the origin
 
 ## Local narration
 
+Narration reads filenames and paths explicitly, including underscores, `:line:column` references, and line ranges such as `file.c:100-200` ("file dot C, lines 100 to 200"). Standalone identifiers such as `type_name_t` read as "type underscore name underscore tee", with single-letter parts pronounced by their letter names. See the [supported file extensions and pronunciation rules](FileExtensions.md).
+
 PA3 accepts narration requests on `127.0.0.1:65462` while it is running, including when its window is hidden. Its default narrator is **sample 4, the American senior engineer**, identified as `senior-engineer-american`. Native llama.cpp runs Qwen3-TTS 1.7B Base Q8_0 on the Apple Silicon GPU, using the selected recording as its voice reference.
 
 PA3 installs missing models automatically with a progress window. `make tts-setup` remains an alias for the same setup. The selected recording and provenance are in `Resources/Voices` and copied into the app. Narration runs offline after setup.
