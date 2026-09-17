@@ -1,6 +1,10 @@
 (() => {
   const DEFAULT_MIN_SENTENCE_LENGTH = 20;
   const DEFAULT_ABBREVIATIONS = ["e.g.", "i.e.", "Mr."];
+  const SENTENCE_CLOSERS = "\"'”’»›)]}";
+  // Exactly two dots between range endpoints, with optional surrounding spaces.
+  // Three dots remain an ellipsis. Keep offsets into the original text unchanged.
+  const RANGE_OPERATOR = /(?<=[\p{L}\p{N}_)\]}])[ \t]*\.\.[ \t]*(?=[+\-−]?[\p{L}\p{N}_(\[{])/gu;
 
   function normalizeOptions(options = {}) {
     const abbreviations = Array.isArray(options.abbreviations)
@@ -24,11 +28,19 @@
     let start = 0;
     const len = fullText.length;
     const isDelimiter = (ch) => ch === "." || ch === "!" || ch === "?";
+    const isCloser = (ch) => SENTENCE_CLOSERS.includes(ch);
+    const rangePeriods = new Set();
+    for (const match of fullText.matchAll(RANGE_OPERATOR)) {
+      const firstDot = fullText.indexOf(".", match.index);
+      rangePeriods.add(firstDot);
+      rangePeriods.add(firstDot + 1);
+    }
     const abbrevRanges = buildAbbreviationRanges(fullText, abbreviations);
     let abbrevIndex = 0;
 
     for (let i = 0; i < len; i += 1) {
       if (isDelimiter(fullText[i])) {
+        if (rangePeriods.has(i)) continue;
         while (abbrevIndex < abbrevRanges.length && i > abbrevRanges[abbrevIndex].end) {
           abbrevIndex += 1;
         }
@@ -46,18 +58,19 @@
           i > 0 &&
           i + 1 < len &&
           !/[\s.!?]/.test(fullText[i - 1]) &&
-          !/[\s.!?]/.test(fullText[i + 1]);
+          !/[\s.!?]/.test(fullText[i + 1]) &&
+          !isCloser(fullText[i - 1]) && !isCloser(fullText[i + 1]);
 
         const inAcronym = fullText[i] === "." &&
           i >= 2 &&
           /[A-Za-z]/.test(fullText[i - 1]) &&
-          fullText[i - 2] === ".";
+          fullText[i - 2] === "." && !rangePeriods.has(i - 2);
 
         if (fullText[i] === "." && (inAbbrev || inNumber || midWord || inAcronym)) {
           continue;
         }
         let end = i + 1;
-        while (end < len && isDelimiter(fullText[end])) {
+        while (end < len && (isDelimiter(fullText[end]) || isCloser(fullText[end]))) {
           end += 1;
         }
         ranges.push({ start, end });

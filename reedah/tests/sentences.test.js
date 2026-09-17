@@ -56,3 +56,48 @@ test("buildSentenceRanges ends a sentence after a decimal number", () => {
   assert.equal(sentences[0], "The ratio was 1.5 for the sample set.");
   assert.equal(sentences[1], "The following sentence is also long enough to be separate.");
 });
+
+test("buildSentenceRanges keeps two-dot ranges inside their sentences", () => {
+  for (const range of ["A..B", "1..10", "A .. B", "-5..-1", "α..ω", "items[0]..items[n]"]) {
+    const first = `Use ${range} to select the complete range.`;
+    const second = "The following sentence describes the result.";
+    assert.deepEqual(extractSentences(`${first} ${second}`, { minSentenceLength: 0 }), [first, second], range);
+  }
+});
+
+test("buildSentenceRanges recognizes the real period after a range", () => {
+  const first = "The allowed range is A..B.";
+  const second = "The following sentence describes the result.";
+  assert.deepEqual(extractSentences(`${first} ${second}`, { minSentenceLength: 0 }), [first, second]);
+});
+
+test("buildSentenceRanges keeps closing quotes and brackets with sentence punctuation", () => {
+  for (const [opening, closing] of [['"', '"'], ['“', '”'], ["'", "'"], ['‘', '’'], ['«', '»'], ['("', '")']]) {
+    for (const punctuation of [".", "?", "!", "?!"]) {
+      const first = `The editor said ${opening}This article is ready${punctuation}${closing}`;
+      const second = "The next paragraph explains the details.";
+      // Exercise the normal short-sentence merge as well as the raw boundaries.
+      for (const options of [undefined, { minSentenceLength: 0 }]) {
+        assert.deepEqual(extractSentences(`${first} ${second}`, options), [first, second]);
+      }
+      assert.deepEqual(extractSentences(first, { minSentenceLength: 0 }), [first]);
+    }
+  }
+});
+
+test("buildSentenceRanges preserves offsets for quotes, Unicode, and repeated ranges", () => {
+  const first = '🙂 The editor said "Use A..B and 1..10 for these ranges."';
+  const second = '“Continue with α .. ω.”';
+  const text = `  ${first}\n\t${second}  `;
+  assert.deepEqual(buildSentenceRanges(text, { minSentenceLength: 0 }), [
+    { start: 2, end: 2 + first.length },
+    { start: 4 + first.length, end: 4 + first.length + second.length }
+  ]);
+});
+
+test("buildSentenceRanges still handles ellipses and punctuation outside quotes", () => {
+  for (const first of ['Wait...', 'The label is "ready".', 'The value is 3.14.', 'He said "Wait..."', 'He said "Stop!".']) {
+    const second = "Then continue.";
+    assert.deepEqual(extractSentences(`${first} ${second}`, { minSentenceLength: 0 }), [first, second]);
+  }
+});

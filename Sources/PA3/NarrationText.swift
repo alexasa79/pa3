@@ -52,6 +52,14 @@ enum NarrationText {
         var lastLine: String
     }
 
+    private static func hasSentenceEnding(_ text: String) -> Bool {
+        var ending = text[...]
+        while let last = ending.last, last.isWhitespace || "\"'”’»›)]}*_".contains(last) { ending.removeLast() }
+        // A wrapped two-dot range continues on the next line; an ellipsis can end a sentence.
+        if ending.hasSuffix(".."), !ending.hasSuffix("...") { return false }
+        return ending.last.map { ".!?。！？".contains($0) } == true
+    }
+
     // Streaming budgets are targets: never cut a phrase just to meet a character count.
     private static func clauseCut(_ text: String, start: String.Index, end: String.Index,
                                   target: String.Index, minimum: Int) -> String.Index {
@@ -88,6 +96,7 @@ enum NarrationText {
             "(?<![\\p{L}\\p{N}_])(?:" + keys.map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|") + ")(?![\\p{L}\\p{N}_])")
         let marker = try NSRegularExpression(pattern: #"^[ \t]*(?:(\d+)[.)]|[-*+•◦▪‣●○■□⁃–—])(?:[ \t]+|$)"#)
         let newlines = try NSRegularExpression(pattern: #"[\r\n\x{2028}\x{2029}]+[ \t]*"#)
+        let rangeOperator = try NSRegularExpression(pattern: #"(?<=[\p{L}\p{N}_)\]}])[ \t]*\.\.[ \t]*(?=[+\-−]?[\p{L}\p{N}_(\[{])"#)
         var blocks: [Block] = [], current: Block?, blankBefore = false
         let source = original as NSString
         // Treat CRLF as one terminator; keep empty lines and AX paragraph separators.
@@ -107,7 +116,7 @@ enum NarrationText {
             let indented = line.first?.isWhitespace == true
             // Indented lines and unfinished sentences continue the item. An unindented
             // sentence after a finished item returns to prose, even without a blank line.
-            let finishedLine = current.map { $0.lastLine.range(of: #"[.!?。！？][\"'”’)*_\]]*$"#, options: .regularExpression) != nil } ?? false
+            let finishedLine = current.map { hasSentenceEnding($0.lastLine) } ?? false
             let newProseAfterList = current?.isList == true && trimmed.first?.isUppercase == true
             let startsParagraph = !isList && !indented && current?.needsBody == false && (finishedLine || newProseAfterList)
             if isList || startsParagraph {
@@ -143,7 +152,19 @@ enum NarrationText {
             guard expandedCount <= 200_000 else { throw Invalid("Expanded pronunciation text is too large") }
             let text = mapped.text
             let firstPiece = pieces.count
-            text.enumerateSubstrings(in: text.startIndex..<text.endIndex, options: [.bySentences, .localized]) { _, sentenceRange, _, _ in
+            // Foundation can split A..B after the dots. Protect range operators only
+            // in the segmentation copy, preserving UTF-16 offsets and spoken text.
+            let protected = NSMutableString(string: text)
+            for match in rangeOperator.matches(in: text, range: NSRange(location: 0, length: protected.length)).reversed() {
+                protected.replaceCharacters(in: match.range, with: String(repeating: "x", count: match.range.length))
+            }
+            let segmentationText = protected as String
+            var sentenceRanges: [NSRange] = []
+            segmentationText.enumerateSubstrings(in: segmentationText.startIndex..<segmentationText.endIndex, options: [.bySentences, .localized]) { _, range, _, _ in
+                sentenceRanges.append(NSRange(range, in: segmentationText))
+            }
+            for range in sentenceRanges {
+                guard let sentenceRange = Range(range, in: text) else { throw Invalid("Invalid sentence range") }
                 var start = sentenceRange.lowerBound
                 let end = sentenceRange.upperBound
                 while start < end {
@@ -171,7 +192,7 @@ enum NarrationText {
                     let spoken = String(text[start..<spokenEnd])
                     if !spoken.isEmpty {
                         pieces.append(NarrationPiece(text: spoken, sourceRange: mapped.sourceRange(NSRange(start..<spokenEnd, in: text)),
-                                                     pauseAfter: spoken.last.map { ".!?。！？".contains($0) } == true ? 0.20 : 0.12))
+                                                     pauseAfter: hasSentenceEnding(spoken) ? 0.20 : 0.12))
                     }
                     start = cut
                 }

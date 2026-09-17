@@ -101,6 +101,33 @@ func runNarrationTests() -> [String] {
         check(crlf.map(\.pauseAfter) == [0.65, 0.40, 0.65, 0.20], "CRLF paragraph pauses")
         let paragraphs = try NarrationText.plan(NarrationInput(text: "First paragraph.\nSecond paragraph.\u{2029}Third paragraph."))
         check(paragraphs.map(\.pauseAfter) == [0.65, 0.65, 0.20], "single-newline and AX paragraph boundaries")
+        for range in ["A..B", "1..10", "A .. B", "-5..-1", "α..ω", "items[0]..items[n]", "A..\nB"] {
+            let first = "Use \(range) to select the complete range."
+            let second = "The following sentence describes the result."
+            for output in ["playback", "pieces", "stream"] {
+                let parts = try NarrationText.plan(NarrationInput(text: first + " " + second, output: output))
+                check(parts.map(\.text) == [first.replacingOccurrences(of: "\n", with: " "), second], "two-dot range stays in its sentence: \(range), \(output)")
+                check(parts.map(\.pauseAfter) == [0.20, 0.20], "range introduces no extra pauses: \(range), \(output)")
+            }
+        }
+        for first in ["The allowed range is A..B.", "Wait...", "The value is 3.14.", "The label is \"ready\"."] {
+            let second = "The following sentence describes the result."
+            let parts = try NarrationText.plan(NarrationInput(text: first + " " + second, output: "stream"))
+            check(parts.map(\.text) == [first, second], "real sentence boundary after range, decimal, quote, or ellipsis: \(first)")
+        }
+        for (opening, closing) in [("\"", "\""), ("“", "”"), ("'", "'"), ("‘", "’"), ("«", "»"), ("(\"", "\")")] {
+            for punctuation in [".", "?", "!", "?!"] {
+                let first = "The editor said \(opening)This article is ready\(punctuation)\(closing)"
+                let second = "The next paragraph explains the details."
+                let parts = try NarrationText.plan(NarrationInput(text: first + " " + second, output: "stream"))
+                check(parts.map(\.text) == [first, second], "closing quote stays with sentence: \(closing), \(punctuation)")
+                check(parts.map(\.pauseAfter) == [0.20, 0.20], "quoted ending receives a sentence pause: \(closing), \(punctuation)")
+            }
+        }
+        let quotedRanges = "🙂 The editor said \"Use A..B and 1..10 for these ranges.\" “Continue with α .. ω.”"
+        let quotedParts = try NarrationText.plan(NarrationInput(text: quotedRanges, output: "stream"))
+        check(quotedParts.map(\.text) == ["🙂 The editor said \"Use A..B and 1..10 for these ranges.\"", "“Continue with α .. ω.”"], "Unicode ranges inside quoted sentences")
+        check(quotedParts.allSatisfy { (quotedRanges as NSString).substring(with: $0.sourceRange) == $0.text }, "range protection preserves original Unicode source offsets and punctuation")
         let noPeriods = try NarrationText.plan(NarrationInput(text: "Options:\n● Faster startup\n● Lower memory\nThe next paragraph begins."))
         check(noPeriods.map(\.text) == ["Options:", "Faster startup", "Lower memory", "The next paragraph begins."], "unpunctuated bullet list followed by prose")
         check(noPeriods.map(\.pauseAfter) == [0.65, 0.40, 0.65, 0.20], "unpunctuated list boundary pauses")

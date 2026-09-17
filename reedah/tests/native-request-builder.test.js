@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { buildSentenceRanges } = require("../sentence");
 const {
   applyCustomVocab,
   buildSentenceJobs
@@ -39,4 +40,15 @@ test("buildSentenceJobs rejects invalid sentence ranges", () => {
     () => buildSentenceJobs("hello", [{ start: 0, end: "5" }], []),
     /sentenceRanges\[0\] must include integer start\/end/
   );
+});
+
+test("range and quote boundaries reach model jobs without changing highlight offsets", () => {
+  const first = '🙂 He said "Use SQL across A..B for these records."';
+  const second = "Then inspect the result with the next query.";
+  const text = `${first} ${second}`;
+  const jobs = buildSentenceJobs(text, buildSentenceRanges(text), [{ spelling: "SQL", pronunciation: "sequel" }]);
+  assert.deepEqual(jobs, [
+    { index: 0, location: 0, length: first.length, text: first.replace("SQL", "sequel") },
+    { index: 1, location: first.length + 1, length: second.length, text: second }
+  ]);
 });
