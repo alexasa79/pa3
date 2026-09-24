@@ -30,6 +30,14 @@ The voice is PA3's American senior engineer. Playback speed is applied in Chrome
 
 Each complete sentence is a streaming request. Highlighting is approximate because Qwen does not supply word timestamps. Generation can fall behind playback on a busy GPU; the player then shows **Buffering** and resumes when audio is available.
 
+## Mathematical text
+
+Reedah includes KaTeX's rendered HTML text even when KaTeX marks it `aria-hidden`. This covers inline variables and comparisons in paragraphs, including LeetCode editorials. When KaTeX also supplies MathML, Reedah reads the HTML copy once and excludes the duplicate MathML/TeX annotation. Hidden surrounding content remains excluded. Formula highlighting wraps the whole formula and leaves its internal markup intact.
+
+Before sending a sentence to PA3, Reedah expands `≥`, `≤`, `≠`, and `≈` into spoken comparisons. Original text offsets remain unchanged for highlighting. This is not a general mathematical speech parser: fractions, powers, matrices, and other two-dimensional notation still need structural interpretation.
+
+Other formats needing dedicated support are [MathJax CommonHTML and SVG](https://docs.mathjax.org/en/latest/web/components/output.html), native MathML (including [KaTeX's MathML-only mode](https://katex.org/docs/options)), unrendered TeX, and equations stored as images. These should use a semantic formula or accessible description rather than flattening their drawing/layout markup into text.
+
 ## Development and tests
 
 Run these from the repository root:
@@ -42,5 +50,7 @@ make integration-test  # Live bridge and Qwen checks; PA3 must be running and id
 ```
 
 The three Reedah targets are also available inside this directory as `make test`, `make browser-test`, and `make integration-test`. Browser tests use a temporary Chrome profile, and integration tests do not play sound.
+
+Math regressions cover comparison pronunciation and UTF-16 offsets in `tests/native-request-builder.test.js`, and the reported LeetCode paragraph, duplicate representations, hidden content, and formula highlight cleanup in `tests/math-narration-browser.mjs`.
 
 See the [bridge documentation](native/README.md) for streaming behavior and the [PA3 narration API](../README.md#local-narration) for HTTP endpoints and limits. PA3 targets macOS 14 and later; automated tests do not replace testing on an actual older Mac or a physical sleep/wake cycle.

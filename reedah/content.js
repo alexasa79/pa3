@@ -21,7 +21,8 @@
   const HOVER_BOX_PADDING = 32;
   const LIST_OVERLAY_MAX_GAP = 32;
   const HIDDEN_TEXT_SELECTOR =
-    "[hidden], [aria-hidden='true'], .sr-only, .sr-only-focusable, .visually-hidden, .screen-reader-text";
+    "[hidden], .sr-only, .sr-only-focusable, .visually-hidden, .screen-reader-text";
+  const KATEX_HTML_SELECTOR = ".katex > .katex-html";
   const state = {
     enabled: false,
     overlays: new Map(),
@@ -287,6 +288,13 @@
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return false;
 
+    // A quotation already includes its nested paragraphs, quotes, and lists.
+    // Give its text one owner so advancing cannot read those descendants again.
+    for (let quote = el.parentElement?.closest("blockquote"); quote;
+      quote = quote.parentElement?.closest("blockquote")) {
+      if (isCandidate(quote)) return false;
+    }
+
     if (!isListItem(el)) {
       const parentListItem = el.parentElement && el.parentElement.closest("li");
       if (parentListItem && isCandidate(parentListItem)) {
@@ -373,6 +381,24 @@
     if (!parent) return true;
     if (parent.closest(HIDDEN_TEXT_SELECTOR)) return false;
 
+    // KaTeX's visual output is marked aria-hidden even in HTML-only mode.
+    // Read that representation once; its optional MathML sibling contains the
+    // same formula plus a TeX annotation, neither of which should be repeated.
+    const mathML = parent.closest(".katex > .katex-mathml");
+    if (mathML?.parentElement.querySelector(":scope > .katex-html")) return false;
+    const mathHTML = parent.closest(KATEX_HTML_SELECTOR);
+    for (let hidden = parent.closest("[aria-hidden='true']"); hidden;
+      hidden = hidden.parentElement?.closest("[aria-hidden='true']")) {
+      if (hidden !== mathHTML) return false;
+    }
+    if (mathHTML) {
+      // The exception is for rendered math, not a hidden formula or subtree.
+      for (let el = parent; el; el = el.parentElement) {
+        const style = getComputedStyle(el);
+        if (style.display === "none" || style.visibility !== "visible" || style.opacity === "0") return false;
+      }
+    }
+
     if (isListItem(targetEl)) {
       const ownerListItem = parent.closest("li");
       if (ownerListItem && ownerListItem !== targetEl) {
@@ -384,23 +410,8 @@
   }
 
   function getFullText(el) {
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    let text = "";
-    let node = walker.nextNode();
-    while (node) {
-      if (!shouldIncludeTextNode(el, node)) {
-        node = walker.nextNode();
-        continue;
-      }
-      const value = normalizeNarrationText(node.nodeValue || "");
-      if (!value.length) {
-        node = walker.nextNode();
-        continue;
-      }
-      text += value;
-      node = walker.nextNode();
-    }
-    return text;
+    // Extraction and highlighting must share the same text and UTF-16 offsets.
+    return collectTextSegments(el).map(segment => segment.text).join("");
   }
 
   function buildNarrationPayload(el) {
@@ -546,12 +557,9 @@
     const spans = [];
     const entries = [];
     for (const slice of slices) {
-      const span = wrapTextSlice(
-        slice.segment.node,
-        slice.startOffset,
-        slice.endOffset,
-        highlightMode
-      );
+      const span = slice.segment.math
+        ? wrapMathHighlight(slice.segment.node, highlightMode)
+        : wrapTextSlice(slice.segment.node, slice.startOffset, slice.endOffset, highlightMode);
       if (!span) continue;
 
       const sliceStart = Math.max(sentence.start, slice.segment.start) - sentence.start;
@@ -565,7 +573,9 @@
       entries.push({
         span,
         startOffset: sliceStart,
-        endOffset: sliceEnd
+        endOffset: sliceEnd,
+        math: slice.segment.math === true,
+        ...(slice.segment.math ? { text: slice.segment.text.slice(slice.startOffset, slice.endOffset) } : {})
       });
     }
 
@@ -629,7 +639,7 @@
     const ranges = [];
     for (const entry of entries) {
       if (!entry || !entry.span) continue;
-      const text = entry.span.textContent || "";
+      const text = entry.text ?? entry.span.textContent ?? "";
       if (!text) continue;
       if (!Number.isSafeInteger(entry.startOffset) || !Number.isSafeInteger(entry.endOffset)) {
         console.error("Reedah: Invalid sentence offsets for word highlights.");
@@ -684,7 +694,7 @@
     if (!Array.isArray(wordEntries)) return;
 
     const span = entry.span;
-    const text = span.textContent || "";
+    const text = entry.text ?? span.textContent ?? "";
     if (!text) return;
     const entryStart = entry.startOffset;
     const entryEnd = entry.endOffset;
@@ -694,6 +704,16 @@
     }
     if (text.length !== entryEnd - entryStart) {
       console.error("Reedah: Highlight slice text mismatch.");
+      return;
+    }
+
+    if (entry.math) {
+      // Tint the whole formula without splitting or rewriting its typesetting.
+      const wordSpan = document.createElement("span");
+      wordSpan.className = "reedah-highlight-word";
+      while (span.firstChild) wordSpan.appendChild(span.firstChild);
+      span.appendChild(wordSpan);
+      wordEntries.push({ span: wordSpan, startOffset: entryStart, endOffset: entryEnd });
       return;
     }
 
@@ -818,13 +838,41 @@
       if (value.length) {
         const start = offset;
         const end = offset + value.length;
-        segments.push({ node, start, end });
+        const math = node.parentElement?.closest(KATEX_HTML_SELECTOR)?.parentElement;
+        const previous = segments[segments.length - 1];
+        if (math && previous?.node === math) {
+          previous.text += value;
+          previous.end = end;
+        } else {
+          segments.push({ node: math || node, text: value, start, end, math: !!math });
+        }
         offset = end;
       }
       node = walker.nextNode();
     }
 
     return segments;
+  }
+
+  function createHighlightSpan(highlightMode) {
+    const span = document.createElement("span");
+    span.className = "reedah-highlight";
+    span.classList.add(highlightMode === HIGHLIGHT_MODE_DARK
+      ? "reedah-highlight-on-dark" : "reedah-highlight-on-light");
+    return span;
+  }
+
+  function wrapMathHighlight(node, highlightMode) {
+    if (!node?.parentNode) return null;
+    try {
+      const span = createHighlightSpan(highlightMode);
+      node.parentNode.insertBefore(span, node);
+      span.appendChild(node);
+      return span;
+    } catch (error) {
+      console.error("Reedah: Failed to wrap formula highlight.", error);
+      return null;
+    }
   }
 
   function wrapTextSlice(node, startOffset, endOffset, highlightMode) {
@@ -854,13 +902,7 @@
         target.splitText(sliceLength);
       }
 
-      const span = document.createElement("span");
-      span.className = "reedah-highlight";
-      span.classList.add(
-        highlightMode === HIGHLIGHT_MODE_DARK
-          ? "reedah-highlight-on-dark"
-          : "reedah-highlight-on-light"
-      );
+      const span = createHighlightSpan(highlightMode);
       target.parentNode.insertBefore(span, target);
       span.appendChild(target);
       return span;

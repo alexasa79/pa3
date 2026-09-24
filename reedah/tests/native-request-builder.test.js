@@ -52,3 +52,24 @@ test("range and quote boundaries reach model jobs without changing highlight off
     { index: 1, location: first.length + 1, length: second.length, text: second }
   ]);
 });
+
+test("math comparisons are spoken explicitly without shifting sentence highlight offsets", () => {
+  const text = "🙂 First check that X≥0 holds. Then compare X ≤ 10, X≠5, and X≈3.";
+  const ranges = buildSentenceRanges(text);
+  const jobs = buildSentenceJobs(text, ranges, []);
+  assert.deepEqual(jobs.map(job => job.text), [
+    "🙂 First check that X is greater than or equal to 0 holds.",
+    "Then compare X is less than or equal to 10, X is not equal to 5, and X is approximately equal to 3."
+  ]);
+  assert.deepEqual(jobs.map(job => [job.location, job.length]),
+    ranges.map(range => [range.start, range.end - range.start]));
+});
+
+test("math pronunciation preserves vocabulary substitutions and ordinary code punctuation", () => {
+  const text = "Check limit≥0 in a_b.cpp, then x + y = z and https://example.org/a_b.";
+  const jobs = buildSentenceJobs(text, [{start: 0, end: text.length}], [
+    {spelling: "limit", pronunciation: "upper bound"}
+  ]);
+  assert.equal(jobs[0].text,
+    "Check upper bound is greater than or equal to 0 in a underscore b dot C P P, then x + y = z and https://example.org/a_b.");
+});

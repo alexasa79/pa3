@@ -24,5 +24,29 @@
 <pre><div class="mdx-p" id="code-block">Skip block code.</div></pre>
 <div class="mdx-p" id="hidden" hidden>Skip hidden text.</div>
 <div class="mdx-p" id="invisible" style="display:none">Skip invisible text.</div>
+<blockquote id="quoted-paragraph"><p id="quote-child">A quoted paragraph should be narrated exactly once.</p></blockquote>
+<p id="after-quote">Reading continues after the quotation.</p>
+<blockquote id="bare-quote">A quotation can contain <em>inline text</em> without a paragraph element.</blockquote>
+<blockquote id="mixed-quote">Opening quotation text.
+<p id="mixed-quote-child">The quotation continues in a paragraph.</p>
+Closing quotation text.</blockquote>
+<blockquote id="nested-quote">Outer quotation text.
+<blockquote id="inner-quote"><p id="inner-quote-child">Inner quotation text.</p></blockquote>
+<p id="outer-quote-child">More outer quotation text.</p>
+</blockquote>
+<blockquote id="multi-paragraph-quote">
+<p id="first-quote-paragraph">First paragraph of the quotation.</p>
+<p id="second-quote-paragraph">Second paragraph of the quotation.</p>
+</blockquote>
+<blockquote id="list-quote"><p id="list-quote-intro">Quoted list introduction.</p>
+<ul><li id="quoted-item">First quoted item.
+<ul><li id="quoted-nested-item">Nested quoted item.</li></ul></li></ul>
+</blockquote>
+<ul><li id="item-with-quote">A list item introduces a quote.
+<blockquote id="quote-inside-item"><p id="quote-inside-item-child">The list item's quotation.</p></blockquote>
+<ul><li id="item-after-quote">An independently narrated nested item.</li></ul>
+</li></ul>
+<blockquote id="custom-quote"><div class="mdx-p" id="custom-quote-child">A custom paragraph inside a quotation.</div></blockquote>
+<div class="mdx-p" id="custom-quote-wrapper"><blockquote id="wrapped-quote"><p id="wrapped-quote-child">A quotation inside a custom wrapper.</p></blockquote></div>
 </div>
 </main>

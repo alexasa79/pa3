@@ -85,6 +85,17 @@
     "0": "zero", "1": "one", "2": "two", "3": "three", "4": "four",
     "5": "five", "6": "six", "7": "seven", "8": "eight", "9": "nine", "+": "plus"
   };
+  const MATH_COMPARISONS = {
+    "≥": "is greater than or equal to", "≤": "is less than or equal to",
+    "≠": "is not equal to", "≈": "is approximately equal to"
+  };
+
+  function pronounceMathComparisons(text) {
+    // Expand only for speech, after sentence segmentation. The job's original
+    // location and length continue to refer to the displayed symbols.
+    return text.replace(/[ \t]*([≥≤≠≈])[ \t]*/gu,
+      (_, symbol) => ` ${MATH_COMPARISONS[symbol]} `);
+  }
 
   function pronouncePaths(text) {
     if (typeof text !== "string") throw new Error("Narration text must be a string.");
@@ -179,7 +190,9 @@
         continue;
       }
 
-      const preparedSentence = pronounceIdentifiers(pronouncePaths(applyCustomVocab(rawSentence, customVocab)));
+      const preparedSentence = pronounceMathComparisons(
+        pronounceIdentifiers(pronouncePaths(applyCustomVocab(rawSentence, customVocab)))
+      );
       jobs.push({
         index,
         location: start,
