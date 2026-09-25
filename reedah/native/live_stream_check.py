@@ -62,6 +62,21 @@ try:
     print("PASS live prefetch promotion and playback backpressure",flush=True)
 finally: a.close()
 
+# Browser/unit tests assert exact formula speech and source offsets. Here check
+# that representative prepared speech also survives the real bridge and Qwen
+# streaming path. This validates audio transport, not acoustic pronunciation.
+a=Bridge([
+    "The value of x squared plus y squared equals z squared.",
+    "Read fraction alpha plus 1 over square root of beta end root end fraction."
+])
+try:
+    for index in range(2):
+        event=a.until("audio_end")
+        assert event["index"]==index and event["chunks"]>0, event
+    a.until("finished")
+    print("PASS live mathematical speech: powers, Greek letters, nested fraction and root",flush=True)
+finally: a.close()
+
 long_text="The audio begins while the speech model continues generating the rest of this sentence, and cancelling this request should clean up its temporary audio without cancelling a separate request from another browser tab."
 a=Bridge([long_text]); b=None
 try:

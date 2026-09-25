@@ -48,6 +48,7 @@
         "playback_history.js",
         "controls_navigation.js",
         "narration_text.js",
+        "math_narration.js",
         "time_stretch.js",
         "stream_audio.js",
         "content.js"
@@ -74,6 +75,7 @@
         "playback_history.js",
         "controls_navigation.js",
         "narration_text.js",
+        "math_narration.js",
         "time_stretch.js",
         "stream_audio.js",
         "content.js"

@@ -3,6 +3,11 @@
   if (!frameDetection) { console.error("Reedah: Frame detection unavailable."); return; }
   if (!frameDetection.shouldRunInFrame()) return;
   const IN_EDITOR_FRAME = frameDetection.isEditorFrame();
+  const mathNarration = window.ReedahMathNarration;
+  if (!mathNarration || typeof mathNarration.readFormula !== "function") {
+    console.error("Reedah: Mathematical narration helpers unavailable.");
+    return;
+  }
 
   const MIN_TEXT_LENGTH = 5;
   const MIN_HEADING_LENGTH = 3;
@@ -17,12 +22,12 @@
   const HIGHLIGHT_MODE_DARK = "dark";
   const DEFAULT_OL_START = 1;
   const CUSTOM_PARAGRAPH_SELECTOR = "div.mdx-p, [role='paragraph']";
-  const CANDIDATE_SELECTOR = `p, li, blockquote, h1, h2, h3, h4, h5, h6, ${CUSTOM_PARAGRAPH_SELECTOR}`;
+  const TEXT_CANDIDATE_SELECTOR = `p, li, blockquote, h1, h2, h3, h4, h5, h6, ${CUSTOM_PARAGRAPH_SELECTOR}`;
+  const CANDIDATE_SELECTOR = `${TEXT_CANDIDATE_SELECTOR}, ${mathNarration.ROOT_SELECTOR}`;
   const HOVER_BOX_PADDING = 32;
   const LIST_OVERLAY_MAX_GAP = 32;
   const HIDDEN_TEXT_SELECTOR =
-    "[hidden], .sr-only, .sr-only-focusable, .visually-hidden, .screen-reader-text";
-  const KATEX_HTML_SELECTOR = ".katex > .katex-html";
+    "[hidden], [aria-hidden='true'], .sr-only, .sr-only-focusable, .visually-hidden, .screen-reader-text";
   const state = {
     enabled: false,
     overlays: new Map(),
@@ -270,15 +275,25 @@
     if (el.closest(exclusions)) {
       return false;
     }
+    if (el.closest(mathNarration.METADATA_SELECTOR)) return false;
 
     // MDX renderers and accessible custom components can use divs for paragraphs.
     // If such a wrapper contains semantic blocks, narrate those children instead.
-    if (el.matches(CUSTOM_PARAGRAPH_SELECTOR) && el.querySelector(CANDIDATE_SELECTOR)) return false;
+    if (el.matches(CUSTOM_PARAGRAPH_SELECTOR) && el.querySelector(TEXT_CANDIDATE_SELECTOR)) return false;
+    const isMath = el.matches(mathNarration.ROOT_SELECTOR);
+    if (isMath) {
+      if (el.parentElement?.closest(mathNarration.ROOT_SELECTOR)) return false;
+      const paragraph = el.parentElement?.closest(TEXT_CANDIDATE_SELECTOR);
+      if (paragraph && isCandidate(paragraph)) return false;
+      if (!mathNarration.isVisibleRoot(el)) return false;
+    }
     if (isLinkOnly(el)) return false;
 
     const text = getText(el);
     const minLength = isHeading(el) ? MIN_HEADING_LENGTH : MIN_TEXT_LENGTH;
-    if (text.length < minLength) return false;
+    // SVG/CHTML formulas can have no text nodes at all. Their speech lives in
+    // MathML or attributes, and is validated when narration starts.
+    if (text.length < minLength && !isMath && !el.querySelector(mathNarration.ROOT_SELECTOR)) return false;
 
     const style = window.getComputedStyle(el);
     if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) {
@@ -380,24 +395,6 @@
     const parent = node.parentElement;
     if (!parent) return true;
     if (parent.closest(HIDDEN_TEXT_SELECTOR)) return false;
-
-    // KaTeX's visual output is marked aria-hidden even in HTML-only mode.
-    // Read that representation once; its optional MathML sibling contains the
-    // same formula plus a TeX annotation, neither of which should be repeated.
-    const mathML = parent.closest(".katex > .katex-mathml");
-    if (mathML?.parentElement.querySelector(":scope > .katex-html")) return false;
-    const mathHTML = parent.closest(KATEX_HTML_SELECTOR);
-    for (let hidden = parent.closest("[aria-hidden='true']"); hidden;
-      hidden = hidden.parentElement?.closest("[aria-hidden='true']")) {
-      if (hidden !== mathHTML) return false;
-    }
-    if (mathHTML) {
-      // The exception is for rendered math, not a hidden formula or subtree.
-      for (let el = parent; el; el = el.parentElement) {
-        const style = getComputedStyle(el);
-        if (style.display === "none" || style.visibility !== "visible" || style.opacity === "0") return false;
-      }
-    }
 
     if (isListItem(targetEl)) {
       const ownerListItem = parent.closest("li");
@@ -825,32 +822,47 @@
       return [];
     }
     const segments = [];
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    let node = walker.nextNode();
     let offset = textOffset;
-
-    while (node) {
-      if (!shouldIncludeTextNode(el, node)) {
-        node = walker.nextNode();
-        continue;
-      }
-      const value = normalizeNarrationText(node.nodeValue || "");
-      if (value.length) {
-        const start = offset;
-        const end = offset + value.length;
-        const math = node.parentElement?.closest(KATEX_HTML_SELECTOR)?.parentElement;
-        const previous = segments[segments.length - 1];
-        if (math && previous?.node === math) {
-          previous.text += value;
-          previous.end = end;
-        } else {
-          segments.push({ node: math || node, text: value, start, end, math: !!math });
+    const append = (node, text, math) => {
+      if (!text.length) return;
+      const previous = segments.at(-1);
+      if (previous && (previous.math || math) && /[\p{L}\p{N}]$/u.test(previous.text) && /^[\p{L}\p{N}]/u.test(text)) {
+        // Spoken operators have word boundaries even when rendered symbols do
+        // not. Keep synthetic spaces on the atomic formula segment so text-node
+        // offsets still address exactly the original DOM characters.
+        if (math) text = ` ${text}`;
+        else {
+          previous.text += ' ';
+          previous.end += 1;
+          offset += 1;
         }
-        offset = end;
       }
-      node = walker.nextNode();
+      segments.push({node, text, start:offset, end:offset+text.length, math});
+      offset += text.length;
+    };
+    const pending = [el];
+    try {
+      while (pending.length) {
+        const node = pending.pop();
+        if (node.nodeType === Node.TEXT_NODE) {
+          if (shouldIncludeTextNode(el,node)) append(node,normalizeNarrationText(node.nodeValue || ""),false);
+          continue;
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE || node.matches(mathNarration.METADATA_SELECTOR)) continue;
+        if (node.matches(mathNarration.ROOT_SELECTOR)) {
+          const owner = node.closest("li");
+          if (isListItem(el) && owner && owner !== el) continue;
+          if (mathNarration.isVisibleRoot(node)) append(node,mathNarration.readFormula(node),true);
+          // Never walk a renderer's duplicate visual, accessibility, and source
+          // children. One atomic segment also keeps formula highlights intact.
+          continue;
+        }
+        for (let i=node.childNodes.length-1;i>=0;i-=1) pending.push(node.childNodes[i]);
+      }
+    } catch (error) {
+      console.error("Reedah: Failed to read mathematical narration.", error);
+      return [];
     }
-
     return segments;
   }
 

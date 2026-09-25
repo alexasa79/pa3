@@ -1,0 +1,56 @@
+<section id="math-variants">
+<style>
+#math-variants { max-width: 650px; background: white; color: black; }
+#math-variants mjx-assistive-mml, #math-variants .MJX_Assistive_MathML, #math-variants .mwe-math-mathml-a11y { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(1px,1px,1px,1px); }
+#math-variants mjx-container, #math-variants mjx-math, #math-variants mjx-c { display: inline-block; }
+#math-variants mjx-c::before { content: 'x²'; }
+#math-variants .MathJax_Display { display: block; text-align: center; }
+</style>
+<p id="native-power" data-expected="Compute x squared before continuing.">Compute <math><msup><mi>x</mi><mn>2</mn></msup></math> before continuing.</p>
+<p id="native-fraction" data-expected="Use fraction x plus 1 over square root of y end root end fraction now.">Use <math><mfrac><mrow><mi>x</mi><mo>+</mo><mn>1</mn></mrow><msqrt><mi>y</mi></msqrt></mfrac></math> now.</p>
+<p id="katex-mathml-only" data-expected="Bound x subscript i end subscript from below.">Bound <span class="katex"><math><semantics><msub><mi>x</mi><mi>i</mi></msub><annotation encoding="application/x-tex">x_i</annotation></semantics></math></span> from below.</p>
+<p id="katex-structural" data-expected="The cost is n cubed overall.">The cost is <span class="katex"><span class="katex-mathml"><math><semantics><msup><mi>n</mi><mn>3</mn></msup><annotation encoding="application/x-tex">n^3</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base">n<sup>3</sup></span></span></span> overall.</p>
+<p id="mjx-chtml" data-expected="Read x squared once.">Read <mjx-container class="MathJax" jax="CHTML"><mjx-math aria-hidden="true"><mjx-c></mjx-c></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math><msup><mi>x</mi><mn>2</mn></msup></math></mjx-assistive-mml></mjx-container> once.</p>
+<p id="mjx-svg" data-expected="Read fraction a over b end fraction once.">Read <mjx-container class="MathJax" jax="SVG"><svg aria-hidden="true" width="30" height="20"><path d="M0 10H30"/></svg><mjx-assistive-mml><math><mfrac><mi>a</mi><mi>b</mi></mfrac></math></mjx-assistive-mml></mjx-container> once.</p>
+<p id="mjx-v2" data-expected="Legacy alpha plus beta is retained.">Legacy <span class="MathJax_CHTML" aria-hidden="true"><span>α+β</span><span class="MJX_Assistive_MathML"><math><mrow><mi>α</mi><mo>+</mo><mi>β</mi></mrow></math></span></span> is retained.</p>
+<div id="legacy-display-parent"><span class="MathJax_Preview"><math><mi>duplicate</mi></math></span><div id="legacy-display" class="MathJax_Display" data-expected="x cubed"><span class="MathJax_SVG" aria-hidden="true"><svg width="30" height="20"><path d="M0 10H30"/></svg><span class="MJX_Assistive_MathML"><math><msup><mi>x</mi><mn>3</mn></msup></math></span></span></div></div>
+<p id="mjx-v4" data-expected="Read x to the fourth power once.">Read <mjx-container jax="CHTML" aria-label="x to the fourth power"><mjx-math><mjx-c></mjx-c></mjx-math></mjx-container> once.</p>
+<p id="mjx-v4-svg" data-expected="Read x squared once.">Read <mjx-container jax="SVG"><svg aria-label="x squared" role="img" width="30" height="20"><path d="M0 10H30"/></svg></mjx-container> once.</p>
+<p id="mjx-semantic" data-expected="Read x squared once.">Read <mjx-container jax="CHTML"><mjx-math data-semantic-speech="x squared"><mjx-c></mjx-c></mjx-math></mjx-container> once.</p>
+<p id="mjx-v4-plain" data-expected="Read x squared once.">Read <mjx-container jax="SVG" data-speech-attached="true" data-semantic-speech-none="x squared" data-semantic-speech="&lt;speak&gt;x &lt;break time='200ms'/&gt;squared&lt;/speak&gt;"><svg width="30" height="20"><path d="M0 10H30"/></svg></mjx-container> once.</p>
+<math id="standalone-math" display="block" data-expected="x times y"><mrow><mi>x</mi><mo>×</mo><mi>y</mi></mrow></math>
+<mjx-container id="standalone-svg" jax="SVG" aria-label="x squared" data-expected="x squared"><svg width="30" height="20"><path d="M0 10H30"/></svg></mjx-container>
+<div id="mdx-with-math" class="mdx-p" data-expected="Keep this introduction to x squared and the rest of the prose.">Keep this introduction to <math><msup><mi>x</mi><mn>2</mn></msup></math> and the rest of the prose.</div>
+<p id="wikimedia" data-expected="The value of pi is constant.">The value of <span class="mwe-math-element"><span class="mwe-math-mathml-a11y"><math alttext="{\displaystyle\pi}"><semantics><mi>π</mi><annotation encoding="application/x-tex">{\displaystyle\pi}</annotation></semantics></math></span><svg width="20" height="20" aria-hidden="true"><text x="0" y="16">π</text></svg></span> is constant.</p>
+<p id="hidden-variants" data-expected="Visible prose only.">Visible prose<span aria-hidden="true"><mjx-container aria-label="hidden math"><svg width="20" height="20"></svg></mjx-container></span><span hidden><math><mi>hidden</mi></math></span> only.</p>
+<ul><li id="list-with-math" data-expected="Value x squared.">Value <math><msup><mi>x</mi><mn>2</mn></msup></math>.<ul><li id="nested-list-math" data-expected="Inner y cubed.">Inner <math><msup><mi>y</mi><mn>3</mn></msup></math>.</li></ul></li></ul>
+<p id="structured-exponent" data-expected="Compute x to the power of square root of 2 end root end power now.">Compute <math><msup><mi>x</mi><msqrt><mn>2</mn></msqrt></msup></math> now.</p>
+<p id="structured-index" data-expected="Compute root with index square root of 3 end root of x end root now.">Compute <math><mroot><mi>x</mi><msqrt><mn>3</mn></msqrt></mroot></math> now.</p>
+<p id="indented-semantics" data-expected="Compute x squared plus sum from 0 to n now.">Compute <math>
+  <msup><semantics><mi>x</mi><annotation encoding="application/x-tex">x</annotation></semantics>
+    <semantics><mn>2</mn><annotation encoding="application/x-tex">2</annotation></semantics>
+  </msup><mo>+</mo><munderover>
+    <mstyle>
+      <mo>∑</mo>
+    </mstyle><mn>0</mn><mi>n</mi>
+  </munderover>
+</math> now.</p>
+<p id="accent-false" data-expected="Read x overscript right arrow end overscript here.">Read <math><mover accent="false"><mi>x</mi><mo>→</mo></mover></math> here.</p>
+<p id="accent-hat" data-expected="Read hat over x here.">Read <math><mover accent="true"><mi>x</mi><mo>ˆ</mo></mover></math> here.</p>
+<p id="binomial-stack" data-expected="Read open parenthesis stack n above k end stack close parenthesis here.">Read <math><mrow><mo>(</mo><mfrac linethickness=" .0em "><mi>n</mi><mi>k</mi></mfrac><mo>)</mo></mrow></math> here.</p>
+<p id="matrix-blank" data-expected="Read table; row 1, column 1, 1, column 2, blank; row 2, column 1, 0, column 2, 1; end table here.">Read <math><mtable><mtr><mtd><mn>1</mn></mtd><mtd></mtd></mtr><mtr><mtd><mn>0</mn></mtd><mtd><mn>1</mn></mtd></mtr></mtable></math> here.</p>
+<p id="unicode-quotes" data-expected="🙂 “Use x to the power of 2.5 end power here.” Then check alpha plus beta." data-sentences='["🙂 “Use x to the power of 2.5 end power here.”", "Then check alpha plus beta."]'>🙂 “Use <math><msup><mi>𝑥</mi><mn>2.5</mn></msup></math> here.” Then check <math><mi>α</mi><mo>+</mo><mi>β</mi></math>.</p>
+<p id="adjacent-math" data-expected="Use x plus y as the expression.">Use <math><mi>x</mi></math><math><mo>+</mo><mi>y</mi></math> as the expression.</p>
+<p id="math-prose-boundaries" data-expected="For all x squared values, check (alpha) again.">For all<math><msup><mi>x</mi><mn>2</mn></msup></math>values, check (<math><mi>α</mi></math>) again.</p>
+<ol start="12"><li id="ordered-math" data-expected="Use x squared in REPL. Then verify fraction 1 over 2 end fraction here." data-prefix="Twelve. " data-vocab='[{"spelling":"REPL","pronunciation":"repul"}]' data-job-texts='["Twelve. Use x squared in repul.", "Then verify fraction 1 over 2 end fraction here."]'>Use <math><msup><mi>x</mi><mn>2</mn></msup></math> in REPL. Then verify <math><mfrac><mn>1</mn><mn>2</mn></mfrac></math> here.</li></ol>
+<p id="speech-label-priority" data-expected="Read label for the whole expression once.">Read <mjx-container aria-label=" label for the whole expression "><mjx-math data-semantic-speech-none="duplicate child label">visible expression</mjx-math><mjx-assistive-mml><math><menclose><mi>unsupported alternative</mi></menclose></math></mjx-assistive-mml></mjx-container> once.</p>
+<p id="styled-hidden-math" data-expected="Keep visible prose only.">Keep visible prose<span style="display:none"><math><mi>hidden</mi></math></span><span style="visibility:hidden"><math><mi>hidden</mi></math></span><span style="opacity:0"><mjx-container aria-label="hidden"><mjx-math>x</mjx-math></mjx-container></span> only.</p>
+<p id="unsupported-math" data-error="Unsupported MathML element">Reject the entire request <math><menclose notation="updiagonalstrike"><mi>x</mi></menclose></math> instead of losing its meaning.</p>
+<p id="missing-math-source" data-error="no supported MathML or speech label">Do not guess from these paths <mjx-container jax="SVG"><svg width="30" height="20"><path d="M0 10H30"/></svg></mjx-container>.</p>
+<p id="bad-speech-label" data-error="Empty mathematical aria-label">Do not retry bad speech as MathML <mjx-container aria-label=""><math><mi>x</mi></math></mjx-container>.</p>
+<p id="unsupported-speech-markup" data-error="Speech markup requires a plain-text math label">Do not send SSML to Qwen <mjx-container data-semantic-speech="&lt;speak&gt;x squared&lt;/speak&gt;"><svg width="30" height="20"><path d="M0 10H30"/></svg></mjx-container>.</p>
+<p id="invalid-power" data-error="Unsupported MathML element">Reject this unsupported exponent <math><msup><mi>x</mi><menclose><mn>2</mn></menclose></msup></math> completely.</p>
+<p id="merged-cell" data-error="table cell span">Reject merged coordinates <math><mtable><mtr><mtd columnspan="2"><mi>x</mi></mtd></mtr></mtable></math> completely.</p>
+<p id="ambiguous-math-source" data-error="multiple MathML representations">Do not silently lose the second expression <mjx-container><math><mi>x</mi></math><math><mi>y</mi></math></mjx-container>.</p>
+<p id="empty-math" data-error="Empty mathematical expression">Do not skip empty formula content <math><mspace width="1em"></mspace></math> here.</p>
+</section>

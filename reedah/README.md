@@ -32,11 +32,15 @@ Each complete sentence is a streaming request. Highlighting is approximate becau
 
 ## Mathematical text
 
-Reedah includes KaTeX's rendered HTML text even when KaTeX marks it `aria-hidden`. This covers inline variables and comparisons in paragraphs, including LeetCode editorials. When KaTeX also supplies MathML, Reedah reads the HTML copy once and excludes the duplicate MathML/TeX annotation. Hidden surrounding content remains excluded. Formula highlighting wraps the whole formula and leaves its internal markup intact.
+Reedah recognizes native MathML, [KaTeX HTML and MathML output](https://katex.org/docs/options), [MathJax HTML/SVG with accessibility metadata](https://docs.mathjax.org/en/v4.0/basic/accessibility.html), and Wikimedia's MathML-backed equation wrappers. It reads each formula once, excluding duplicate visual copies, TeX annotations, and MathJax previews. Standalone formulas receive their own narration control; formulas inside paragraphs belong to that paragraph.
 
-Before sending a sentence to PA3, Reedah expands `≥`, `≤`, `≠`, and `≈` into spoken comparisons. Original text offsets remain unchanged for highlighting. This is not a general mathematical speech parser: fractions, powers, matrices, and other two-dimensional notation still need structural interpretation.
+The MathML reader preserves fractions, powers, subscripts, roots, sum/integral limits, fences, and table rows/columns. It names common operators and Greek letters. For example, `x²` becomes “x squared,” and a nested fraction is spoken with explicit “fraction … over … end fraction” boundaries. This is a structural reader for common presentation MathML, not a complete mathematical speech engine.
 
-Other formats needing dedicated support are [MathJax CommonHTML and SVG](https://docs.mathjax.org/en/latest/web/components/output.html), native MathML (including [KaTeX's MathML-only mode](https://katex.org/docs/options)), unrendered TeX, and equations stored as images. These should use a semantic formula or accessible description rather than flattening their drawing/layout markup into text.
+For MathJax, Reedah reads the whole-expression speech label or the assistive MathML. It understands MathJax 4's plain-text `data-semantic-speech-none` attribute and never sends SSML tags to Qwen. KaTeX uses MathML when present; HTML-only KaTeX retains its rendered text, including the variables on LeetCode. Before sending a sentence to PA3, Reedah also expands `≥`, `≤`, `≠`, and `≈` into spoken comparisons.
+
+Extraction and highlighting share offsets into the narration text, with each formula mapped to one intact DOM element. Hidden surrounding content stays excluded, and highlighting does not modify a renderer's internal markup. All reading and conversion happen locally in the extension, with no new downloads or bridge processing.
+
+Remaining gaps include unrendered TeX/macros, equations stored only as images, and structural interpretation of complex HTML-only KaTeX. MathJax without a speech label or assistive MathML, unsupported MathML constructs/operators, and malformed formulas produce a console error and stop that paragraph; Reedah does not retry by reading misleading layout text or narrate a partial paragraph.
 
 ## Development and tests
 
@@ -51,6 +55,10 @@ make integration-test  # Live bridge and Qwen checks; PA3 must be running and id
 
 The three Reedah targets are also available inside this directory as `make test`, `make browser-test`, and `make integration-test`. Browser tests use a temporary Chrome profile, and integration tests do not play sound.
 
-Math regressions cover comparison pronunciation and UTF-16 offsets in `tests/native-request-builder.test.js`, and the reported LeetCode paragraph, duplicate representations, hidden content, and formula highlight cleanup in `tests/math-narration-browser.mjs`.
+Math unit tests cover nested powers/roots/fractions, renderer wrappers and annotations, accents versus overscripts, limits, fences, labeled/empty table cells, malformed input, and size/depth limits in `tests/math-narration.test.js`. A square root used as an exponent must never become “squared” just because its flattened text is `2`. Fraction-rule and accent cases follow [MathML Core](https://www.w3.org/TR/mathml-core/). Comparison pronunciation and UTF-16 offsets also have tests in `tests/native-request-builder.test.js`.
+
+Browser regressions cover the reported LeetCode paragraph, native MathML, KaTeX modes, MathJax 2/3/4 HTML/SVG/speech labels, Wikimedia wrappers, standalone controls, duplicate representations, hidden content, adjacent formulas, Unicode/quoted sentence boundaries, ordered-list prefixes, and custom vocabulary. They check exact sentence jobs, actual Play requests through a stubbed extension port, intact formula markup, repeated light/dark highlight cleanup, renderer updates, and that invalid formulas open no native session. Empty or ambiguous representations and unsupported table spans must stop the paragraph rather than lose content.
+
+These are deterministic speech-text and browser fixtures, not a complete MathML conformance suite or tests of every live renderer release. They verify what is sent to Qwen; they cannot guarantee the model's spoken pronunciation. The opt-in integration target checks real audio generation and streaming separately.
 
 See the [bridge documentation](native/README.md) for streaming behavior and the [PA3 narration API](../README.md#local-narration) for HTTP endpoints and limits. PA3 targets macOS 14 and later; automated tests do not replace testing on an actual older Mac or a physical sleep/wake cycle.

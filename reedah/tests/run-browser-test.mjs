@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {checkParagraphs} from './paragraph-detection-browser.mjs';
 import {checkHighlights} from './highlight-browser.mjs';
-import {checkMathNarration} from './math-narration-browser.mjs';
+import {checkMathNarration, checkMathVariants, checkMathUpdates} from './math-narration-browser.mjs';
 import {checkFactorioNarration} from './factorio-narration-browser.mjs';
 const profile=await mkdtemp(join(tmpdir(),'reedah-audio-browser-'));
 const log=await open(join(profile,'diagnostics.log'),'w');
@@ -52,6 +52,8 @@ try {
   await checkParagraphs(call);
   await checkHighlights(call);
   await checkMathNarration(call);
+  await checkMathVariants(call);
+  await checkMathUpdates(call);
   await checkFactorioNarration(call);
 } finally {
   socket?.close();
