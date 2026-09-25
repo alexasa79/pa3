@@ -242,11 +242,13 @@ chrome.runtime.onConnect.addListener((port) => {
     const current = {window:message.window ?? 2, consumed:new Set()};
     session = current;
 
-    const text = typeof message.text === "string" ? message.text.trim() : "";
+    // Sentence ranges address the content script's original UTF-16 text.
+    // Trimming here shifts every range past its opening and into the next one.
+    const text = typeof message.text === "string" ? message.text : "";
     const sentenceRanges = Array.isArray(message.sentenceRanges)
       ? message.sentenceRanges
       : null;
-    if (!text) {
+    if (!text.trim()) {
       port.postMessage({ type: "error", error: "empty_text" });
       return;
     }

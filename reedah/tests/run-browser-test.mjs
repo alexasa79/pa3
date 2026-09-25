@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import {checkParagraphs} from './paragraph-detection-browser.mjs';
 import {checkHighlights} from './highlight-browser.mjs';
 import {checkMathNarration} from './math-narration-browser.mjs';
+import {checkFactorioNarration} from './factorio-narration-browser.mjs';
 const profile=await mkdtemp(join(tmpdir(),'reedah-audio-browser-'));
 const log=await open(join(profile,'diagnostics.log'),'w');
 const browser=spawn(process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',[
@@ -51,6 +52,7 @@ try {
   await checkParagraphs(call);
   await checkHighlights(call);
   await checkMathNarration(call);
+  await checkFactorioNarration(call);
 } finally {
   socket?.close();
   if(browser.pid){try{process.kill(-browser.pid,'SIGTERM');}catch(error){if(error.code!=='ESRCH')throw error;}}

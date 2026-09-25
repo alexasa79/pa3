@@ -25,6 +25,32 @@ function setup(deferred = false) {
   return {hosts, content, storage};
 }
 const start = {type:'start', utteranceId:'test', text:'PA3 is ready.', sentenceRanges:[{start:0,end:13}]};
+test('background keeps DOM whitespace aligned with sentence offsets from the Factorio paragraph', async () => {
+  const {buildSentenceRanges}=require('../sentence');
+  const sentences=[
+    'It all started in the hot summer of 2024 when we worked really hard to finish the Space Age DLC.',
+    'The game was almost ready, but we wanted some feedback from our players.',
+    'A decision was made to organise a playtesting event (FFF-427), where teams of players could play the game from start to finish and provide us with in-person feedback and criticism to deliver the best product you all deserved.'
+  ];
+  for (const padding of ['   ', '\n  ', '\u00a0\t']) {
+    const {hosts,content}=setup();
+    const text=padding+sentences.join(' ')+padding;
+    const ranges=buildSentenceRanges(text);
+    await content.onMessage.emit({...start,text,sentenceRanges:ranges});
+    const jobs=hosts[0].sent[0].sentenceJobs;
+    assert.deepEqual(Array.from(jobs,job=>job.text),sentences);
+    for (const job of jobs) {
+      assert.equal(job.text,text.slice(job.location,job.location+job.length));
+    }
+    await hosts[0].onMessage.emit({event:'finished'});
+  }
+});
+test('whitespace-only requests are rejected without connecting to the native host', async () => {
+  const {hosts,content}=setup();
+  await content.onMessage.emit({...start,text:' \n\t ',sentenceRanges:[{start:0,end:4}]});
+  assert.equal(hosts.length,0);
+  assert.equal(content.sent.at(-1).error,'empty_text');
+});
 test('background sends prepared text to PA3 bridge and returns audio with playback speed', async () => {
   const {hosts, content} = setup();
   await content.onMessage.emit(start);
