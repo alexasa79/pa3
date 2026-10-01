@@ -4,6 +4,8 @@ Native macOS dictation and narration, with the Reedah Chrome extension for readi
 
 While dictation is paused, press `t` to cycle the current word through lowercase → initial capital → uppercase → lowercase. Existing capitalization determines the next form; mixed casing resets to lowercase. Punctuation stays intact. `a` appends text after the selection; `i` or `I` inserts before it.
 
+Press `u` to undo the last transcript edit, restoring its text and selection. Repeated presses step backward through up to 100 edits, including capitalization, insertion, replacement, repeat change, paragraph joins/splits, clipboard insertion, and completed spell checks. Undo history resets when a new session or dictation begins. In the text editor, `u` is ordinary text.
+
 ## Repository layout
 
 - `Sources/`, `Native/`, and `Resources/`: the PA3 macOS app and native speech helper.

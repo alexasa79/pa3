@@ -85,6 +85,16 @@ final class DictationController: ObservableObject {
     private var runningStop = false
     private var transcriptColumnLimit = 100
     private var wordFrames: [Int: CGRect] = [:]
+    private struct EditSnapshot {
+        let text: String
+        let selectedWord: Int
+        let selectionStart: Int
+        let selectionEnd: Int
+        let selectionAnchor: Int
+        let lastReplace: String
+        let lastReplaceSet: Bool
+    }
+    private var undoHistory: [(before: EditSnapshot, after: String)] = []
 
     /// Mutes output while dictating (and re-asserts across the Bluetooth profile switch the
     /// microphone triggers). We mute rather than lower the volume because a Bluetooth headset's
@@ -131,6 +141,7 @@ final class DictationController: ObservableObject {
     }
 
     func beginNewSession() {
+        undoHistory.removeAll()
         committed = ""
         segment = ""
         text = ""
@@ -231,6 +242,8 @@ final class DictationController: ObservableObject {
             if !dictating { startEditMode(.insertAfter) }
         case "t":
             if !dictating { cycleCurrentWordCapitalization() }
+        case "u":
+            if !dictating { undoLastEdit() }
         case "A":
             addSelectedWordToVocabulary()
         case "D":
@@ -263,6 +276,9 @@ final class DictationController: ObservableObject {
         var bindings = ["space: resume dictation", "enter: paste result", "v: insert clipboard", "s: spell check transcript", "R: restart dictation", "q: discard", "ctrl+c: abort", "o: new paragraph", "D: edit dictionary", "J: join paragraph", "S: split paragraph", "arrows: navigate", "shift+arrows: expand selection"]
         if lastReplaceSet && hasSelection() {
             bindings.append(".: repeat change")
+        }
+        if undoHistory.last?.after == text {
+            bindings.append("u: undo last change")
         }
         if hasSelection() {
             bindings += ["c: edit selection", "C: change all", "t: cycle capitalization", "a: append after", "i: insert before", "x: delete selection", "A: add vocab"]
@@ -414,6 +430,7 @@ final class DictationController: ObservableObject {
             debugMessage = serviceMessage
             return
         }
+        undoHistory.removeAll()
         onDictationWillStart?()
         if editMode { cancelEditMode() }
         segment = ""
@@ -454,6 +471,7 @@ final class DictationController: ObservableObject {
     }
 
     func restartDictation() {
+        undoHistory.removeAll()
         let wasDictating = dictating
         if wasDictating {
             dictating = false
@@ -497,6 +515,8 @@ final class DictationController: ObservableObject {
     }
 
     private func insertClipboardParagraph() {
+        let before = editSnapshot()
+        defer { recordEdit(before) }
         let pasteboard = NSPasteboard.general
         let normalized = joinParagraphWords(splitWords(pasteboard.string(forType: .string) ?? ""))
         if normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -550,6 +570,8 @@ final class DictationController: ObservableObject {
                 switch result {
                 case .success(let output):
                     if self.committed.trimmingCharacters(in: .whitespacesAndNewlines) == input {
+                        let before = self.editSnapshot()
+                        defer { self.recordEdit(before) }
                         self.committed = output.trimmingCharacters(in: .whitespacesAndNewlines)
                         self.segment = ""
                         self.updateDisplay()
@@ -743,6 +765,8 @@ final class DictationController: ObservableObject {
     }
 
     private func cycleCurrentWordCapitalization() {
+        let before = editSnapshot()
+        defer { recordEdit(before) }
         guard words.indices.contains(selectedWord) else { return }
         let replacement = nextWordCapitalization(words[selectedWord])
         guard replacement != words[selectedWord] else { return }
@@ -752,7 +776,40 @@ final class DictationController: ObservableObject {
         updateDisplay()
     }
 
+    private func editSnapshot() -> EditSnapshot {
+        EditSnapshot(text: text, selectedWord: selectedWord, selectionStart: selectionStart,
+                     selectionEnd: selectionEnd, selectionAnchor: selectionAnchor,
+                     lastReplace: lastReplace, lastReplaceSet: lastReplaceSet)
+    }
+
+    private func recordEdit(_ before: EditSnapshot) {
+        guard before.text != text, !dictating, !runningStop else { return }
+        undoHistory.append((before, text))
+        if undoHistory.count > 100 { undoHistory.removeFirst() }
+        objectWillChange.send()
+    }
+
+    private func undoLastEdit() {
+        guard !runningStop, let undo = undoHistory.last else { return }
+        guard text == undo.after else {
+            undoHistory.removeAll()
+            return
+        }
+        undoHistory.removeLast()
+        committed = undo.before.text
+        segment = ""
+        selectedWord = undo.before.selectedWord
+        selectionStart = undo.before.selectionStart
+        selectionEnd = undo.before.selectionEnd
+        selectionAnchor = undo.before.selectionAnchor
+        lastReplace = undo.before.lastReplace
+        lastReplaceSet = undo.before.lastReplaceSet
+        updateDisplay()
+    }
+
     private func deleteSelection() {
+        let before = editSnapshot()
+        defer { recordEdit(before) }
         if words.isEmpty {
             clearSelection()
             committed = ""
@@ -857,6 +914,8 @@ final class DictationController: ObservableObject {
         let oldCount = words.count
         switch editAction {
         case .insertBefore, .insertAfter:
+            let before = editSnapshot()
+            defer { recordEdit(before) }
             if replacementWords.isEmpty {
                 cancelEditMode()
                 return
@@ -888,6 +947,8 @@ final class DictationController: ObservableObject {
     }
 
     private func commitEditModeReplaceAll() {
+        let before = editSnapshot()
+        defer { recordEdit(before) }
         guard !words.isEmpty else {
             cancelEditMode()
             return
@@ -907,6 +968,8 @@ final class DictationController: ObservableObject {
     }
 
     private func replaceSelection(with replacementWords: [String], remember: Bool) {
+        let before = editSnapshot()
+        defer { recordEdit(before) }
         guard !words.isEmpty else {
             cancelEditMode()
             return
@@ -940,6 +1003,8 @@ final class DictationController: ObservableObject {
     }
 
     private func joinNextParagraph() {
+        let before = editSnapshot()
+        defer { recordEdit(before) }
         guard !words.isEmpty, wordParagraphs.count == words.count else { return }
         let idx = max(0, min(selectedWord, words.count - 1))
         let current = wordParagraphs[idx]
@@ -956,6 +1021,8 @@ final class DictationController: ObservableObject {
     }
 
     private func splitCurrentParagraph() {
+        let before = editSnapshot()
+        defer { recordEdit(before) }
         guard !words.isEmpty, wordParagraphs.count == words.count else { return }
         let idx = max(0, min(selectedWord, words.count - 1))
         let current = wordParagraphs[idx]
