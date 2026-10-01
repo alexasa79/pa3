@@ -70,36 +70,11 @@ struct DictationView: View {
     private var mainContent: some View {
         ZStack(alignment: .trailing) {
             transcript
-            helpTab
             if showingShortcuts {
                 shortcutsOverlay
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-    }
-
-    private var helpTab: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.16)) {
-                showingShortcuts.toggle()
-            }
-        } label: {
-            Image(systemName: "keyboard")
-                .font(.system(size: 10, weight: .semibold))
-                .rotationEffect(.degrees(270))
-                .scaleEffect(x: 1.0, y: 1.85, anchor: .center)
-                .frame(width: 12, height: 74)
-        }
-        .buttonStyle(.plain)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 5))
-        .overlay(
-            RoundedRectangle(cornerRadius: 5)
-                .stroke(Color.secondary.opacity(0.35), lineWidth: 1)
-        )
-        .help("Show keyboard shortcuts")
-        .padding(.trailing, 4)
-        .opacity(showingShortcuts ? 0 : 1)
     }
 
     private var transcript: some View {
@@ -223,17 +198,20 @@ struct DictationView: View {
             Divider()
         }
         .shadow(color: Color.black.opacity(0.18), radius: 12, x: -3, y: 0)
-        .onHover { hovering in
-            if !hovering {
-                withAnimation(.easeInOut(duration: 0.16)) {
-                    showingShortcuts = false
-                }
-            }
-        }
     }
 
     private var controls: some View {
         HStack(spacing: 10) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    showingShortcuts.toggle()
+                }
+            } label: {
+                Label("Shortcuts", systemImage: "keyboard")
+            }
+            .help(showingShortcuts ? "Hide keyboard shortcuts" : "Show keyboard shortcuts")
+            .accessibilityValue(showingShortcuts ? "Shown" : "Hidden")
+
             Button {
                 controller.startDictation()
             } label: {
@@ -269,10 +247,6 @@ struct DictationView: View {
             contextControl
 
             Spacer()
-
-            Text("Dictation starts on launch. Use Stop/Start to test the audio path.")
-                .font(.system(size: 14, design: .monospaced))
-                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
