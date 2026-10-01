@@ -15,8 +15,6 @@ struct DictationView: View {
             controls
             Divider()
             mainContent
-            Divider()
-            footer
         }
         .background(Color(nsColor: .textBackgroundColor))
         .overlay(KeyCatcher { event in
@@ -303,27 +301,6 @@ struct DictationView: View {
             .disabled(controller.contextSeconds >= DictationController.contextSecondsRange.upperBound)
         }
         .help("Maximum audio context in seconds. When exceeded, trim at the earliest suitable sentence boundary and retain the rest.")
-    }
-
-    private var footer: some View {
-        HStack(spacing: 18) {
-            Text("Language")
-                .font(.system(size: 14, design: .monospaced).weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text("1 English")
-                .font(.system(size: 14, design: .monospaced))
-            Text("2 Russian")
-                .font(.system(size: 14, design: .monospaced))
-            Text("3 Hebrew")
-                .font(.system(size: 14, design: .monospaced))
-            Spacer()
-            Text("Current: \(controller.language.name)")
-                .font(.system(size: 14, design: .monospaced).weight(.semibold))
-                .foregroundStyle(.primary)
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 44)
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var editSheet: some View {

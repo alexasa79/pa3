@@ -2,28 +2,6 @@ import AppKit
 import Foundation
 import SwiftUI
 
-enum TranscriptionLanguage: String {
-    case english = "en"
-    case russian = "ru"
-    case hebrew = "he"
-
-    var tag: String {
-        switch self {
-        case .english: "[EN]"
-        case .russian: "[RU]"
-        case .hebrew: "[HE]"
-        }
-    }
-
-    var name: String {
-        switch self {
-        case .english: "English"
-        case .russian: "Russian"
-        case .hebrew: "Hebrew"
-        }
-    }
-}
-
 enum EditAction {
     case replace
     case replaceAll
@@ -53,7 +31,6 @@ final class DictationController: ObservableObject {
     @Published var pendingWordStart = -1
     @Published var editMode = false
     @Published var editText = ""
-    @Published var language: TranscriptionLanguage = .english
     @Published var lastReplace = ""
     @Published var lastReplaceSet = false
     @Published var lastUpdate: Date?
@@ -121,7 +98,6 @@ final class DictationController: ObservableObject {
         self.vocabulary = Vocabulary(path: Self.vocabularyPath())
         self.vocabularyWords = vocabulary.allWords()
         transcriber.setSystemPrompt(vocabulary.systemPrompt())
-        transcriber.setLanguage(language.rawValue)
         if UserDefaults.standard.object(forKey: Self.contextSecondsKey) != nil {
             contextSeconds = Self.contextSecondsRange.clamped(UserDefaults.standard.integer(forKey: Self.contextSecondsKey))
         }
@@ -221,12 +197,6 @@ final class DictationController: ObservableObject {
             toggleDictation()
         case "v":
             insertClipboardParagraph()
-        case "1":
-            setLanguage(.english)
-        case "2":
-            setLanguage(.russian)
-        case "3":
-            setLanguage(.hebrew)
         case "s":
             startTranscriptSpellCheck()
         case "R":
@@ -264,15 +234,6 @@ final class DictationController: ObservableObject {
         default:
             break
         }
-    }
-
-    private func setLanguage(_ newLanguage: TranscriptionLanguage) {
-        if language == newLanguage {
-            return
-        }
-        language = newLanguage
-        transcriber.setLanguage(newLanguage.rawValue)
-        updateStatusFor(combineText())
     }
 
     func keyBindings() -> [String] {
@@ -407,9 +368,9 @@ final class DictationController: ObservableObject {
     }
 
     private func updateStatusFor(_ value: String) {
-        var label = dictating ? "DICTATING \(language.tag)" : "PAUSED \(language.tag)"
+        var label = dictating ? "DICTATING" : "PAUSED"
         if dictating, !serviceMessage.isEmpty {
-            label = "\(serviceMessage) \(language.tag)"
+            label = serviceMessage
         }
         if spellChecking {
             label = "SPELL CHECKING"

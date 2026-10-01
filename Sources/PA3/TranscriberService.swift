@@ -118,7 +118,6 @@ final class TranscriberService {
     private var systemPrompt = ""
     /// Called with the absolute time of every cut. Used by the replay tool.
     var cutHandler: (@Sendable (Double, SegmentCut) -> Void)?
-    private var language = "en"
     private var isStopping = false
     private var captureRequested = false
     private var captureStopsInFlight = 0
@@ -168,12 +167,6 @@ final class TranscriberService {
     func setSystemPrompt(_ prompt: String) {
         stateLock.lock()
         systemPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        stateLock.unlock()
-    }
-
-    func setLanguage(_ value: String) {
-        stateLock.lock()
-        language = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         stateLock.unlock()
     }
 
@@ -608,7 +601,6 @@ final class TranscriberService {
 
         stateLock.lock()
         let prompt = systemPrompt
-        let currentLanguage = language
         let stopping = isStopping
         stateLock.unlock()
         if stopping {
@@ -617,9 +609,8 @@ final class TranscriberService {
         if !prompt.isEmpty {
             addField("prompt", prompt)
         }
-        if !currentLanguage.isEmpty {
-            addField("language", currentLanguage)
-        }
+        // Explicitly override the server's English default for every audio clip.
+        addField("language", "auto")
         addField("translate", "false")
         body.append("--\(boundary)--\r\n")
 
