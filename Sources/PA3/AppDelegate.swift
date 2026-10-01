@@ -83,7 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Start dictation", action: #selector(startFromMenu), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Read selection / Stop   ⌃⌥⌘N", action: #selector(readSelection), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Read selection / Stop   ⌃⌥⌘O", action: #selector(readSelection), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Stop narration", action: #selector(stopNarrationFromMenu), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Speech models…", action: #selector(showModelDownloads), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitFromMenu), keyEquivalent: "q"))
@@ -177,11 +177,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         hotKey?.register()
         Logger.info("global hotkey registered Ctrl+Option+Command+P")
-        narrationHotKey = GlobalHotKey(keyCode: 45, modifiers: modifiers) { [weak self] in
+        narrationHotKey = GlobalHotKey(keyCode: UInt32(kVK_ANSI_O), modifiers: modifiers) { [weak self] in
             DispatchQueue.main.async { self?.readSelection() }
         }
         narrationHotKey?.register()
-        Logger.info("narration hotkey registered Ctrl+Option+Command+N")
+        Logger.info("narration hotkey registered Ctrl+Option+Command+O")
     }
 
     @objc private func readSelection() {
@@ -215,7 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let text = result.text else { self.showNarrationNotice(result.message); return }
                 let response = self.narration.narrateSelection(result)
                 if response.status == 202 {
-                    self.showNarrationNotice("Narrating selection · ⌃⌥⌘N to stop")
+                    self.showNarrationNotice("Narrating selection · ⌃⌥⌘O to stop")
                     Logger.info("Selection narration accepted pid=\(pid) chars=\(text.count)")
                 } else {
                     let error = (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any]

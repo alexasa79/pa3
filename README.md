@@ -60,7 +60,7 @@ Add `--reference file.txt` to compare against known text. Without it, the replay
 
 ## Read selected text
 
-Select text in another app and press **Ctrl+Option+Command+N**. PA3 reads it through macOS Accessibility and narrates it using sample 4. Press the same shortcut again to stop and cancel queued narration, including while speech is being generated or a selection is being read. The menu bar also has **Read selection / Stop**. The shortcut leaves focus in the source app and does not open the microphone or use the clipboard.
+Select text in another app and press **Ctrl+Option+Command+O**. PA3 reads it through macOS Accessibility and narrates it using sample 4. Press the same shortcut again to stop and cancel queued narration, including while speech is being generated or a selection is being read. The menu bar also has **Read selection / Stop**. The shortcut leaves focus in the source app and does not open the microphone or use the clipboard.
 
 PA3 needs Accessibility permission in System Settings → Privacy & Security → Accessibility. Some apps do not expose selected text. In that case PA3 shows a brief notice instead of copying text or reading the whole document. Selection reads are bounded and limited to 100,000 characters. Stop dictation before using narration.
 
@@ -109,7 +109,7 @@ Reedah's Chrome native messaging bridge uses this API and keeps the token outsid
 
 Jobs can be queued, loading, generating, playing, completed, cancelled, or failed. Completion means playback finished. Generation can overlap playback. History keeps the latest 100 jobs in memory; restarting clears it. The queue holds ten waiting jobs, plus one active job. Requests allow 100,000 text characters and 512 KB of JSON. Queue overflow returns 429; invalid fields return 422; missing runtime files return 503.
 
-Starting dictation cancels narration. While dictation is active or its audio output is being restored, new narration requests return 409. PA3 preserves the user's system mute and volume settings. Press **Ctrl+Option+Command+N** again, use the menu bar's **Stop narration** item, or use the stop endpoint to interrupt speech.
+Starting dictation cancels narration. While dictation is active or its audio output is being restored, new narration requests return 409. PA3 preserves the user's system mute and volume settings. Press **Ctrl+Option+Command+O** again, use the menu bar's **Stop narration** item, or use the stop endpoint to interrupt speech.
 
 `make test` includes HTTP framing, Unicode splitting, and pronunciation tests. To exercise the running app with queue, playback, and cancellation tests, run `make narration-test`. This plays short test phrases and cancels outstanding narration jobs.
 
