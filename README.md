@@ -2,6 +2,8 @@
 
 Native macOS dictation and narration, with the Reedah Chrome extension for reading web pages aloud. PA3 runs Whisper and Qwen locally; Reedah requests narration through a small native messaging bridge and plays the audio in Chrome.
 
+While dictation is paused, press `t` to cycle the current word through lowercase → initial capital → uppercase → lowercase. Existing capitalization determines the next form; mixed casing resets to lowercase. Punctuation stays intact. `a` appends text after the selection; `i` or `I` inserts before it.
+
 ## Repository layout
 
 - `Sources/`, `Native/`, and `Resources/`: the PA3 macOS app and native speech helper.

@@ -229,6 +229,8 @@ final class DictationController: ObservableObject {
             if !dictating { startEditMode(.replaceAll) }
         case "a":
             if !dictating { startEditMode(.insertAfter) }
+        case "t":
+            if !dictating { cycleCurrentWordCapitalization() }
         case "A":
             addSelectedWordToVocabulary()
         case "D":
@@ -263,7 +265,7 @@ final class DictationController: ObservableObject {
             bindings.append(".: repeat change")
         }
         if hasSelection() {
-            bindings += ["c: edit selection", "C: change all", "a: append after", "i: insert before", "x: delete selection", "A: add vocab"]
+            bindings += ["c: edit selection", "C: change all", "t: cycle capitalization", "a: append after", "i: insert before", "x: delete selection", "A: add vocab"]
         }
         return bindings
     }
@@ -738,6 +740,16 @@ final class DictationController: ObservableObject {
             column += word.count
         }
         return result
+    }
+
+    private func cycleCurrentWordCapitalization() {
+        guard words.indices.contains(selectedWord) else { return }
+        let replacement = nextWordCapitalization(words[selectedWord])
+        guard replacement != words[selectedWord] else { return }
+        words[selectedWord] = replacement
+        committed = buildTextFromWordData(words: words, paragraphs: wordParagraphs)
+        segment = ""
+        updateDisplay()
     }
 
     private func deleteSelection() {
