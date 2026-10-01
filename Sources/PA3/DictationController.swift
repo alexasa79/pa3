@@ -832,8 +832,10 @@ final class DictationController: ObservableObject {
         } else {
             newParagraphs = Array(repeating: 0, count: newWords.count)
         }
-        words = newWords
-        wordParagraphs = normalizeParagraphs(newParagraphs)
+        let cleaned = cleanupDeletion(words: newWords, paragraphs: newParagraphs, at: start,
+                                      deletedParagraph: wordParagraphs.count == words.count ? wordParagraphs[end] : 0)
+        words = cleaned.words
+        wordParagraphs = cleaned.paragraphs
         committed = buildTextFromWordData(words: words, paragraphs: wordParagraphs)
         segment = ""
         if words.isEmpty {

@@ -4,7 +4,9 @@ Native macOS dictation and narration, with the Reedah Chrome extension for readi
 
 While dictation is paused, press `t` to cycle the current word through lowercase → initial capital → uppercase → lowercase. Existing capitalization determines the next form; mixed casing resets to lowercase. Punctuation stays intact. `a` appends text after the selection; `i` or `I` inserts before it.
 
-Press `u` to undo the last transcript edit, restoring its text and selection. Repeated presses step backward through up to 100 edits, including capitalization, insertion, replacement, repeat change, paragraph joins/splits, clipboard insertion, and completed spell checks. Undo history resets when a new session or dictation begins. In the text editor, `u` is ordinary text.
+Deleting with `x` conservatively cleans up the deletion boundary: orphan commas, semicolons and colons at a paragraph start, separators newly adjacent to a sentence stop (such as `.,`), and newly doubled separators. A plain lowercase word exposed at a clear sentence or paragraph start receives an initial capital. Acronyms, mixed casing, dotted abbreviations, common abbreviations, and ambiguous boundaries are preserved. Existing ellipses and combinations such as `?!` are left alone.
+
+Press `u` to undo the last transcript edit, restoring its text and selection. A deletion and its automatic cleanup undo together. Repeated presses step backward through up to 100 edits, including capitalization, insertion, replacement, repeat change, paragraph joins/splits, clipboard insertion, and completed spell checks. Undo history resets when a new session or dictation begins. In the text editor, `u` is ordinary text. Cleanup runs only on deletion, never on paste, manual replacement/insertion, or `t`, so you can retain unusual punctuation or capitalization. Abbreviation detection is conservative but cannot identify every lowercase abbreviation; use `t` or manual editing to correct its choice.
 
 ## Repository layout
 
