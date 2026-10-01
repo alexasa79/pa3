@@ -85,6 +85,12 @@ final class DictationController: ObservableObject {
     private var runningStop = false
     private var transcriptColumnLimit = 100
     private var wordFrames: [Int: CGRect] = [:]
+    private struct ReplacementSource {
+        let words: [String]
+        let paragraphs: [Int]
+    }
+    private var lastReplaceSource: ReplacementSource?
+
     private struct EditSnapshot {
         let text: String
         let selectedWord: Int
@@ -93,6 +99,7 @@ final class DictationController: ObservableObject {
         let selectionAnchor: Int
         let lastReplace: String
         let lastReplaceSet: Bool
+        let lastReplaceSource: ReplacementSource?
     }
     private var undoHistory: [(before: EditSnapshot, after: String)] = []
 
@@ -234,6 +241,8 @@ final class DictationController: ObservableObject {
             if !dictating { splitCurrentParagraph() }
         case ".":
             if !dictating { applyLastReplace() }
+        case ">":
+            if !dictating { applyLastReplaceToAll() }
         case "c":
             if !dictating { startEditMode(.replace) }
         case "C":
@@ -276,6 +285,9 @@ final class DictationController: ObservableObject {
         var bindings = ["space: resume dictation", "enter: paste result", "v: insert clipboard", "s: spell check transcript", "R: restart dictation", "q: discard", "ctrl+c: abort", "o: new paragraph", "D: edit dictionary", "J: join paragraph", "S: split paragraph", "arrows: navigate", "shift+arrows: expand selection"]
         if lastReplaceSet && hasSelection() {
             bindings.append(".: repeat change")
+        }
+        if lastReplaceSet && lastReplaceSource != nil && !words.isEmpty {
+            bindings.append(">: repeat change on all matches")
         }
         if undoHistory.last?.after == text {
             bindings.append("u: undo last change")
@@ -779,7 +791,8 @@ final class DictationController: ObservableObject {
     private func editSnapshot() -> EditSnapshot {
         EditSnapshot(text: text, selectedWord: selectedWord, selectionStart: selectionStart,
                      selectionEnd: selectionEnd, selectionAnchor: selectionAnchor,
-                     lastReplace: lastReplace, lastReplaceSet: lastReplaceSet)
+                     lastReplace: lastReplace, lastReplaceSet: lastReplaceSet,
+                     lastReplaceSource: lastReplaceSource)
     }
 
     private func recordEdit(_ before: EditSnapshot) {
@@ -804,6 +817,7 @@ final class DictationController: ObservableObject {
         selectionAnchor = undo.before.selectionAnchor
         lastReplace = undo.before.lastReplace
         lastReplaceSet = undo.before.lastReplaceSet
+        lastReplaceSource = undo.before.lastReplaceSource
         updateDisplay()
     }
 
@@ -959,6 +973,7 @@ final class DictationController: ObservableObject {
         let end = validSelectionEnd(start)
         let pattern = words[start...end].joined(separator: " ")
         let replacement = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+        rememberReplacement(from: start...end, replacement: splitWords(replacement))
         committed = committed.replacingOccurrences(of: pattern, with: replacement)
         segment = ""
         let split = splitWordsAndParagraphs(committed)
@@ -979,8 +994,7 @@ final class DictationController: ObservableObject {
         let start = validSelectionStart()
         let end = validSelectionEnd(start)
         if remember {
-            lastReplace = joinParagraphWords(replacementWords)
-            lastReplaceSet = true
+            rememberReplacement(from: start...end, replacement: replacementWords)
         }
         let para = paragraphForReplacement(start)
         words = Array(words[..<start]) + replacementWords + (end + 1 < words.count ? Array(words[(end + 1)...]) : [])
@@ -1002,6 +1016,57 @@ final class DictationController: ObservableObject {
     private func applyLastReplace() {
         if dictating || !lastReplaceSet { return }
         replaceSelection(with: splitWords(lastReplace), remember: false)
+    }
+
+    private func rememberReplacement(from range: ClosedRange<Int>, replacement: [String]) {
+        lastReplaceSource = ReplacementSource(
+            words: Array(words[range]),
+            paragraphs: normalizeParagraphs(Array(wordParagraphs[range])))
+        lastReplace = joinParagraphWords(replacement)
+        lastReplaceSet = true
+    }
+
+    private func applyLastReplaceToAll() {
+        guard !dictating, lastReplaceSet, let source = lastReplaceSource,
+              !source.words.isEmpty, wordParagraphs.count == words.count else { return }
+        let before = editSnapshot()
+        defer { recordEdit(before) }
+        let replacement = splitWords(lastReplace)
+        var matches: [Range<Int>] = []
+        var index = 0
+        // Find non-overlapping whole-token matches in the original transcript.
+        // Inserted replacement text is never searched again during this edit.
+        while index + source.words.count <= words.count {
+            let range = index..<(index + source.words.count)
+            if Array(words[range]) == source.words &&
+                normalizeParagraphs(Array(wordParagraphs[range])) == source.paragraphs {
+                matches.append(range)
+                index = range.upperBound
+            } else {
+                index += 1
+            }
+        }
+        guard !matches.isEmpty else { return }
+        for range in matches.reversed() {
+            let paragraph = wordParagraphs[range.lowerBound]
+            words.replaceSubrange(range, with: replacement)
+            wordParagraphs.replaceSubrange(range, with: Array(repeating: paragraph, count: replacement.count))
+            func adjusted(_ index: Int) -> Int {
+                if index >= range.upperBound { return index + replacement.count - range.count }
+                if index >= range.lowerBound {
+                    return range.lowerBound + min(index - range.lowerBound, max(0, replacement.count - 1))
+                }
+                return index
+            }
+            selectedWord = adjusted(selectedWord)
+            selectionStart = adjusted(selectionStart)
+            selectionEnd = adjusted(selectionEnd)
+            selectionAnchor = adjusted(selectionAnchor)
+        }
+        wordParagraphs = normalizeParagraphs(wordParagraphs)
+        committed = buildTextFromWordData(words: words, paragraphs: wordParagraphs)
+        segment = ""
+        updateDisplay()
     }
 
     private func joinNextParagraph() {

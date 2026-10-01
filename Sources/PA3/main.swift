@@ -118,7 +118,7 @@ if CommandLine.arguments.contains("--replay") || CommandLine.arguments.contains(
 }
 
 if CommandLine.arguments.contains("--whisper-text-test") {
-    let failures = runWhisperTextTests() + runSegmentationTests() + runNarrationTests() + runSelectedTextTests() + runWordCapitalizationTests() + runDeletionCleanupTests() + runUndoTests()
+    let failures = runWhisperTextTests() + runSegmentationTests() + runNarrationTests() + runSelectedTextTests() + runWordCapitalizationTests() + runDeletionCleanupTests() + runUndoTests() + runRepeatReplacementTests()
     print("whisper-text-test")
     if failures.isEmpty {
         print("ok")

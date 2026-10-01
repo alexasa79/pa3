@@ -8,6 +8,8 @@ Deleting with `x` conservatively cleans up the deletion boundary: orphan commas,
 
 Press `u` to undo the last transcript edit, restoring its text and selection. A deletion and its automatic cleanup undo together. Repeated presses step backward through up to 100 edits, including capitalization, insertion, replacement, repeat change, paragraph joins/splits, clipboard insertion, and completed spell checks. Undo history resets when a new session or dictation begins. In the text editor, `u` is ordinary text. Cleanup runs only on deletion, never on paste, manual replacement/insertion, or `t`, so you can retain unusual punctuation or capitalization. Abbreviation detection is conservative but cannot identify every lowercase abbreviation; use `t` or manual editing to correct its choice.
 
+After replacing `foo` with `bar`, `.` replaces the current selection with `bar`, while `>` replaces every remaining matching `foo` with `bar`. Matching is case-sensitive and uses whole tokens or selected phrases, preserving surrounding punctuation and paragraph boundaries. `.` does not change the original rule remembered for `>`. Bulk replacement is one undoable edit; replacement text is not recursively processed during the same command.
+
 ## Repository layout
 
 - `Sources/`, `Native/`, and `Resources/`: the PA3 macOS app and native speech helper.
