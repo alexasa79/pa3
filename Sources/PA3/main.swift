@@ -117,6 +117,14 @@ if CommandLine.arguments.contains("--replay") || CommandLine.arguments.contains(
     exit(Replay.main(arguments: CommandLine.arguments))
 }
 
+if CommandLine.arguments.contains("--transcript-layout-test") {
+    _ = NSApplication.shared
+    let failures = runTranscriptLayoutTests()
+    for failure in failures { print("FAIL:", failure) }
+    print(failures.isEmpty ? "transcript-layout-test: ok" : "transcript-layout-test: failed")
+    exit(failures.isEmpty ? 0 : 2)
+}
+
 if CommandLine.arguments.contains("--whisper-text-test") {
     let failures = runWhisperTextTests() + runSegmentationTests() + runNarrationTests() + runSelectedTextTests() + runWordCapitalizationTests() + runDeletionCleanupTests() + runUndoTests() + runRepeatReplacementTests()
     print("whisper-text-test")

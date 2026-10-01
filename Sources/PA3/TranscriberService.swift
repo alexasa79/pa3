@@ -17,6 +17,11 @@ struct WhisperSegment: Decodable {
     let words: [WhisperWord]?
 }
 
+struct TranscriptionUpdate: Sendable {
+    let text: String
+    let language: String?
+}
+
 struct WhisperTranscription: Decodable {
     let task: String?
     let language: String?
@@ -183,6 +188,10 @@ final class TranscriberService {
     }
 
     func startTranscribe(sendTo receiver: @escaping @Sendable (String) -> Void, skipWhisper: Bool = false) {
+        startTranscribeUpdates(sendTo: { receiver($0.text) }, skipWhisper: skipWhisper)
+    }
+
+    func startTranscribeUpdates(sendTo receiver: @escaping @Sendable (TranscriptionUpdate) -> Void, skipWhisper: Bool = false) {
         Logger.info("TranscriberService.startTranscribe")
         stopTranscribe()
 
@@ -280,7 +289,7 @@ final class TranscriberService {
         stopOwnedWhisperServer()
     }
 
-    private func startCaptureAndWorker(receiver: @escaping @Sendable (String) -> Void) {
+    private func startCaptureAndWorker(receiver: @escaping @Sendable (TranscriptionUpdate) -> Void) {
         Logger.info("startCaptureAndWorker")
         let permission = AVCaptureDevice.authorizationStatus(for: .audio)
         if permission == .denied || permission == .restricted {
@@ -409,7 +418,7 @@ final class TranscriberService {
         return result
     }
 
-    private func transcribeLoop(queue: SampleQueue, timestamp: String, sampleRate: Int, record: Bool = true, receiver: @escaping @Sendable (String) -> Void) {
+    private func transcribeLoop(queue: SampleQueue, timestamp: String, sampleRate: Int, record: Bool = true, receiver: @escaping @Sendable (TranscriptionUpdate) -> Void) {
         var audio: [Float] = []
         audio.reserveCapacity(sampleRate * 300)
         var consumedSamples = 0
@@ -511,7 +520,7 @@ final class TranscriberService {
 
     /// Sends the buffer to Whisper and commits whatever can be cut.
     /// Returns how many samples to drop from the front and the speech threshold measured on this buffer.
-    private func transcribeSlice(samples: [Float], offsetSamples: Int, sampleRate: Int, receiver: @escaping @Sendable (String) -> Void) -> (trim: Int, threshold: Float) {
+    private func transcribeSlice(samples: [Float], offsetSamples: Int, sampleRate: Int, receiver: @escaping @Sendable (TranscriptionUpdate) -> Void) -> (trim: Int, threshold: Float) {
         let segmentation = self.segmentation
         let energies = frameEnergies(samples: samples, sampleRate: sampleRate, frameSeconds: segmentation.frameSeconds)
         let threshold = speechThreshold(energies: energies, config: segmentation)
@@ -570,7 +579,7 @@ final class TranscriberService {
         Logger.info("Received Whisper transcription duration=\(String(format: "%.2f", duration)) text=\(String(reflecting: buildText(tokens.map(\.text))))")
         reportStatus("Dictation active")
         DispatchQueue.main.async {
-            receiver(text)
+            receiver(TranscriptionUpdate(text: text, language: transcription.language))
         }
         guard let cut else {
             return (0, threshold)
@@ -677,7 +686,7 @@ final class TranscriberService {
         sampleQueue = queue
         let thread = Thread { [weak self, weak queue] in
             guard let self, let queue else { return }
-            self.transcribeLoop(queue: queue, timestamp: "replay", sampleRate: sampleRate, record: false, receiver: receiver)
+            self.transcribeLoop(queue: queue, timestamp: "replay", sampleRate: sampleRate, record: false, receiver: { receiver($0.text) })
         }
         thread.name = "pa3.transcription.replay"
         workerThread = thread

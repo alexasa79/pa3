@@ -20,6 +20,7 @@ struct TranscriptToken: Identifiable {
 @MainActor
 final class DictationController: ObservableObject {
     @Published var text = ""
+    @Published private(set) var detectedLanguage: String?
     @Published var status = ""
     @Published var dictating = false
     @Published var spellChecking = false
@@ -124,6 +125,7 @@ final class DictationController: ObservableObject {
     }
 
     func beginNewSession() {
+        detectedLanguage = nil
         undoHistory.removeAll()
         committed = ""
         segment = ""
@@ -172,9 +174,9 @@ final class DictationController: ObservableObject {
         case (.space, _):
             toggleDictation()
         case (.left, _):
-            if !dictating { moveSelection(-1, extend: event.shift) }
+            if !dictating { moveSelectionHorizontal(-1, extend: event.shift) }
         case (.right, _):
-            if !dictating { moveSelection(1, extend: event.shift) }
+            if !dictating { moveSelectionHorizontal(1, extend: event.shift) }
         case (.up, _):
             if !dictating { moveSelectionVertical(-1, extend: event.shift) }
         case (.down, _):
@@ -379,10 +381,11 @@ final class DictationController: ObservableObject {
         status = count > 0 ? "\(label) | \(count) chars" : label
     }
 
-    private func handleTranscription(_ raw: String) {
+    func handleTranscription(_ update: TranscriptionUpdate) {
+        detectedLanguage = update.language
         serviceMessage = ""
         debugMessage = "Dictation active"
-        segment = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        segment = update.text.trimmingCharacters(in: .whitespacesAndNewlines)
         updateDisplay()
     }
 
@@ -412,7 +415,7 @@ final class DictationController: ObservableObject {
         serviceMessage = ""
         debugMessage = "Starting microphone..."
         clearSelection()
-        transcriber.startTranscribe { [weak self] value in
+        transcriber.startTranscribeUpdates { [weak self] value in
             Task { @MainActor in self?.handleTranscription(value) }
         }
         updateDisplay()
@@ -612,6 +615,35 @@ final class DictationController: ObservableObject {
         selectionStart = clamped
         selectionEnd = clamped
         selectionAnchor = clamped
+    }
+
+    private func moveSelectionHorizontal(_ direction: Int, extend: Bool) {
+        let paragraph = words.indices.filter { wordParagraphs.indices.contains($0) &&
+            wordParagraphs.indices.contains(selectedWord) && wordParagraphs[$0] == wordParagraphs[selectedWord] }
+            .map { words[$0] }.joined(separator: " ")
+        let rtl = TranscriptLayout.writingDirection(for: paragraph, language: detectedLanguage) == .rightToLeft
+        if let current = wordFrames[selectedWord] {
+            let candidates = wordFrames.filter { index, frame in
+                words.indices.contains(index) && abs(frame.midY - current.midY) < 4 &&
+                    (direction < 0 ? frame.midX < current.midX : frame.midX > current.midX)
+            }
+            if let next = candidates.min(by: { abs($0.value.midX - current.midX) < abs($1.value.midX - current.midX) })?.key {
+                moveSelection(next - selectedWord, extend: extend)
+                return
+            }
+            let down = rtl ? direction < 0 : direction > 0
+            let otherRows = wordFrames.filter { index, frame in
+                words.indices.contains(index) && (down ? frame.midY > current.midY + 4 : frame.midY < current.midY - 4)
+            }
+            if let distance = otherRows.values.map({ abs($0.midY - current.midY) }).min() {
+                let row = otherRows.filter { abs(abs($0.value.midY - current.midY) - distance) < 4 }
+                if let next = row.min(by: { direction < 0 ? $0.value.midX > $1.value.midX : $0.value.midX < $1.value.midX })?.key {
+                    moveSelection(next - selectedWord, extend: extend)
+                }
+            }
+            return
+        }
+        moveSelection(rtl ? -direction : direction, extend: extend)
     }
 
     private func moveSelection(_ delta: Int, extend: Bool) {

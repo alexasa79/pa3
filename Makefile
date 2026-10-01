@@ -36,6 +36,7 @@ test: pa3-test reedah-test
 pa3-test: decoder-test
 	swift build
 	.build/debug/pa3 --whisper-text-test
+	.build/debug/pa3 --transcript-layout-test
 	.build/debug/pa3 --narration-recovery-test
 	.build/debug/pa3 --model-download-test
 

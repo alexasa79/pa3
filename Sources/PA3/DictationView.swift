@@ -78,74 +78,9 @@ struct DictationView: View {
     }
 
     private var transcript: some View {
-        GeometryReader { geometry in
-            ScrollViewReader { proxy in
-                ScrollView {
-                    FlowLayout(spacing: 0, lineSpacing: 2) {
-                        ForEach(renderItems()) { item in
-                            if item.isBreak {
-                                Color.clear
-                                    .frame(width: 9000, height: 10)
-                            } else if item.selected && !controller.dictating && item.hasTrailingSpace && !item.selectionContinues {
-                                HStack(spacing: 0) {
-                                    Text(item.textWithoutTrailingSpace)
-                                        .font(.system(size: 16, design: .monospaced))
-                                        .padding(.horizontal, 2)
-                                        .frame(height: 21, alignment: .center)
-                                        .background(item.background)
-                                        .background(
-                                            GeometryReader { proxy in
-                                                Color.clear.preference(
-                                                    key: WordFramePreferenceKey.self,
-                                                    value: item.wordIndex.map { [$0: proxy.frame(in: .named("transcript"))] } ?? [:]
-                                                )
-                                            }
-                                        )
-                                        .foregroundStyle(item.foreground)
-                                    Text(" ")
-                                        .font(.system(size: 16, design: .monospaced))
-                                        .frame(height: 21, alignment: .center)
-                                }
-                                .id(item.id)
-                            } else {
-                                Text(item.displayText)
-                                    .font(.system(size: 16, design: .monospaced))
-                                    .padding(.horizontal, 2)
-                                    .frame(height: 21, alignment: .center)
-                                    .background(item.background)
-                                    .background(
-                                        GeometryReader { proxy in
-                                            Color.clear.preference(
-                                                key: WordFramePreferenceKey.self,
-                                                value: item.wordIndex.map { [$0: proxy.frame(in: .named("transcript"))] } ?? [:]
-                                            )
-                                        }
-                                    )
-                                    .foregroundStyle(item.foreground)
-                                    .id(item.id)
-                            }
-                        }
-                    }
-                    .padding(18)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
-                .onAppear {
-                    controller.setTranscriptLayoutWidth(geometry.size.width)
-                }
-                .onChange(of: geometry.size.width) {
-                    controller.setTranscriptLayoutWidth(geometry.size.width)
-                }
-                .onChange(of: controller.words.count) {
-                    if let last = renderItems().last?.id {
-                        proxy.scrollTo(last, anchor: .bottom)
-                    }
-                }
-                .onPreferenceChange(WordFramePreferenceKey.self) { frames in
-                    controller.setWordFrames(frames)
-                }
-            }
-        }
-        .coordinateSpace(name: "transcript")
+        TranscriptTextView(tokens: controller.tokens(), language: controller.detectedLanguage,
+                           dictating: controller.dictating, selectedWord: controller.selectedWord,
+                           onKey: controller.handleKey, onFrames: controller.setWordFrames)
     }
 
     private var shortcutsOverlay: some View {
@@ -336,30 +271,6 @@ struct DictationView: View {
         .frame(width: 560)
     }
 
-    private func renderItems() -> [RenderItem] {
-        let tokens = controller.tokens()
-        var items: [RenderItem] = []
-        var previousParagraph: Int?
-        for token in tokens {
-            if let previousParagraph, previousParagraph != token.paragraph {
-                items.append(RenderItem(id: "break-\(token.id)", displayText: "", isBreak: true, selected: false, pending: false, selectionContinues: false, wordIndex: nil))
-            }
-            let nextToken = token.id + 1 < tokens.count ? tokens[token.id + 1] : nil
-            let needsTrailingSpace = nextToken.map {
-                $0.paragraph == token.paragraph && hasAlphanumeric($0.text)
-            } ?? false
-            let selectionContinues = nextToken.map {
-                token.selected && $0.selected && $0.paragraph == token.paragraph
-            } ?? false
-            items.append(RenderItem(id: "word-\(token.id)", displayText: token.text + (needsTrailingSpace ? " " : ""), isBreak: false, selected: token.selected, pending: token.pending, selectionContinues: selectionContinues, wordIndex: token.id))
-            previousParagraph = token.paragraph
-        }
-        if items.isEmpty {
-            items.append(RenderItem(id: "empty", displayText: "", isBreak: false, selected: false, pending: false, selectionContinues: false, wordIndex: nil))
-        }
-        return items
-    }
-
     private func shortcutRows() -> [ShortcutRow] {
         controller.keyBindings().map { binding in
             let parts = binding.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
@@ -385,31 +296,6 @@ struct DictationView: View {
 private struct ShortcutRow {
     let key: String
     let description: String
-}
-
-private struct RenderItem: Identifiable {
-    let id: String
-    let displayText: String
-    let isBreak: Bool
-    let selected: Bool
-    let pending: Bool
-    let selectionContinues: Bool
-    let wordIndex: Int?
-
-    var highlighted: Bool { selected || pending }
-    var hasTrailingSpace: Bool { displayText.hasSuffix(" ") }
-    var textWithoutTrailingSpace: String {
-        hasTrailingSpace ? String(displayText.dropLast()) : displayText
-    }
-    var background: Color {
-        if selected { return Color.yellow.opacity(0.8) }
-        if pending { return Color.gray.opacity(0.25) }
-        return Color.clear
-    }
-    var foreground: Color {
-        if selected { return Color.black }
-        return Color.primary
-    }
 }
 
 private struct EditTextField: NSViewRepresentable {
@@ -508,72 +394,5 @@ private struct EditTextField: NSViewRepresentable {
                 super.keyDown(with: event)
             }
         }
-    }
-}
-
-private struct WordFramePreferenceKey: PreferenceKey {
-    static let defaultValue: [Int: CGRect] = [:]
-
-    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
-        value.merge(nextValue()) { _, new in new }
-    }
-}
-
-struct FlowLayout: Layout {
-    var spacing: CGFloat
-    var lineSpacing: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? 800
-        let rows = rows(width: width, subviews: subviews)
-        let height = rows.reduce(CGFloat.zero) { $0 + $1.height } + CGFloat(max(0, rows.count - 1)) * lineSpacing
-        return CGSize(width: width, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let rows = rows(width: bounds.width, subviews: subviews)
-        var y = bounds.minY
-        for row in rows {
-            var x = bounds.minX
-            for item in row.items {
-                let size = item.size
-                item.subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-                x += size.width + spacing
-            }
-            y += row.height + lineSpacing
-        }
-    }
-
-    private func rows(width: CGFloat, subviews: Subviews) -> [Row] {
-        var rows: [Row] = []
-        var current = Row()
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if size.width > width {
-                if !current.items.isEmpty {
-                    rows.append(current)
-                    current = Row()
-                }
-                rows.append(Row(items: [(subview, CGSize(width: width, height: size.height))], height: size.height))
-                continue
-            }
-            if !current.items.isEmpty && current.width + spacing + size.width > width {
-                rows.append(current)
-                current = Row()
-            }
-            current.items.append((subview, size))
-            current.width += (current.items.count > 1 ? spacing : 0) + size.width
-            current.height = max(current.height, size.height)
-        }
-        if !current.items.isEmpty {
-            rows.append(current)
-        }
-        return rows
-    }
-
-    private struct Row {
-        var items: [(subview: LayoutSubview, size: CGSize)] = []
-        var width: CGFloat = 0
-        var height: CGFloat = 0
     }
 }

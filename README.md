@@ -4,6 +4,8 @@ Native macOS dictation and narration, with the Reedah Chrome extension for readi
 
 Use **Shortcuts** in the toolbar to show or hide the keyboard reference. Dictation detects the spoken language automatically for each audio clip; no language selection is needed, and transcription stays in the spoken language rather than translating to English.
 
+Hebrew paragraphs display right to left using native bidirectional text layout. English phrases and numbers within Hebrew retain their normal order, and English paragraphs remain left to right. Whisper's detected language travels with each transcription and supplies the direction hint for text without strong letters, such as a paragraph containing only numbers. Arrow keys follow the displayed words; copying/pasting preserves the original logical text order.
+
 While dictation is paused, press `t` to cycle the current word through lowercase → initial capital → uppercase → lowercase. Existing capitalization determines the next form; mixed casing resets to lowercase. Punctuation stays intact. `a` appends text after the selection; `i` or `I` inserts before it.
 
 Deleting with `x` conservatively cleans up the deletion boundary: orphan commas, semicolons and colons at a paragraph start, separators newly adjacent to a sentence stop (such as `.,`), and newly doubled separators. A plain lowercase word exposed at a clear sentence or paragraph start receives an initial capital. Acronyms, mixed casing, dotted abbreviations, common abbreviations, and ambiguous boundaries are preserved. Existing ellipses and combinations such as `?!` are left alone.
