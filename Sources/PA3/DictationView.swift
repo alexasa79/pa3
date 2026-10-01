@@ -1,12 +1,8 @@
 import AppKit
 import SwiftUI
 
-// Use the property wrapper without requiring the newer SwiftUIMacros plugin.
-private typealias LegacyState<Value> = SwiftUI.State<Value>
-
 struct DictationView: View {
     @ObservedObject var controller: DictationController
-    @LegacyState private var showingShortcuts = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -70,7 +66,7 @@ struct DictationView: View {
     private var mainContent: some View {
         ZStack(alignment: .trailing) {
             transcript
-            if showingShortcuts {
+            if controller.showingShortcuts {
                 shortcutsOverlay
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
@@ -92,7 +88,7 @@ struct DictationView: View {
                 Spacer()
                 Button {
                     withAnimation(.easeInOut(duration: 0.16)) {
-                        showingShortcuts = false
+                        controller.toggleShortcuts()
                     }
                 } label: {
                     Image(systemName: "xmark")
@@ -105,19 +101,30 @@ struct DictationView: View {
             .padding(.top, 14)
             .padding(.bottom, 8)
 
+            Text("Dictation is paused. Close with ? or Esc to return; dictation resumes if it was active. Scroll for the full reference.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 12)
+
             ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(shortcutRows(), id: \.key) { row in
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(row.key)
-                                .font(.system(size: 13, design: .monospaced).weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .frame(width: 62, alignment: .leading)
-                            Text(row.description)
-                                .font(.system(size: 13, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.88)
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(controller.shortcutSections(), id: \.title) { section in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(section.title)
+                                .font(.system(size: 13, weight: .semibold))
+                            ForEach(shortcutRows(section.bindings), id: \.key) { row in
+                                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                    Text(row.key)
+                                        .font(.system(size: 13, design: .monospaced).weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                        .frame(width: 112, alignment: .leading)
+                                    Text(row.description)
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
                         }
                     }
                 }
@@ -125,12 +132,15 @@ struct DictationView: View {
                 .padding(.bottom, 14)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+            .scrollIndicators(.visible)
         }
-        .frame(width: 280)
+        .frame(width: 380)
         .frame(maxHeight: .infinity)
         .background(.regularMaterial)
         .overlay(alignment: .leading) {
-            Divider()
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor))
+                .frame(width: 1)
         }
         .shadow(color: Color.black.opacity(0.18), radius: 12, x: -3, y: 0)
     }
@@ -139,20 +149,20 @@ struct DictationView: View {
         HStack(spacing: 10) {
             Button {
                 withAnimation(.easeInOut(duration: 0.16)) {
-                    showingShortcuts.toggle()
+                    controller.toggleShortcuts()
                 }
             } label: {
                 Label("Shortcuts", systemImage: "keyboard")
             }
-            .help(showingShortcuts ? "Hide keyboard shortcuts" : "Show keyboard shortcuts")
-            .accessibilityValue(showingShortcuts ? "Shown" : "Hidden")
+            .help(controller.showingShortcuts ? "Hide keyboard shortcuts" : "Show keyboard shortcuts")
+            .accessibilityValue(controller.showingShortcuts ? "Shown" : "Hidden")
 
             Button {
                 controller.startDictation()
             } label: {
                 Label("Start", systemImage: "record.circle")
             }
-            .disabled(controller.dictating)
+            .disabled(!controller.canStartDictation)
 
             Button {
                 controller.stopDictation()
@@ -271,8 +281,8 @@ struct DictationView: View {
         .frame(width: 560)
     }
 
-    private func shortcutRows() -> [ShortcutRow] {
-        controller.keyBindings().map { binding in
+    private func shortcutRows(_ bindings: [String]) -> [ShortcutRow] {
+        bindings.map { binding in
             let parts = binding.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
             guard parts.count == 2 else {
                 return ShortcutRow(key: binding, description: "")

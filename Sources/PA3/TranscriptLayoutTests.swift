@@ -119,7 +119,13 @@ func runTranscriptLayoutTests() -> [String] {
             host.cacheDisplay(in: host.bounds, to: bitmap)
             try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/pa3-rtl-window.png"))
         }
-
+        controller.toggleShortcuts()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        host.layoutSubtreeIfNeeded()
+        if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/pa3-shortcuts-preview.png"))
+        }
     }
     controller.beginNewSession()
     check(controller.detectedLanguage == nil, "new session clears the model hint")

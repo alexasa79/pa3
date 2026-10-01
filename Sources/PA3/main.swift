@@ -126,7 +126,7 @@ if CommandLine.arguments.contains("--transcript-layout-test") {
 }
 
 if CommandLine.arguments.contains("--whisper-text-test") {
-    let failures = runWhisperTextTests() + runSegmentationTests() + runNarrationTests() + runSelectedTextTests() + runWordCapitalizationTests() + runDeletionCleanupTests() + runUndoTests() + runRepeatReplacementTests()
+    let failures = runWhisperTextTests() + runSegmentationTests() + runNarrationTests() + runSelectedTextTests() + runWordCapitalizationTests() + runDeletionCleanupTests() + runUndoTests() + runRepeatReplacementTests() + runShortcutsTests()
     print("whisper-text-test")
     if failures.isEmpty {
         print("ok")

@@ -23,6 +23,7 @@ final class DictationController: ObservableObject {
     @Published private(set) var detectedLanguage: String?
     @Published var status = ""
     @Published var dictating = false
+    @Published private(set) var showingShortcuts = false
     @Published var spellChecking = false
     @Published var words: [String] = []
     @Published var wordParagraphs: [Int] = []
@@ -61,6 +62,7 @@ final class DictationController: ObservableObject {
     private var editAction: EditAction = .replace
     private var editSelectAll = false
     private var runningStop = false
+    private var resumeAfterShortcuts = false
     private var transcriptColumnLimit = 100
     private var wordFrames: [Int: CGRect] = [:]
     private struct ReplacementSource {
@@ -125,6 +127,8 @@ final class DictationController: ObservableObject {
     }
 
     func beginNewSession() {
+        resumeAfterShortcuts = false
+        showingShortcuts = false
         detectedLanguage = nil
         undoHistory.removeAll()
         committed = ""
@@ -143,18 +147,21 @@ final class DictationController: ObservableObject {
     }
 
     func shutdown() {
+        resumeAfterShortcuts = false
         stopDictation()
         restoreOutput()
         transcriber.close()
     }
 
     func pasteAndHide() {
+        resumeAfterShortcuts = false
         stopDictation()
         restoreOutput()
         onPasteAndHide?(text)
     }
 
     func discardAndHide() {
+        resumeAfterShortcuts = false
         stopDictation()
         restoreOutput()
         onHide?()
@@ -170,7 +177,7 @@ final class DictationController: ObservableObject {
         case (.enter, _):
             pasteAndHide()
         case (.escape, _):
-            discardAndHide()
+            if showingShortcuts { toggleShortcuts() } else { discardAndHide() }
         case (.space, _):
             toggleDictation()
         case (.left, _):
@@ -193,6 +200,8 @@ final class DictationController: ObservableObject {
     private func handleCharacter(_ chars: String) {
         guard let ch = chars.first else { return }
         switch ch {
+        case "?":
+            toggleShortcuts()
         case "\u{3}":
             discardAndHide()
         case " ":
@@ -238,27 +247,38 @@ final class DictationController: ObservableObject {
         }
     }
 
+    func toggleShortcuts() {
+        if showingShortcuts {
+            showingShortcuts = false
+            resumeDictationAfterShortcutsIfReady()
+        } else {
+            resumeAfterShortcuts = dictating || resumeAfterShortcuts
+            showingShortcuts = true
+            stopDictation()
+        }
+    }
+
+    private func resumeDictationAfterShortcutsIfReady() {
+        guard resumeAfterShortcuts, !showingShortcuts, !runningStop else { return }
+        resumeAfterShortcuts = false
+        startDictation()
+    }
+
+    var canStartDictation: Bool { !dictating && !showingShortcuts && !runningStop }
+
+    func shortcutSections() -> [(title: String, bindings: [String])] {
+        [
+            ("General", ["?: show/hide shortcuts (pauses dictation)", "esc: close shortcuts, otherwise discard", "space: pause/resume dictation", "enter: paste result", "q / Q: discard", "ctrl+c: abort", "v: insert clipboard"]),
+            ("Dictation", ["R: restart dictation", "o / O: new paragraph", "s: spell check transcript", "D: edit dictionary"]),
+            ("Navigation · while paused", ["arrows: navigate words", "shift+arrows: expand selection", "J: join next paragraph", "S: split paragraph after current word"]),
+            ("Editing · while paused", ["c: edit selection", "C: change all matching text", "a: append after", "i / I: insert before", "x / X: delete selection", "t: cycle capitalization", "u: undo last change", ".: repeat change", ">: repeat change on all matches", "A: add selected word to dictionary"]),
+            ("Inside the text editor", ["enter: apply edit", "esc: cancel edit", "arrows: move cursor", "home/end: jump", "alt+backspace: delete word", "backspace: delete character", "delete: delete ahead", "cmd+a: select all"]),
+            ("From any app", ["⌃⌥⌘P: open dictation", "⌃⌥⌘O: read selection / stop narration"])
+        ]
+    }
+
     func keyBindings() -> [String] {
-        if editMode {
-            return ["enter: apply edit", "esc: cancel edit", "arrows: move cursor", "home/end: jump", "alt+backspace: delete word", "backspace: delete char", "delete: delete ahead"]
-        }
-        if dictating {
-            return ["space: pause dictation", "enter: paste result", "v: insert clipboard", "s: spell check transcript", "R: restart dictation", "q: discard", "ctrl+c: abort", "o: new paragraph", "D: edit dictionary"]
-        }
-        var bindings = ["space: resume dictation", "enter: paste result", "v: insert clipboard", "s: spell check transcript", "R: restart dictation", "q: discard", "ctrl+c: abort", "o: new paragraph", "D: edit dictionary", "J: join paragraph", "S: split paragraph", "arrows: navigate", "shift+arrows: expand selection"]
-        if lastReplaceSet && hasSelection() {
-            bindings.append(".: repeat change")
-        }
-        if lastReplaceSet && lastReplaceSource != nil && !words.isEmpty {
-            bindings.append(">: repeat change on all matches")
-        }
-        if undoHistory.last?.after == text {
-            bindings.append("u: undo last change")
-        }
-        if hasSelection() {
-            bindings += ["c: edit selection", "C: change all", "t: cycle capitalization", "a: append after", "i: insert before", "x: delete selection", "A: add vocab"]
-        }
-        return bindings
+        shortcutSections().flatMap { $0.bindings }
     }
 
     func applyCurrentEdit() {
@@ -400,7 +420,7 @@ final class DictationController: ObservableObject {
 
     func startDictation() {
         Logger.info("startDictation requested")
-        if dictating { return }
+        guard canStartDictation else { return }
         guard prepareModels?() ?? true else {
             serviceMessage = "Downloading speech models. Start dictation when the download finishes."
             debugMessage = serviceMessage
@@ -438,6 +458,7 @@ final class DictationController: ObservableObject {
                 self.commitSegment()
                 self.updateDisplay()
                 self.debugMessage = "Dictation stopped"
+                self.resumeDictationAfterShortcutsIfReady()
             }
         }
     }
@@ -447,6 +468,7 @@ final class DictationController: ObservableObject {
     }
 
     func restartDictation() {
+        guard !showingShortcuts else { return }
         undoHistory.removeAll()
         let wasDictating = dictating
         if wasDictating {
@@ -472,6 +494,7 @@ final class DictationController: ObservableObject {
     }
 
     private func startNewParagraph() {
+        guard !showingShortcuts else { return }
         if dictating {
             dictating = false
             serviceMessage = ""

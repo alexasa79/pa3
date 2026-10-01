@@ -2,7 +2,7 @@
 
 Native macOS dictation and narration, with the Reedah Chrome extension for reading web pages aloud. PA3 runs Whisper and Qwen locally; Reedah requests narration through a small native messaging bridge and plays the audio in Chrome.
 
-Use **Shortcuts** in the toolbar to show or hide the keyboard reference. Dictation detects the spoken language automatically for each audio clip; no language selection is needed, and transcription stays in the spoken language rather than translating to English.
+Use **Shortcuts** in the toolbar or press `?` to show or hide the complete, grouped keyboard reference. Opening it pauses dictation; closing it with `?`, Escape, or its close button resumes dictation if it was active before opening. If dictation was already paused, it stays paused. Scroll to see all commands, including editing and global shortcuts; commands stay listed even when unavailable in the current state. In a text editor, `?` remains ordinary text. Dictation detects the spoken language automatically for each audio clip; no language selection is needed, and transcription stays in the spoken language rather than translating to English.
 
 Hebrew paragraphs display right to left using native bidirectional text layout. English phrases and numbers within Hebrew retain their normal order, and English paragraphs remain left to right. Whisper's detected language travels with each transcription and supplies the direction hint for text without strong letters, such as a paragraph containing only numbers. Arrow keys follow the displayed words; copying/pasting preserves the original logical text order.
 
