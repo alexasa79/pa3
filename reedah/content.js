@@ -3,6 +3,8 @@
   if (!frameDetection) { console.error("Reedah: Frame detection unavailable."); return; }
   if (!frameDetection.shouldRunInFrame()) return;
   const IN_EDITOR_FRAME = frameDetection.isEditorFrame();
+  const editorNarration = window.ReedahEditorNarration;
+  if (!editorNarration) { console.error("Reedah: Editor narration helpers unavailable."); return; }
   const mathNarration = window.ReedahMathNarration;
   if (!mathNarration || typeof mathNarration.readFormula !== "function") {
     console.error("Reedah: Mathematical narration helpers unavailable.");
@@ -45,6 +47,8 @@
     currentSentenceIndex: 0,
     currentSentenceLength: 0,
     currentHighlightSpans: [],
+    editorHighlight: null,
+    editorHighlightProgress: 0,
     currentHighlightEntries: [],
     currentWordEntries: [],
     highlightFrameId: null,
@@ -194,14 +198,23 @@
   function attachObservers() {
     if (!document.body) return;
 
-    state.observer = new MutationObserver(() => {
-      scheduleScan();
+    state.observer = new MutationObserver(records => {
+      // Ignore Reedah's own focus/overlay classes. Editor attributes can change
+      // visibility or editability without inserting/removing any nodes.
+      if (records.some(record => record.type !== "attributes" || editorNarration.rootFor(record.target))) {
+        // Cancellation must also work in background tabs where animation frames
+        // are throttled. Positioning and range refresh can wait for the scan.
+        validateEditorSessions(false);
+        scheduleScan();
+      }
     });
 
     state.observer.observe(document.body, {
       childList: true,
       subtree: true,
-      characterData: true
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["contenteditable", "hidden", "aria-hidden", "aria-expanded", "class"]
     });
 
     window.addEventListener("scroll", schedulePositionUpdate, { passive: true });
@@ -250,6 +263,8 @@
   function scanParagraphs() {
     if (!state.enabled) return;
 
+    validateEditorSessions();
+
     const candidates = document.querySelectorAll(CANDIDATE_SELECTOR);
     for (const el of candidates) {
       if (isCandidate(el)) {
@@ -271,11 +286,14 @@
 
     const exclusions = IN_EDITOR_FRAME
       ? "nav, footer, header, aside, button, input, textarea, select, option, pre, code, script, style, .reedah-overlay, .reedah-controls"
-      : "nav, footer, header, aside, form, button, input, textarea, select, option, pre, code, script, style, [contenteditable='true'], .reedah-overlay, .reedah-controls";
+      : "nav, footer, header, aside, form, button, input, textarea, select, option, pre, code, script, style, .reedah-overlay, .reedah-controls";
     if (el.closest(exclusions)) {
       return false;
     }
     if (el.closest(mathNarration.METADATA_SELECTOR)) return false;
+    const editorRoot = editorNarration.rootFor(el);
+    if (editorRoot && editorNarration.isExcluded(el, editorRoot)) return false;
+    if (!IN_EDITOR_FRAME && !editorRoot && el.closest('[contenteditable]:not([contenteditable="false" i])')) return false;
 
     // MDX renderers and accessible custom components can use divs for paragraphs.
     // If such a wrapper contains semantic blocks, narrate those children instead.
@@ -289,7 +307,7 @@
     }
     if (isLinkOnly(el)) return false;
 
-    const text = getText(el);
+    const text = editorRoot ? getFullText(el).trim() : getText(el);
     const minLength = isHeading(el) ? MIN_HEADING_LENGTH : MIN_TEXT_LENGTH;
     // SVG/CHTML formulas can have no text nodes at all. Their speech lives in
     // MathML or attributes, and is validated when narration starts.
@@ -358,11 +376,14 @@
 
   function getAnchorRect(el) {
     try {
+      const editorRoot = editorNarration.rootFor(el);
       const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
       let node = walker.nextNode();
       while (node) {
+        if (editorRoot && editorNarration.isExcluded(node.parentElement, editorRoot)) { node = walker.nextNode(); continue; }
         const value = node.nodeValue || "";
-        const index = value.search(/\S/);
+        const run = editorRoot ? editorNarration.textRuns(value).find(run => /\S/.test(run.text)) : null;
+        const index = editorRoot ? (run ? run.nodeStart + run.text.search(/\S/) : -1) : value.search(/\S/);
         if (index !== -1) {
           const range = document.createRange();
           range.setStart(node, index);
@@ -522,7 +543,7 @@
     if (!state.currentSentenceRanges.length) return;
     let idx = Number.isFinite(index) ? index : findSentenceIndexForOffset(location);
     if (idx < 0 || idx >= state.currentSentenceRanges.length) return;
-    if (idx === state.currentSentenceIndex && state.currentHighlightSpans.length) return;
+    if (idx === state.currentSentenceIndex && (state.currentHighlightSpans.length || state.editorHighlight)) return;
 
     state.currentSentenceIndex = idx;
     clearHighlight();
@@ -550,6 +571,19 @@
       sentence.end
     );
     if (!slices.length) return;
+
+    if (editorNarration.rootFor(el)) {
+      try {
+        state.editorHighlight?.clear();
+        state.editorHighlight = new editorNarration.RangeHighlight(document, slices, sentence, highlightMode);
+        state.currentSentenceLength = sentenceLength;
+        state.editorHighlightProgress = 0;
+      } catch (error) {
+        console.error("Reedah: Failed to highlight document editor text.", error);
+        stopNarration();
+      }
+      return;
+    }
 
     const spans = [];
     const entries = [];
@@ -774,6 +808,9 @@
 
   function clearHighlight() {
     stopHighlightWordFocusLoop();
+    state.editorHighlight?.clear();
+    state.editorHighlight = null;
+    state.editorHighlightProgress = 0;
     const spans = state.currentHighlightSpans;
     if (!spans.length) {
       state.currentHighlightSpans = [];
@@ -822,8 +859,9 @@
       return [];
     }
     const segments = [];
+    const editorRoot = editorNarration.rootFor(el);
     let offset = textOffset;
-    const append = (node, text, math) => {
+    const append = (node, text, math, nodeStart = 0) => {
       if (!text.length) return;
       const previous = segments.at(-1);
       if (previous && (previous.math || math) && /[\p{L}\p{N}]$/u.test(previous.text) && /^[\p{L}\p{N}]/u.test(text)) {
@@ -837,7 +875,7 @@
           offset += 1;
         }
       }
-      segments.push({node, text, start:offset, end:offset+text.length, math});
+      segments.push({node, text, start:offset, end:offset+text.length, math, nodeStart});
       offset += text.length;
     };
     const pending = [el];
@@ -845,10 +883,19 @@
       while (pending.length) {
         const node = pending.pop();
         if (node.nodeType === Node.TEXT_NODE) {
-          if (shouldIncludeTextNode(el,node)) append(node,normalizeNarrationText(node.nodeValue || ""),false);
+          if (shouldIncludeTextNode(el,node)) {
+            if (editorRoot) {
+              for (const run of editorNarration.textRuns(node.nodeValue || "")) append(node,run.text,false,run.nodeStart);
+            } else append(node,normalizeNarrationText(node.nodeValue || ""),false);
+          }
           continue;
         }
         if (node.nodeType !== Node.ELEMENT_NODE || node.matches(mathNarration.METADATA_SELECTOR)) continue;
+        if (editorRoot && editorNarration.isExcluded(node,editorRoot)) continue;
+        if (editorRoot && node.tagName === "BR") {
+          if (!isListItem(el) || node.closest("li") === el) append(node," ",false);
+          continue;
+        }
         if (node.matches(mathNarration.ROOT_SELECTOR)) {
           const owner = node.closest("li");
           if (isListItem(el) && owner && owner !== el) continue;
@@ -931,6 +978,16 @@
   }
 
   function applyHighlightWordFocus(progress) {
+    if (state.editorHighlight) {
+      try {
+        state.editorHighlight.update(progress);
+        state.editorHighlightProgress = progress;
+      } catch (error) {
+        console.error("Reedah: Failed to update document editor highlight.", error);
+        stopNarration();
+      }
+      return;
+    }
     const entries = state.currentWordEntries;
     if (!entries.length) return;
     const sentenceLength = state.currentSentenceLength;
@@ -1020,6 +1077,7 @@
     const icon = createOverlayIcon();
     overlay.appendChild(icon);
     overlay.setAttribute("aria-label", "Narrate paragraph");
+    if (editorNarration.rootFor(el)) overlay.addEventListener("mousedown", event => event.preventDefault());
     overlay.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -1047,6 +1105,11 @@
 
   function startNarration(el) {
     stopNarration();
+
+    if (editorNarration.rootFor(el) && !editorNarration.supportsHighlights(window)) {
+      console.error("Reedah: CSS Custom Highlights are required to narrate this document editor.");
+      return;
+    }
 
     state.activeEl = el;
     setOverlayActive(el, true);
@@ -1087,6 +1150,7 @@
     }
 
     session.el = el;
+    session.editorRoot = editorNarration.rootFor(el);
     activateSession(session, playbackId, el);
     updateControls();
   }
@@ -1131,6 +1195,7 @@
       startedAt: performance.now(),
       firstPlaybackLogged: false,
       utteranceId,
+      sourceText: text,
       sentenceRanges,
       highlightTextOffset,
       audioQueue: [],
@@ -1339,6 +1404,7 @@
     clearPrefetch();
 
     if (!isCandidate(next)) return;
+    if (editorNarration.rootFor(next) && !editorNarration.supportsHighlights(window)) return;
 
     const narration = buildNarrationPayload(next);
     if (!narration) return;
@@ -1353,10 +1419,12 @@
     });
     if (!session) return;
     session.el = next;
+    session.editorRoot = editorNarration.rootFor(next);
     state.prefetchSession = session;
   }
 
   function startPrefetchedNarration(el) {
+    validateEditorSessions();
     const session = state.prefetchSession;
     if (!session || session.el !== el) {
       startNarration(el);
@@ -1373,6 +1441,32 @@
     activateSession(session, playbackId, el);
     maybeStartPlayback(playbackId);
     startPrefetch(el);
+  }
+
+  function editorSessionIsCurrent(session) {
+    if (!session?.editorRoot) return true;
+    if (!session.el?.isConnected || editorNarration.rootFor(session.el) !== session.editorRoot || !isCandidate(session.el)) return false;
+    const payload = buildNarrationPayload(session.el);
+    return payload?.text === session.sourceText && payload.highlightTextOffset === session.highlightTextOffset;
+  }
+
+  function validateEditorSessions(refreshHighlight = true) {
+    if (!editorSessionIsCurrent(state.activeSession)) {
+      console.info("Reedah: Document text changed; narration stopped. Press Play to read the updated paragraph.");
+      stopNarration();
+      return;
+    }
+    if (!editorSessionIsCurrent(state.prefetchSession)) {
+      console.info("Reedah: Prefetched document text changed; discarded stale audio.");
+      clearPrefetch();
+    }
+    // ProseMirror can replace text nodes without changing their text. Rebuild
+    // ranges against the current nodes, retaining playback's focus position.
+    if (refreshHighlight && state.editorHighlight && state.activeSession?.editorRoot) {
+      const progress = state.editorHighlightProgress;
+      highlightSentence(state.activeEl, state.currentSentenceRanges[state.currentSentenceIndex]);
+      applyHighlightWordFocus(progress);
+    }
   }
 
   function stopNativeNarration(options = {}) {
@@ -1563,6 +1657,7 @@
     if (state.activeEl) {
       updateHighlightForIndex(playbackId, next.index, next.location);
     }
+    if (state.playbackId !== playbackId) return;
     updateControls();
 
     const audio = next.stream ?? new Audio();

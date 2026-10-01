@@ -1,0 +1,30 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+body { font: 16px/1.5 sans-serif; background: white; color: #172b4d; margin: 80px; }
+#ak-editor-textarea { width: 600px; }
+.ak-editor-expand__content--collapsed { display: none; }
+.ProseMirror-widget, .telepointer { background: pink; }
+</style></head><body>
+<!-- Synthetic content with the editor structure observed in Confluence. -->
+<main id="AkMainContent">
+  <div id="ak-editor-textarea" class="ProseMirror" role="textbox" contenteditable="true" aria-label="Page editing area, start typing to enter text.">
+    <h1 id="live-heading">Live document overview</h1>
+    <p id="live-first">🙂 The first sentence contains <strong>bold text</strong> <em>and emphasis</em>, plus <code>type_name_t</code> for narration. The second sentence follows without editing the document.</p>
+    <p id="live-cursor">Read‍<span contenteditable="false" class="ProseMirror-widget"><span class="telepointer" role="button">ABC</span></span>‍ this paragraph with 👩‍💻 intact.<span class="pm-placeholder" contenteditable="false">Type something</span><span hidden>Hidden editor text</span><button>Editor action</button></p>
+    <ol start="3"><li id="live-item">Read <strong>the outer list item</strong> once.<ul><li id="live-nested-item">Read this nested list item separately.</li></ul></li></ol>
+    <blockquote id="live-quote"><p id="quote-child">This quotation is read exactly once.</p></blockquote>
+    <table><tbody><tr><td><p id="live-table">A table cell remains readable.</p></td></tr></tbody></table>
+    <div class="ak-editor-expand__title-container" contenteditable="false"><p>Expand controls must be excluded.</p></div>
+    <div class="ak-editor-expand__content ak-editor-expand__content--collapsed" contenteditable="false"><p id="live-collapsed">Collapsed content is excluded until expanded.</p></div>
+    <div contenteditable="false"><p id="live-card">A real read-only card within the document.</p></div>
+    <p id="live-math">Compute <math contenteditable="false"><msup><mi>x</mi><mn>2</mn></msup></math> without changing the equation.</p>
+    <p id="live-break">Read the first line.<br>Then read the second line.</p>
+    <p id="live-empty"><span class="ProseMirror-widget" contenteditable="false">Only a cursor widget</span></p>
+    <div role="textbox" contenteditable="true"><p id="nested-editor">Nested text input must be excluded.</p></div>
+    <div class="cm-editor" contenteditable="false"><p id="code-editor">Nested code editor must be excluded.</p></div>
+    <pre><code>Code blocks remain excluded.</code></pre>
+  </div>
+  <div class="ProseMirror" contenteditable="true" role="textbox" aria-label="Add a comment"><p id="comment-input">Do not read the comment composer.</p></div>
+  <div contenteditable=""><p id="other-input">Do not read unrelated editable fields.</p></div>
+</main>
+</body></html>

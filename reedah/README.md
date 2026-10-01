@@ -30,6 +30,12 @@ The voice is PA3's American senior engineer. Playback speed is applied in Chrome
 
 Each complete sentence is a streaming request. Highlighting is approximate because Qwen does not supply word timestamps. Generation can fall behind playback on a busy GPU; the player then shows **Buffering** and resumes when audio is available.
 
+## Confluence live documents
+
+Reedah supports the main live document editor on Confluence Cloud page URLs. Paragraphs, headings, lists, quotations, and table-cell paragraphs receive narration controls. Comment composers, nested inputs, code editors, collaborator cursors, placeholders, and collapsed content are excluded.
+
+In this editor, sentence and phrase tinting uses CSS Custom Highlights on existing text ranges. It does not split text nodes, insert highlight spans into the document, or change the editing selection. If the active paragraph changes or disappears, narration stops; press Play to read the updated text. Changes to a prefetched paragraph discard its old audio. Collaborator cursor movements and replacement of DOM nodes with identical text do not interrupt playback. Ordinary web pages keep their existing highlighting.
+
 ## Mathematical text
 
 Reedah recognizes native MathML, [KaTeX HTML and MathML output](https://katex.org/docs/options), [MathJax HTML/SVG with accessibility metadata](https://docs.mathjax.org/en/v4.0/basic/accessibility.html), and Wikimedia's MathML-backed equation wrappers. It reads each formula once, excluding duplicate visual copies, TeX annotations, and MathJax previews. Standalone formulas receive their own narration control; formulas inside paragraphs belong to that paragraph.
@@ -60,5 +66,7 @@ Math unit tests cover nested powers/roots/fractions, renderer wrappers and annot
 Browser regressions cover the reported LeetCode paragraph, native MathML, KaTeX modes, MathJax 2/3/4 HTML/SVG/speech labels, Wikimedia wrappers, standalone controls, duplicate representations, hidden content, adjacent formulas, Unicode/quoted sentence boundaries, ordered-list prefixes, and custom vocabulary. They check exact sentence jobs, actual Play requests through a stubbed extension port, intact formula markup, repeated light/dark highlight cleanup, renderer updates, and that invalid formulas open no native session. Empty or ambiguous representations and unsupported table spans must stop the paragraph rather than lose content.
 
 These are deterministic speech-text and browser fixtures, not a complete MathML conformance suite or tests of every live renderer release. They verify what is sent to Qwen; they cannot guarantee the model's spoken pronunciation. The opt-in integration target checks real audio generation and streaming separately.
+
+Confluence regressions use a synthetic editor fixture with the observed page structure. They verify reading order and request text, exclusion of editor controls and cursors, unchanged DOM nodes and caret during highlighting, phrase progress, light/dark themes, document updates/removal, stale prefetch cancellation, and cleanup. Unit tests cover site scoping, Unicode cursor-marker removal with original DOM offsets, and phrase boundaries.
 
 See the [bridge documentation](native/README.md) for streaming behavior and the [PA3 narration API](../README.md#local-narration) for HTTP endpoints and limits. PA3 targets macOS 14 and later; automated tests do not replace testing on an actual older Mac or a physical sleep/wake cycle.

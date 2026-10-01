@@ -82,6 +82,13 @@
   transition: background-color 90ms linear;
 }
 
+/* Custom Highlights paint the live editor's existing text ranges. No spans,
+   inline styles, selection changes, or editable-content mutations are needed. */
+::highlight(reedah-editor-sentence-light) { background-color: rgba(219, 234, 254, 0.93); }
+::highlight(reedah-editor-sentence-dark) { background-color: rgba(18, 35, 68, 0.91); }
+::highlight(reedah-editor-focus-light) { background-color: rgb(178, 207, 252); }
+::highlight(reedah-editor-focus-dark) { background-color: rgb(42, 74, 123); }
+
 .reedah-overlay__icon {
   width: 14px;
   height: 14px;
