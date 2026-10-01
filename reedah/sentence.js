@@ -22,6 +22,9 @@
 
   function buildSentenceRanges(fullText, options = {}) {
     if (!fullText) return [];
+    const narrationText = typeof module !== "undefined" && module.exports
+      ? require("./narration_text") : globalThis.ReedahNarrationText;
+    fullText = narrationText.maskParentheses(fullText);
 
     const { abbreviations, minSentenceLength } = normalizeOptions(options);
     const ranges = [];

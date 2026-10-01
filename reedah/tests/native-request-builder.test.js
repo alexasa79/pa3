@@ -73,3 +73,32 @@ test("math pronunciation preserves vocabulary substitutions and ordinary code pu
   assert.equal(jobs[0].text,
     "Check upper bound is greater than or equal to 0 in a underscore b dot C P P, then x + y = z and https://example.org/a_b.");
 });
+
+test("parenthesized text is omitted before sentence splitting with source offsets intact", () => {
+  const text = "(Ignore this.) 🙂 Read (an aside (nested). Another sentence!) aloud. (Skip.) Then continue reading.";
+  const jobs = buildSentenceJobs(text, buildSentenceRanges(text, {minSentenceLength: 0}), []);
+  assert.deepEqual(jobs.map(job => job.text), ["🙂 Read aloud.", "Then continue reading."]);
+  assert.deepEqual(jobs.map(job => text.slice(job.location, job.location + job.length)),
+    ["🙂 Read (an aside (nested). Another sentence!) aloud.", "Then continue reading."]);
+});
+
+test("parentheses filtering spans supplied sentence ranges and runs before vocabulary", () => {
+  const text = "Read (SQL. More SQL.) aloud.";
+  const jobs = buildSentenceJobs(text, [{start:0,end:10}, {start:10,end:20}, {start:20,end:text.length}],
+    [{spelling:"SQL", pronunciation:"sequel"}]);
+  assert.deepEqual(jobs.map(job => job.text), ["Read", "aloud."]);
+  assert.deepEqual(jobs.map(job => job.index), [0, 2]);
+  assert.deepEqual(buildSentenceJobs("(Only an aside.).", [{start:0,end:16}], []), []);
+});
+
+test("parentheses cleanup preserves word boundaries, punctuation and unmatched groups", () => {
+  for (const [text, expected] of [
+    ["Read(skip)aloud (skip too).", "Read aloud."],
+    ["Read (across\n\nparagraphs) aloud.", "Read aloud."],
+    ["🙂 Read (שלום 🙂) aloud.", "🙂 Read aloud."],
+    ["Read (unfinished aloud.", "Read (unfinished aloud."],
+    ["Call function() now.", "Call function() now."]
+  ]) {
+    assert.equal(buildSentenceJobs(text, [{start:0,end:text.length}], [])[0].text, expected);
+  }
+});

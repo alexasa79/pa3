@@ -39,6 +39,31 @@ func runNarrationTests() -> [String] {
     check(parsedStatus(String(repeating: "x", count: 16_385)) == 413, "oversized header accepted")
     check(parsedStatus("GET /health HTTP/1.1\r\n\r\nGET /health HTTP/1.1\r\n\r\n") == 400, "pipelined requests accepted")
     do {
+        for output in ["playback", "pieces", "stream"] {
+            for (source, expected) in [
+                ("Read (skip this) aloud.", "Read aloud."),
+                ("Read (an aside (nested). Another sentence!) aloud.", "Read aloud."),
+                ("Read (across\n\nparagraphs) aloud.", "Read aloud."),
+                ("Read(skip)aloud (skip too).", "Read aloud."),
+                ("🙂 Read (שלום 🙂) aloud.", "🙂 Read aloud."),
+                ("Read (unfinished aloud.", "Read (unfinished aloud."),
+                ("Call function() now.", "Call function() now.")
+            ] {
+                let parts = try NarrationText.plan(NarrationInput(text: source, output: output))
+                check(parts.map(\.text) == [expected], "parentheses filtering: \(source), \(output)")
+                check(parts.first?.sourceRange == NSRange(location: 0, length: source.utf16.count), "parentheses retain source offsets")
+            }
+            let source = "(Ignore this.) 🙂 Read this. (Skip this too.) Then continue reading."
+            let parts = try NarrationText.plan(NarrationInput(text: source, output: output))
+            check(parts.map(\.text) == ["🙂 Read this.", "Then continue reading."], "omitted standalone sentences")
+            check(parts.map { (source as NSString).substring(with: $0.sourceRange) } == ["🙂 Read this.", "Then continue reading."], "offsets after omitted sentences")
+        }
+        do {
+            _ = try NarrationText.plan(NarrationInput(text: "(Only an aside.)."))
+            failures.append("narration: parenthesis-only text should not generate audio")
+        } catch let error as NarrationText.Invalid {
+            check(error.message == "No speakable text", "parenthesis-only input reports no speakable text")
+        }
         let input = NarrationInput(text: "SQL SQLAlchemy PA3 PA30. New York York.", pronunciations: ["SQL": "sequel", "PA3": "P A three", "New York": "York", "York": "Y"])
         let result = try NarrationText.prepare(input).joined(separator: " ")
         check(result == "sequel SQLAlchemy P A three PA30. York Y.", "word boundaries or nonrecursive longest match failed")
@@ -115,7 +140,7 @@ func runNarrationTests() -> [String] {
             let parts = try NarrationText.plan(NarrationInput(text: first + " " + second, output: "stream"))
             check(parts.map(\.text) == [first, second], "real sentence boundary after range, decimal, quote, or ellipsis: \(first)")
         }
-        for (opening, closing) in [("\"", "\""), ("“", "”"), ("'", "'"), ("‘", "’"), ("«", "»"), ("(\"", "\")")] {
+        for (opening, closing) in [("\"", "\""), ("“", "”"), ("'", "'"), ("‘", "’"), ("«", "»")] {
             for punctuation in [".", "?", "!", "?!"] {
                 let first = "The editor said \(opening)This article is ready\(punctuation)\(closing)"
                 let second = "The next paragraph explains the details."
@@ -232,7 +257,7 @@ func runNarrationTests() -> [String] {
             ("a_b.cpp:888, then continue.", "a underscore b dot C P P, line 888, then continue."),
             ("a_b.cpp:888: error", "a underscore b dot C P P, line 888: error"),
             ("Read \"a_b.cpp:888\".", "Read \"a underscore b dot C P P, line 888\"."),
-            ("See (a_b.cpp:888).", "See (a underscore b dot C P P, line 888)."),
+            ("See (a_b.cpp:888).", "See."),
             ("Read `a_b.cpp:888` next.", "Read `a underscore b dot C P P, line 888` next."),
             ("../src/a_b.cpp:888:12", "dot dot slash src slash a underscore b dot C P P, line 888, column 12,"),
             ("/tmp/Makefile:12", "slash tmp slash Makefile, line 12,"),
@@ -244,7 +269,7 @@ func runNarrationTests() -> [String] {
             ("file.c:100-200, then continue.", "file dot C, lines 100 to 200, then continue."),
             ("file.c:100-200: note", "file dot C, lines 100 to 200: note"),
             ("Read \"file.c:100-200\".", "Read \"file dot C, lines 100 to 200\"."),
-            ("See (file.c:100-200).", "See (file dot C, lines 100 to 200)."),
+            ("See (file.c:100-200).", "See."),
             ("Read `file.c:100-200` next.", "Read `file dot C, lines 100 to 200` next."),
             ("../src/file.c:100-200", "dot dot slash src slash file dot C, lines 100 to 200,"),
             ("/tmp/Makefile:100-200", "slash tmp slash Makefile, lines 100 to 200,"),
@@ -280,7 +305,7 @@ func runNarrationTests() -> [String] {
             ("type_name_t", "type underscore name underscore tee"),
             ("uint32_t", "uint32 underscore tee"),
             ("get_type_name()", "get underscore type underscore name()"),
-            ("get_type_name(type_name_t)", "get underscore type underscore name(type underscore name underscore tee)"),
+            ("get_type_name(type_name_t)", "get underscore type underscore name"),
             ("ns::get_name_t()", "ns::get underscore name underscore tee()"),
             ("x_y_t", "ex underscore why underscore tee"),
             ("TYPE_NAME_T", "TYPE underscore NAME underscore tee"),
@@ -294,7 +319,7 @@ func runNarrationTests() -> [String] {
             ("constructor_t", "constructor underscore tee"),
             ("__proto__", "underscore underscore proto underscore underscore"),
             ("\"type_name_t\"", "\"type underscore name underscore tee\""),
-            ("`type_name_t`; (get_name_t())", "`type underscore name underscore tee`; (get underscore name underscore tee())"),
+            ("`type_name_t`; (get_name_t())", "`type underscore name underscore tee`;"),
             ("type_name_t*", "type underscore name underscore tee*"),
             ("type_name_t,other_type_t", "type underscore name underscore tee,other underscore type underscore tee")
         ] {

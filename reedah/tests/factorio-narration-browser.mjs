@@ -28,10 +28,11 @@ export async function checkFactorioNarration(call) {
     ['It', 'The', 'A', 'Since', 'Being', 'When']);
   for (const paragraph of paragraphs) {
     const spoken = paragraph.jobs.map(j => j.text).join(' ').replace(/\s+/g, ' ').trim();
-    assert.equal(spoken, paragraph.visible);
+    assert.equal(spoken, paragraph.visible.replace(/ \([^)]*\)/g, ''));
     assert.doesNotMatch(spoken, /<|>|href|https:/);
   }
   assert.match(paragraphs[0].jobs[1].text, /our players\.$/);
-  assert.match(paragraphs[0].jobs[2].text, /^A decision.*\(FFF-427\)/);
+  assert.match(paragraphs[0].jobs[2].text, /^A decision.*playtesting event,/);
+  assert.doesNotMatch(paragraphs[0].jobs[2].text, /FFF-427/);
   console.log('PASS: Factorio sentence starts, inline link text, no HTML leakage, and stable text after highlighting.');
 }

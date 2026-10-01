@@ -72,7 +72,7 @@ test("buildSentenceRanges recognizes the real period after a range", () => {
 });
 
 test("buildSentenceRanges keeps closing quotes and brackets with sentence punctuation", () => {
-  for (const [opening, closing] of [['"', '"'], ['“', '”'], ["'", "'"], ['‘', '’'], ['«', '»'], ['("', '")']]) {
+  for (const [opening, closing] of [['"', '"'], ['“', '”'], ["'", "'"], ['‘', '’'], ['«', '»']]) {
     for (const punctuation of [".", "?", "!", "?!"]) {
       const first = `The editor said ${opening}This article is ready${punctuation}${closing}`;
       const second = "The next paragraph explains the details.";

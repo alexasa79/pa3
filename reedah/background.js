@@ -1,4 +1,4 @@
-importScripts("native_request_builder.js", "audio_transfer.js");
+importScripts("narration_text.js", "native_request_builder.js", "audio_transfer.js");
 
 const NATIVE_HOST = "com.reedah.sayer";
 const ICON_SIZES = [16, 32, 48];

@@ -54,6 +54,26 @@ enum NarrationText {
         }
     }
 
+    // Mask complete groups before paragraph/sentence splitting. Equal UTF-16 length
+    // keeps every later source range aligned, even across newlines and emoji.
+    private static func maskParentheses(_ text: String) -> String {
+        var units = Array(text.utf16)
+        var depth = 0, start = 0
+        for index in units.indices {
+            if units[index] == 40 {
+                if depth == 0 { start = index }
+                depth += 1
+            } else if units[index] == 41, depth > 0 {
+                depth -= 1
+                // Empty function-call parentheses contain nothing to omit.
+                if depth == 0, index > start + 1 {
+                    for hidden in start...index { units[hidden] = 32 }
+                }
+            }
+        }
+        return String(decoding: units, as: UTF16.self)
+    }
+
     private struct Block {
         var range: NSRange
         let isList: Bool
@@ -110,10 +130,11 @@ enum NarrationText {
         let pathToken = try NarrationPath.tokenRegex()
         let identifiers = try NarrationIdentifier()
         var blocks: [Block] = [], current: Block?, blankBefore = false
-        let source = original as NSString
+        let filtered = maskParentheses(original)
+        let source = filtered as NSString
         // Treat CRLF as one terminator; keep empty lines and AX paragraph separators.
         let lineRegex = try NSRegularExpression(pattern: #"[^\r\n\x{2028}\x{2029}]*(?:\r\n|[\r\n\x{2028}\x{2029}]|$)"#)
-        for lineMatch in lineRegex.matches(in: original, range: NSRange(location: 0, length: source.length)) where lineMatch.range.length > 0 {
+        for lineMatch in lineRegex.matches(in: filtered, range: NSRange(location: 0, length: source.length)) where lineMatch.range.length > 0 {
             let raw = source.substring(with: lineMatch.range)
             let line = raw.trimmingCharacters(in: .newlines)
             let range = NSRange(location: lineMatch.range.location, length: line.utf16.count)
@@ -153,6 +174,11 @@ enum NarrationText {
         var expandedCount = 0
         for (blockIndex, block) in blocks.enumerated() {
             var mapped = MappedText(source.substring(with: block.range), offset: block.range.location)
+            if source.substring(with: block.range) != (original as NSString).substring(with: block.range) {
+                try mapped.replace(NSRegularExpression(pattern: #"[ \t]{2,}(?=[,.;:!?])"#)) { _, _ in "" }
+                try mapped.replace(NSRegularExpression(pattern: #"[ \t]+"#)) { _, _ in " " }
+                if mapped.text.range(of: #"^[\s\p{P}]*$"#, options: .regularExpression) != nil { continue }
+            }
             try mapped.replace(newlines) { _, _ in " " }
             if block.isList {
                 try mapped.replace(marker) { match, value in

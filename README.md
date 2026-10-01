@@ -80,6 +80,8 @@ Narration plays in the background without a reader window or changing the origin
 
 ## Local narration
 
+Narration skips text inside complete parentheses, including nested asides, in both selected-text narration and Reedah. Unmatched parentheses are left alone, and source text and highlighting positions are preserved.
+
 Narration reads filenames and paths explicitly, including underscores, `:line:column` references, and line ranges such as `file.c:100-200` ("file dot C, lines 100 to 200"). Standalone identifiers such as `type_name_t` read as "type underscore name underscore tee", with single-letter parts pronounced by their letter names. See the [supported file extensions and pronunciation rules](FileExtensions.md).
 
 PA3 accepts narration requests on `127.0.0.1:65462` while it is running, including when its window is hidden. Its default narrator is **sample 4, the American senior engineer**, identified as `senior-engineer-american`. Native llama.cpp runs Qwen3-TTS 1.7B Base Q8_0 on the Apple Silicon GPU, using the selected recording as its voice reference. The reference is raised by 1.5 semitones, with its original pacing preserved, for a slightly lighter, younger-sounding voice.

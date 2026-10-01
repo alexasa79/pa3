@@ -167,6 +167,10 @@
       throw new Error("Custom vocabulary must be an array.");
     }
 
+    const narrationText = typeof module !== "undefined" && module.exports
+      ? require("./narration_text") : globalThis.ReedahNarrationText;
+    // Filter the whole source: a parenthesized aside may cross sentence ranges.
+    const filtered = narrationText.maskParentheses(text);
     const maxLength = text.length;
     const jobs = [];
     for (let index = 0; index < sentenceRanges.length; index += 1) {
@@ -185,7 +189,12 @@
         continue;
       }
 
-      const rawSentence = text.slice(start, end);
+      let rawSentence = filtered.slice(start, end);
+      if (rawSentence !== text.slice(start, end)) {
+        rawSentence = rawSentence.replace(/[ \t]{2,}(?=[,.;:!?])/gu, "")
+          .replace(/\s+/gu, " ").trim();
+        if (/^[\s\p{P}]*$/u.test(rawSentence)) continue;
+      }
       if (!rawSentence.trim()) {
         continue;
       }

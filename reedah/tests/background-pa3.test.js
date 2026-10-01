@@ -38,9 +38,9 @@ test('background keeps DOM whitespace aligned with sentence offsets from the Fac
     const ranges=buildSentenceRanges(text);
     await content.onMessage.emit({...start,text,sentenceRanges:ranges});
     const jobs=hosts[0].sent[0].sentenceJobs;
-    assert.deepEqual(Array.from(jobs,job=>job.text),sentences);
+    assert.deepEqual(Array.from(jobs,job=>job.text),sentences.map(text=>text.replace(" (FFF-427)", "")));
     for (const job of jobs) {
-      assert.equal(job.text,text.slice(job.location,job.location+job.length));
+      assert.equal(sentences[job.index],text.slice(job.location,job.location+job.length));
     }
     await hosts[0].onMessage.emit({event:'finished'});
   }

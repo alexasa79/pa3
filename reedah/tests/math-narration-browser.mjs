@@ -64,8 +64,8 @@ export async function checkMathNarration(call) {
   assert.equal(texts.hidden,'Keep visible prose only.','Do not expose hidden ancestors, descendants, or unrelated elements');
   assert.equal(texts['no-aria'],'Without aria attributes: X.');
   assert.equal(jobs.length,4);
-  assert.equal(jobs.map(job=>job.text).join(' '),expected.replace('X≥0','X is greater than or equal to 0'));
-  for(const job of jobs) assert.equal(job.text,expected.slice(job.location,job.location+job.length).replace('X≥0','X is greater than or equal to 0'));
+  assert.equal(jobs.map(job=>job.text).join(' '),expected.replace('X≥0','X is greater than or equal to 0').replace(' (say X)', ''));
+  for(const job of jobs) assert.equal(job.text,expected.slice(job.location,job.location+job.length).replace('X≥0','X is greater than or equal to 0').replace(' (say X)', ''));
   assert.equal(highlights.reduce((sum,item)=>sum+item.mathCount,0),6);
   for(const check of highlights) {
     assert.equal(check.highlightedText,check.sentenceText);
