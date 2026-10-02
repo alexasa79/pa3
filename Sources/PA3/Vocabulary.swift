@@ -33,13 +33,14 @@ final class Vocabulary {
         return words
     }
 
-    func replace(with text: String) -> [String] {
+    func replace(with text: String) throws -> [String] {
         let nextWords = Self.normalizedUniqueWords(from: text)
         lock.lock()
         defer { lock.unlock() }
+        try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try nextWords.joined(separator: "\n").appending("\n").write(to: path, atomically: true, encoding: .utf8)
         words = nextWords
         index = Set(nextWords)
-        saveLocked()
         return words
     }
 

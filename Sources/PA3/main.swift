@@ -125,8 +125,16 @@ if CommandLine.arguments.contains("--transcript-layout-test") {
     exit(failures.isEmpty ? 0 : 2)
 }
 
+if CommandLine.arguments.contains("--dictionary-test") {
+    _ = NSApplication.shared
+    let failures = runNarrationDictionaryTests()
+    failures.forEach { print("FAIL: " + $0) }
+    print(failures.isEmpty ? "dictionary-test: ok" : "dictionary-test: failed")
+    exit(failures.isEmpty ? 0 : 2)
+}
+
 if CommandLine.arguments.contains("--whisper-text-test") {
-    let failures = runWhisperTextTests() + runSegmentationTests() + runNarrationTests() + runSelectedTextTests() + runWordCapitalizationTests() + runDeletionCleanupTests() + runUndoTests() + runRepeatReplacementTests() + runShortcutsTests()
+    let failures = runWhisperTextTests() + runSegmentationTests() + runNarrationTests() + runNarrationDictionaryTests() + runSelectedTextTests() + runWordCapitalizationTests() + runDeletionCleanupTests() + runUndoTests() + runRepeatReplacementTests() + runShortcutsTests()
     print("whisper-text-test")
     if failures.isEmpty {
         print("ok")

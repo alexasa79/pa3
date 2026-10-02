@@ -6,8 +6,7 @@ const tabState = new Map();
 let iconCache = null;
 const nativeRequestBuilder = globalThis.ReedahNativeRequestBuilder;
 if (!nativeRequestBuilder ||
-  typeof nativeRequestBuilder.buildSentenceJobs !== "function" ||
-  typeof nativeRequestBuilder.applyCustomVocab !== "function") {
+  typeof nativeRequestBuilder.buildSentenceJobs !== "function") {
   console.error("Reedah: Native request builder helpers unavailable.");
   throw new Error("Reedah: native request builder helpers unavailable");
 }
@@ -260,33 +259,6 @@ chrome.runtime.onConnect.addListener((port) => {
     const utteranceId = message.utteranceId || `${Date.now()}`;
     const settings = await getSettings();
     if (disconnected || session !== current) return;
-    const hasCustomVocabOverride = Object.prototype.hasOwnProperty.call(message, "customVocab");
-    let customVocab = settings.customVocab;
-    if (hasCustomVocabOverride) {
-      try {
-        customVocab = normalizeCustomVocab(message.customVocab);
-      } catch (error) {
-        const details = error.message || String(error);
-        console.error("Reedah: Invalid custom vocabulary override.", details);
-        port.postMessage({
-          type: "error",
-          utteranceId,
-          error: "invalid_custom_vocab",
-          details
-        });
-        return;
-      }
-    } else if (settings.customVocabError) {
-      console.error("Reedah: Invalid custom vocabulary settings.", settings.customVocabError);
-      port.postMessage({
-        type: "error",
-        utteranceId,
-        error: "invalid_custom_vocab",
-        details: settings.customVocabError
-      });
-      return;
-    }
-
     let resolvedRate = settings.rate;
     if (Object.prototype.hasOwnProperty.call(message, "rate")) {
       resolvedRate = parseRate(message.rate);
@@ -310,7 +282,7 @@ chrome.runtime.onConnect.addListener((port) => {
     }
     let sentenceJobs;
     try {
-      sentenceJobs = nativeRequestBuilder.buildSentenceJobs(text, sentenceRanges, customVocab);
+      sentenceJobs = nativeRequestBuilder.buildSentenceJobs(text, sentenceRanges);
     } catch (error) {
       const details = error.message || String(error);
       console.error("Reedah: Failed to build sentence jobs.", details);
@@ -402,55 +374,8 @@ chrome.runtime.onConnect.addListener((port) => {
 
 function getSettings() {
   return new Promise((resolve) => {
-    chrome.storage.local.get(
-      ["pa3Rate", "pa3CustomVocab"],
-      (items) => {
-        const rate = parseRate(items.pa3Rate);
-        let customVocab = [];
-        let customVocabError = null;
-        try {
-          customVocab = normalizeCustomVocab(items.pa3CustomVocab);
-        } catch (error) {
-          customVocabError = error.message || String(error);
-        }
-        resolve({ rate, customVocab, customVocabError });
-      }
-    );
+    chrome.storage.local.get(["pa3Rate"], (items) => resolve({rate: parseRate(items.pa3Rate)}));
   });
-}
-
-function normalizeCustomVocab(rawValue) {
-  if (rawValue == null) return [];
-  if (!Array.isArray(rawValue)) {
-    throw new Error("Custom vocabulary must be an array.");
-  }
-  const entries = [];
-  const seen = new Set();
-  for (let index = 0; index < rawValue.length; index += 1) {
-    const rawEntry = rawValue[index];
-    if (!rawEntry || typeof rawEntry !== "object") {
-      throw new Error(`Custom vocabulary entry ${index + 1} must be an object.`);
-    }
-
-    const spelling =
-      typeof rawEntry.spelling === "string" ? rawEntry.spelling.trim() : "";
-    let pronunciation =
-      typeof rawEntry.pronunciation === "string"
-        ? rawEntry.pronunciation.trim()
-        : "";
-
-    if (!spelling || !pronunciation) {
-      throw new Error(`Custom vocabulary entry ${index + 1} must have spelling and pronunciation.`);
-    }
-
-    const spellingKey = spelling.toLocaleLowerCase();
-    if (seen.has(spellingKey)) {
-      throw new Error(`Duplicate custom vocabulary spelling: ${spelling}`);
-    }
-    seen.add(spellingKey);
-    entries.push({ spelling, pronunciation });
-  }
-  return entries;
 }
 
 function parseRate(value) {

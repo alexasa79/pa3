@@ -16,7 +16,7 @@ function setup(deferred = false) {
   const chrome = { action: {}, tabs: { onActivated: event(), onUpdated: event(), onRemoved: event() },
     commands: { onCommand: event() }, runtime: { onMessage: event(), onConnect: event(),
       connectNative(name) { assert.equal(name, 'com.reedah.sayer'); const host = port(name); hosts.push(host); return host; } },
-    storage: { local: { get(keys, callback) { if (deferred) storage.push(callback); else callback({pa3Rate: 1.5, pa3CustomVocab: [{spelling:'PA3', pronunciation:'P A three'}]}); } } } };
+    storage: { local: { get(keys, callback) { if (deferred) storage.push(callback); else callback({pa3Rate: 1.5}); } } } };
   const context = vm.createContext({ chrome, console: {error() {}, info() {}}, setTimeout, clearTimeout });
   context.importScripts = (...files) => files.forEach(file => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context));
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../background.js'), 'utf8'), context);
@@ -55,7 +55,7 @@ test('background sends prepared text to PA3 bridge and returns audio with playba
   const {hosts, content} = setup();
   await content.onMessage.emit(start);
   assert.equal(hosts.length, 1);
-  assert.equal(hosts[0].sent[0].sentenceJobs[0].text, 'P A three is ready.');
+  assert.equal(hosts[0].sent[0].sentenceJobs[0].text, 'PA3 is ready.');
   assert.equal(hosts[0].sent[0].action, 'speak');
   assert.equal(hosts[0].sent[0].speed, undefined);
   await hosts[0].onMessage.emit({event:'audio_chunk', utteranceId:'test', index:0, location:0, length:13, pieceIndex:0, pieceCount:2, progressStart:0, progressEnd:0.4, part:0, final:true, audioBase64:'UklGRg=='});

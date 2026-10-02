@@ -119,12 +119,6 @@ textarea {
   gap: 12px;
 }
 
-.vocab-summary {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
 .test-narration-actions {
   margin-top: 8px;
 }
@@ -154,93 +148,12 @@ button:hover {
   color: var(--status-ok);
 }
 
-.vocab-dialog {
-  border: none;
-  padding: 0;
-  border-radius: 14px;
-  background: transparent;
-  max-width: 640px;
-  width: calc(100vw - 32px);
-}
-
-.vocab-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.35);
-}
-
-.vocab-dialog__surface {
-  background: var(--panel-bg);
-  color: var(--text);
-  border: 1px solid var(--field-border);
-  border-radius: 14px;
-  padding: 20px;
-}
-
-.vocab-dialog__surface h2 {
-  margin: 0 0 8px 0;
-  font-size: 20px;
-}
-
-.vocab-dialog__actions {
-  margin-top: 14px;
-}
-
-.vocab-list {
-  margin-top: 14px;
-  border: 1px solid var(--field-border);
-  border-radius: 10px;
-  background: var(--field-bg);
-  max-height: 240px;
-  overflow: auto;
-}
-
-.vocab-list__empty {
-  margin: 0;
-  padding: 12px;
-  color: var(--hint-text);
-  font-size: 13px;
-}
-
-.vocab-item {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--field-border);
-}
-
-.vocab-item:last-child {
-  border-bottom: none;
-}
-
-.vocab-item code {
-  font-size: 12px;
-}
-
-.vocab-item__actions {
-  display: flex;
-  gap: 8px;
-}
-
-.vocab-item__actions button {
-  padding: 6px 10px;
-  font-size: 12px;
-}
-
-.vocab-item__actions .vocab-play-button {
-  min-width: 52px;
-}
-
 @media (max-width: 640px) {
   .panel {
     margin: 20px;
   }
 
   .actions {
-    flex-wrap: wrap;
-  }
-
-  .vocab-summary {
     flex-wrap: wrap;
   }
 }

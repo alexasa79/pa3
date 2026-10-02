@@ -1,27 +1,15 @@
 const rateInput = document.getElementById("rate");
 const statusEl = document.getElementById("status");
 const clearButton = document.getElementById("clear");
-const manageVocabButton = document.getElementById("manage-vocab");
-const vocabCountEl = document.getElementById("vocab-count");
 const testNarrationTextInput = document.getElementById("test-narration-text");
 const testNarrateButton = document.getElementById("test-narrate");
-const vocabDialog = document.getElementById("vocab-dialog");
-const vocabSpellingInput = document.getElementById("vocab-spelling");
-const vocabPronunciationInput = document.getElementById("vocab-pronunciation");
-const vocabAddUpdateButton = document.getElementById("vocab-add-update");
-const vocabResetButton = document.getElementById("vocab-reset");
-const vocabListEl = document.getElementById("vocab-list");
-const vocabCancelButton = document.getElementById("vocab-cancel");
 
 const NIGHT_START_HOUR = 19;
 const NIGHT_END_HOUR = 6;
 const THEME_REFRESH_INTERVAL_MS = 60 * 1000;
-const SETTINGS_KEYS = ["pa3Rate", "pa3CustomVocab"];
+const SETTINGS_KEYS = ["pa3Rate"];
 
 let themeTimer = null;
-let customVocabEntries = [];
-let vocabDraftEntries = [];
-let editingVocabIndex = null;
 let previewSession = null;
 
 function resolveTheme(date = new Date()) {
@@ -53,70 +41,6 @@ function setStatus(message, isError = false) {
   setStatus._timer = window.setTimeout(() => {
     statusEl.textContent = "";
   }, 2000);
-}
-
-function normalizeSpelling(value, label) {
-  if (typeof value !== "string") {
-    throw new Error(`${label} spelling must be a string.`);
-  }
-  const normalized = value.trim();
-  if (!normalized) {
-    throw new Error(`${label} spelling must be non-empty.`);
-  }
-  if (normalized.includes("\n") || normalized.includes("\r")) {
-    throw new Error(`${label} spelling must be a single line.`);
-  }
-  return normalized;
-}
-
-function normalizePronunciation(value, label) {
-  if (typeof value !== "string") {
-    throw new Error(`${label} pronunciation must be a string.`);
-  }
-  let normalized = value.trim();
-  if (!normalized) {
-    throw new Error(`${label} pronunciation must be non-empty.`);
-  }
-  if (normalized.includes("\n") || normalized.includes("\r")) {
-    throw new Error(`${label} pronunciation must be a single line.`);
-  }
-  return normalized;
-}
-
-function normalizeCustomVocabEntries(rawEntries) {
-  if (rawEntries == null) return [];
-  if (!Array.isArray(rawEntries)) {
-    throw new Error("Custom vocabulary must be an array.");
-  }
-
-  const normalized = [];
-  const seen = new Set();
-  for (let index = 0; index < rawEntries.length; index += 1) {
-    const rawEntry = rawEntries[index];
-    if (!rawEntry || typeof rawEntry !== "object") {
-      throw new Error(`Custom vocabulary entry ${index + 1} must be an object.`);
-    }
-
-    const spelling = normalizeSpelling(rawEntry.spelling, `Entry ${index + 1}`);
-    const pronunciation = normalizePronunciation(
-      rawEntry.pronunciation,
-      `Entry ${index + 1}`
-    );
-    const key = spelling.toLocaleLowerCase();
-    if (seen.has(key)) {
-      throw new Error(`Duplicate custom spelling: ${spelling}`);
-    }
-    seen.add(key);
-    normalized.push({ spelling, pronunciation });
-  }
-  return normalized;
-}
-
-function cloneCustomVocab(entries) {
-  return entries.map((entry) => ({
-    spelling: entry.spelling,
-    pronunciation: entry.pronunciation
-  }));
 }
 
 function parseRateInputValue() {
@@ -153,7 +77,6 @@ function updateTestNarrateButtonState() {
 }
 
 function refreshPreviewUi() {
-  renderVocabList();
   updateTestNarrateButtonState();
 }
 
@@ -308,8 +231,6 @@ function playNextPreviewAudio(session) {
 
 function startPreviewRequest({
   text,
-  customVocab = null,
-  entryIndex = null,
   previewType = "generic"
 }) {
   stopPreview(true);
@@ -336,7 +257,6 @@ function startPreviewRequest({
     utteranceId,
     previewType,
     rate: rate ?? 1,
-    entryIndex,
     completed: false,
     closing: false,
     streams: new Map(),
@@ -455,9 +375,6 @@ function startPreviewRequest({
     utteranceId,
     sentenceRanges: [{ start: 0, end: text.length }]
   };
-  if (Array.isArray(customVocab)) {
-    payload.customVocab = customVocab;
-  }
   if (rate != null) {
     payload.rate = rate;
   }
@@ -471,27 +388,6 @@ function startPreviewRequest({
     return false;
   }
   return true;
-}
-
-function startPreviewForVocabEntry(index) {
-  if (!Number.isInteger(index) || index < 0 || index >= vocabDraftEntries.length) {
-    setStatus("Invalid custom vocabulary selection.", true);
-    return;
-  }
-
-  const existing = previewSession;
-  if (existing && existing.previewType === "vocab" && existing.entryIndex === index) {
-    stopPreview(true);
-    return;
-  }
-
-  const entry = vocabDraftEntries[index];
-  startPreviewRequest({
-    text: entry.spelling,
-    customVocab: [entry],
-    entryIndex: index,
-    previewType: "vocab"
-  });
 }
 
 function handleTestNarrationClick() {
@@ -509,212 +405,13 @@ function handleTestNarrationClick() {
     return;
   }
 
-  const customVocab = cloneCustomVocab(customVocabEntries);
   const started = startPreviewRequest({
     text,
-    customVocab,
     previewType: "test"
   });
   if (started) {
     setStatus("Running test narration...");
   }
-}
-
-function updateCustomVocabSummary() {
-  const count = customVocabEntries.length;
-  if (count === 0) {
-    vocabCountEl.textContent = "No custom words configured.";
-    return;
-  }
-  if (count === 1) {
-    vocabCountEl.textContent = "1 custom word configured.";
-    return;
-  }
-  vocabCountEl.textContent = `${count} custom words configured.`;
-}
-
-function resetVocabEditor() {
-  editingVocabIndex = null;
-  vocabSpellingInput.value = "";
-  vocabPronunciationInput.value = "";
-  vocabAddUpdateButton.textContent = "Add Word";
-}
-
-function renderVocabList() {
-  vocabListEl.textContent = "";
-  if (vocabDraftEntries.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "vocab-list__empty";
-    empty.textContent = "No vocabulary entries yet.";
-    vocabListEl.appendChild(empty);
-    return;
-  }
-
-  for (let index = 0; index < vocabDraftEntries.length; index += 1) {
-    const entry = vocabDraftEntries[index];
-    const row = document.createElement("div");
-    row.className = "vocab-item";
-
-    const text = document.createElement("div");
-    const spellingCode = document.createElement("code");
-    spellingCode.textContent = entry.spelling;
-    const arrow = document.createTextNode(" -> ");
-    const pronunciationCode = document.createElement("code");
-    pronunciationCode.textContent = entry.pronunciation;
-    text.appendChild(spellingCode);
-    text.appendChild(arrow);
-    text.appendChild(pronunciationCode);
-
-    const actions = document.createElement("div");
-    actions.className = "vocab-item__actions";
-    const isPreviewingThisEntry =
-      previewSession !== null && previewSession.entryIndex === index;
-
-    const playButton = document.createElement("button");
-    playButton.type = "button";
-    playButton.dataset.action = "play";
-    playButton.dataset.index = String(index);
-    playButton.className = "vocab-play-button";
-    playButton.textContent = isPreviewingThisEntry ? "Stop" : "Play";
-
-    const editButton = document.createElement("button");
-    editButton.type = "button";
-    editButton.dataset.action = "edit";
-    editButton.dataset.index = String(index);
-    editButton.textContent = "Edit";
-
-    const removeButton = document.createElement("button");
-    removeButton.type = "button";
-    removeButton.dataset.action = "remove";
-    removeButton.dataset.index = String(index);
-    removeButton.textContent = "Remove";
-
-    actions.appendChild(playButton);
-    actions.appendChild(editButton);
-    actions.appendChild(removeButton);
-    row.appendChild(text);
-    row.appendChild(actions);
-    vocabListEl.appendChild(row);
-  }
-}
-
-function openVocabDialog() {
-  if (!vocabDialog || typeof vocabDialog.showModal !== "function") {
-    console.error("Reedah: Browser does not support HTML dialog API.");
-    setStatus("Custom vocabulary dialog is unavailable in this browser.", true);
-    return;
-  }
-  vocabDraftEntries = cloneCustomVocab(customVocabEntries);
-  resetVocabEditor();
-  renderVocabList();
-  vocabDialog.showModal();
-}
-
-function closeVocabDialog() {
-  stopPreview(true);
-  if (vocabDialog.open) {
-    vocabDialog.close();
-  }
-  resetVocabEditor();
-}
-
-function addOrUpdateVocabEntry() {
-  const isAdding = editingVocabIndex == null;
-  const label = isAdding ? "New entry" : `Entry ${editingVocabIndex + 1}`;
-  let spelling;
-  let pronunciation;
-  try {
-    spelling = normalizeSpelling(vocabSpellingInput.value, label);
-    pronunciation = normalizePronunciation(vocabPronunciationInput.value, label);
-  } catch (error) {
-    setStatus(error.message, true);
-    return;
-  }
-
-  const spellingKey = spelling.toLocaleLowerCase();
-  const duplicateIndex = vocabDraftEntries.findIndex(
-    (entry, index) =>
-      entry.spelling.toLocaleLowerCase() === spellingKey && index !== editingVocabIndex
-  );
-  if (duplicateIndex !== -1) {
-    setStatus(`Custom spelling already exists: ${spelling}`, true);
-    return;
-  }
-
-  const entry = { spelling, pronunciation };
-  if (isAdding) {
-    vocabDraftEntries.push(entry);
-  } else {
-    vocabDraftEntries[editingVocabIndex] = entry;
-  }
-  resetVocabEditor();
-  renderVocabList();
-  persistCustomVocabDraft(isAdding ? "Word added." : "Word updated.");
-}
-
-function handleVocabListClick(event) {
-  const button = event.target.closest("button[data-action][data-index]");
-  if (!button) return;
-
-  const index = Number(button.dataset.index);
-  if (!Number.isInteger(index) || index < 0 || index >= vocabDraftEntries.length) {
-    setStatus("Invalid custom vocabulary selection.", true);
-    return;
-  }
-
-  const action = button.dataset.action;
-  if (action === "play") {
-    startPreviewForVocabEntry(index);
-    return;
-  }
-
-  if (action === "edit") {
-    const entry = vocabDraftEntries[index];
-    editingVocabIndex = index;
-    vocabSpellingInput.value = entry.spelling;
-    vocabPronunciationInput.value = entry.pronunciation;
-    vocabAddUpdateButton.textContent = "Update Word";
-    return;
-  }
-
-  if (action === "remove") {
-    stopPreview(true);
-    vocabDraftEntries.splice(index, 1);
-    if (editingVocabIndex === index) {
-      resetVocabEditor();
-    } else if (editingVocabIndex != null && editingVocabIndex > index) {
-      editingVocabIndex -= 1;
-    }
-    renderVocabList();
-    persistCustomVocabDraft("Word removed.");
-  }
-}
-
-function persistCustomVocabDraft(successMessage) {
-  let normalizedEntries;
-  try {
-    normalizedEntries = normalizeCustomVocabEntries(vocabDraftEntries);
-  } catch (error) {
-    setStatus(error.message, true);
-    return false;
-  }
-
-  chrome.storage.local.set({ pa3CustomVocab: normalizedEntries }, () => {
-    if (chrome.runtime.lastError) {
-      console.error(
-        "Reedah: Failed to save custom vocabulary.",
-        chrome.runtime.lastError.message
-      );
-      setStatus("Failed to save custom vocabulary.", true);
-      return;
-    }
-    customVocabEntries = cloneCustomVocab(normalizedEntries);
-    updateCustomVocabSummary();
-    if (successMessage) {
-      setStatus(successMessage);
-    }
-  });
-  return true;
 }
 
 function loadSettings() {
@@ -729,14 +426,7 @@ function loadSettings() {
     } else {
       rateInput.value = String(items.pa3Rate);
     }
-    try {
-      customVocabEntries = normalizeCustomVocabEntries(items.pa3CustomVocab);
-    } catch (error) {
-      console.error("Reedah: Failed to parse custom vocabulary settings.", error);
-      setStatus(`Failed to load custom vocabulary: ${error.message}`, true);
-      return;
-    }
-    updateCustomVocabSummary();
+
   });
 }
 
@@ -784,20 +474,11 @@ function clearSettings() {
     }
 
     rateInput.value = "";
-    customVocabEntries = [];
-    vocabDraftEntries = [];
-    resetVocabEditor();
-    updateCustomVocabSummary();
     setStatus("Cleared.");
   });
 }
 
 clearButton.addEventListener("click", clearSettings);
-manageVocabButton.addEventListener("click", openVocabDialog);
-vocabAddUpdateButton.addEventListener("click", addOrUpdateVocabEntry);
-vocabResetButton.addEventListener("click", resetVocabEditor);
-vocabListEl.addEventListener("click", handleVocabListClick);
-vocabCancelButton.addEventListener("click", closeVocabDialog);
 testNarrateButton.addEventListener("click", handleTestNarrationClick);
 rateInput.addEventListener("change", handleRateChange);
 document.addEventListener("visibilitychange", () => {
@@ -806,6 +487,5 @@ document.addEventListener("visibilitychange", () => {
 });
 
 startThemeScheduler();
-updateCustomVocabSummary();
 updateTestNarrateButtonState();
 loadSettings();

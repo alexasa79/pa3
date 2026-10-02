@@ -39,8 +39,6 @@ final class DictationController: ObservableObject {
     @Published var debugMessage = "Ready"
     @Published var serviceMessage = ""
     @Published var vocabularyWords: [String] = []
-    @Published var vocabularyEditText = ""
-    @Published var vocabularyEditorPresented = false
     @Published var vocabularyNotice = ""
     /// Audio duration limit in seconds. Stored separately from the old sentence preference.
     @Published private(set) var contextSeconds = Int(SegmentationConfig.default.maxBuffer)
@@ -48,6 +46,7 @@ final class DictationController: ObservableObject {
     static let contextSecondsRange = SegmentationConfig.contextSecondsRange
 
     var onPasteAndHide: ((String) -> Void)?
+    var onOpenDictionaries: (() -> Void)?
     var onHide: (() -> Void)?
     var onQuit: (() -> Void)?
     var onDictationWillStart: (() -> Void)?
@@ -294,21 +293,13 @@ final class DictationController: ObservableObject {
     }
 
     func openVocabularyEditor() {
-        vocabularyEditText = vocabularyWords.joined(separator: "\n")
-        vocabularyEditorPresented = true
+        onOpenDictionaries?()
     }
 
-    func saveVocabularyEditor() {
-        vocabularyWords = vocabulary.replace(with: vocabularyEditText)
+    func replaceVocabulary(with text: String) throws {
+        vocabularyWords = try vocabulary.replace(with: text)
         transcriber.setSystemPrompt(vocabulary.systemPrompt())
-        vocabularyEditText = vocabularyWords.joined(separator: "\n")
-        vocabularyEditorPresented = false
         showVocabularyNotice("\(vocabularyWords.count) dictionary words saved")
-    }
-
-    func cancelVocabularyEditor() {
-        vocabularyEditText = ""
-        vocabularyEditorPresented = false
     }
 
     func setTranscriptLayoutWidth(_ width: CGFloat) {

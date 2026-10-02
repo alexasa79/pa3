@@ -79,6 +79,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     private var warmupAttempted = false
     private let audioDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("pa3-narration-\(UUID().uuidString)")
     var isDictationBusy: () -> Bool = { false }
+    var pronunciationDictionary: () throws -> [String: String] = { [:] }
     var prepareModels: () -> Bool = { true }
     var modelDownloadHealth: () -> [String: Any] = { [:] }
     var onSelectionFailure: (String) -> Void = { _ in }
@@ -194,7 +195,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         guard isConfigured() else { return .error(503, "Install speech tools with brew install whisper.cpp, then retry.") }
         guard !isDictationBusy() else { return .error(409, "Dictation is active or audio output is still being restored") }
         do {
-            let chunks = try NarrationText.plan(input)
+            let chunks = try NarrationText.plan(input, dictionary: pronunciationDictionary())
             guard input.mode == "replace" || pending.count < 10 else { return .error(429, "Narration queue is full") }
             if input.mode == "replace" { stopAll() }
             let id = UUID().uuidString.lowercased()

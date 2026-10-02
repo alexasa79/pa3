@@ -64,8 +64,8 @@ export async function checkMathNarration(call) {
   assert.equal(texts.hidden,'Keep visible prose only.','Do not expose hidden ancestors, descendants, or unrelated elements');
   assert.equal(texts['no-aria'],'Without aria attributes: X.');
   assert.equal(jobs.length,4);
-  assert.equal(jobs.map(job=>job.text).join(' '),expected.replace('X≥0','X is greater than or equal to 0').replace(' (say X)', ''));
-  for(const job of jobs) assert.equal(job.text,expected.slice(job.location,job.location+job.length).replace('X≥0','X is greater than or equal to 0').replace(' (say X)', ''));
+  assert.equal(jobs.map(job=>job.text).join(' '),expected);
+  for(const job of jobs) assert.equal(job.text,expected.slice(job.location,job.location+job.length));
   assert.equal(highlights.reduce((sum,item)=>sum+item.mathCount,0),6);
   for(const check of highlights) {
     assert.equal(check.highlightedText,check.sentenceText);
@@ -108,7 +108,7 @@ export async function checkMathVariants(call) {
         api.clearHighlight();
       }
       api.state.currentHighlightTextOffset=0;
-      const jobs=ReedahNativeRequestBuilder.buildSentenceJobs(payload.text,ranges,JSON.parse(el.dataset.vocab || '[]'));
+      const jobs=ReedahNativeRequestBuilder.buildSentenceJobs(payload.text,ranges);
       checks.push({id:el.id,text,expected,spans,restored:el.innerHTML===original,
         payloadValid:payload.text===prefix+text && payload.highlightTextOffset===prefix.length,
         sentences,expectedSentences:el.dataset.sentences ? JSON.parse(el.dataset.sentences) : null,
@@ -143,7 +143,7 @@ export async function checkMathVariants(call) {
     assert.equal(check.restored,true,check.id+' markup restored');
     assert.equal(check.jobsValid,true,check.id+' model text and offsets');
     assert.equal(check.payloadValid,true,check.id+' list marker and highlight prefix');
-    assert.deepEqual(check.jobTexts,check.expectedJobTexts,check.id+' exact Qwen text after vocabulary replacement');
+    assert.deepEqual(check.jobTexts,check.expectedJobTexts,check.id+' original terms forwarded for PA3 pronunciation');
     if (check.expectedSentences) assert.deepEqual(check.sentences,check.expectedSentences,check.id+' sentence boundaries');
     assert.ok(check.spans.length>0,check.id+' highlighted');
     for(const span of check.spans) {
@@ -157,7 +157,7 @@ export async function checkMathVariants(call) {
     assert.equal(failure.stopped,true,failure.id+' Play clears active narration');
     assert.equal(failure.logged,true,failure.id+' actionable console error');
   }
-  console.log('PASS: '+checks.length+' math fixtures and '+failures.length+' rejected formulas: native MathML, KaTeX, MathJax 2/3/4, Wikimedia, Unicode offsets, list markers, vocabulary, highlights and no native request on failure.');
+  console.log('PASS: '+checks.length+' math fixtures and '+failures.length+' rejected formulas: native MathML, KaTeX, MathJax 2/3/4, Wikimedia, Unicode offsets, list markers, original terms, highlights and no native request on failure.');
 }
 
 export async function checkMathUpdates(call) {

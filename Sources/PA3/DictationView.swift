@@ -22,16 +22,7 @@ struct DictationView: View {
         )) {
             editSheet
         }
-        .sheet(isPresented: Binding(
-            get: { controller.vocabularyEditorPresented },
-            set: { presented in
-                if !presented {
-                    controller.cancelVocabularyEditor()
-                }
-            }
-        )) {
-            dictionarySheet
-        }
+
     }
 
     private var header: some View {
@@ -243,44 +234,6 @@ struct DictationView: View {
         .frame(width: 560)
     }
 
-    private var dictionarySheet: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Dictionary")
-                    .font(.system(.headline, design: .monospaced))
-                Spacer()
-                Text("\(dictionaryWordCount()) words")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-
-            TextEditor(text: Binding(
-                get: { controller.vocabularyEditText },
-                set: { controller.vocabularyEditText = $0 }
-            ))
-            .font(.system(size: 14, design: .monospaced))
-            .frame(minHeight: 300)
-            .border(Color.secondary.opacity(0.25))
-
-            HStack {
-                Text("One word or phrase per line.")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Cancel") {
-                    controller.cancelVocabularyEditor()
-                }
-                .keyboardShortcut(.cancelAction)
-                Button("Save") {
-                    controller.saveVocabularyEditor()
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(18)
-        .frame(width: 560)
-    }
-
     private func shortcutRows(_ bindings: [String]) -> [ShortcutRow] {
         bindings.map { binding in
             let parts = binding.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
@@ -294,13 +247,7 @@ struct DictationView: View {
         }
     }
 
-    private func dictionaryWordCount() -> Int {
-        controller.vocabularyEditText
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .count
-    }
+
 }
 
 private struct ShortcutRow {

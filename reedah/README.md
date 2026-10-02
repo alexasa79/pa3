@@ -22,11 +22,11 @@ After changing extension scripts, reload Reedah in `chrome://extensions` and ref
 
 ## Existing standalone installations
 
-All future development belongs in this repository's `reedah/` directory. An unpacked extension's ID can change when loaded from a different path; Chrome treats that as a separate installation with separate settings. Save any custom vocabulary and playback settings before removing the old installation, load this directory, and register the ID Chrome displays. Remove the old extension once the new installation works to avoid duplicate overlays.
+All future development belongs in this repository's `reedah/` directory. An unpacked extension's ID can change when loaded from a different path; Chrome treats that as a separate installation with separate settings. Save any playback settings before removing the old installation, load this directory, and register the ID Chrome displays. Remove the old extension once the new installation works to avoid duplicate overlays.
 
 ## Voice and playback
 
-The voice is PA3's American male (Iowa), VCTK p311. Playback speed is applied in Chrome without changing pitch. Custom vocabulary uses plain spoken spellings, for example `PA3` → `P A three`. Legacy model-specific voices and phonemes are not used.
+The voice is PA3's American male (Iowa), VCTK p311. Playback speed is applied in Chrome without changing pitch. Manage the shared narration dictionary in PA3’s menu-bar menu under **Dictionaries… → Narration**, for example `PA3` → `P A three`. Reedah sends original terms to PA3, which applies dictionary substitutions and pronunciation rules. Legacy model-specific voices and phonemes are not used.
 
 Narration skips only parenthesized single file/path references with a colon and line number, such as `(src/file.swift:42)`. Line ranges and optional columns also qualify. Ordinary parenthetical explanations, nested prose, and unmatched parentheses remain spoken. Source text and highlighting positions are unchanged.
 
@@ -65,7 +65,7 @@ The three Reedah targets are also available inside this directory as `make test`
 
 Math unit tests cover nested powers/roots/fractions, renderer wrappers and annotations, accents versus overscripts, limits, fences, labeled/empty table cells, malformed input, and size/depth limits in `tests/math-narration.test.js`. A square root used as an exponent must never become “squared” just because its flattened text is `2`. Fraction-rule and accent cases follow [MathML Core](https://www.w3.org/TR/mathml-core/). Comparison pronunciation and UTF-16 offsets also have tests in `tests/native-request-builder.test.js`.
 
-Browser regressions cover the reported LeetCode paragraph, native MathML, KaTeX modes, MathJax 2/3/4 HTML/SVG/speech labels, Wikimedia wrappers, standalone controls, duplicate representations, hidden content, adjacent formulas, Unicode/quoted sentence boundaries, ordered-list prefixes, and custom vocabulary. They check exact sentence jobs, actual Play requests through a stubbed extension port, intact formula markup, repeated light/dark highlight cleanup, renderer updates, and that invalid formulas open no native session. Empty or ambiguous representations and unsupported table spans must stop the paragraph rather than lose content.
+Browser regressions cover the reported LeetCode paragraph, native MathML, KaTeX modes, MathJax 2/3/4 HTML/SVG/speech labels, Wikimedia wrappers, standalone controls, duplicate representations, hidden content, adjacent formulas, Unicode/quoted sentence boundaries, ordered-list prefixes, and original-text forwarding to PA3. They check exact sentence jobs, actual Play requests through a stubbed extension port, intact formula markup, repeated light/dark highlight cleanup, renderer updates, and that invalid formulas open no native session. Empty or ambiguous representations and unsupported table spans must stop the paragraph rather than lose content.
 
 These are deterministic speech-text and browser fixtures, not a complete MathML conformance suite or tests of every live renderer release. They verify what is sent to Qwen; they cannot guarantee the model's spoken pronunciation. The opt-in integration target checks real audio generation and streaming separately.
 

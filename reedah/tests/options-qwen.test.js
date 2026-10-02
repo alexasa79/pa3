@@ -41,7 +41,7 @@ test('Qwen settings initialize without any voice picker or stored preset depende
   assert.doesNotMatch(html, /<select|am_adam|af_heart|Kokoro/i);
   assert.match(html, /Qwen3-TTS/);
   assert.match(html, /American male \(Iowa\), VCTK p311/);
-  assert.deepEqual(reads, [['pa3Rate','pa3CustomVocab']]);
+  assert.deepEqual(reads, [['pa3Rate']]);
   assert.equal(elements.get('rate').value, '1.25');
 });
 test('test narration uses PA3 voice implicitly and retains playback speed', () => {
@@ -60,11 +60,10 @@ test('saving settings only writes supported controls and rejects invalid speed',
   assert.equal(vm.runInContext('persistSettings("Saved")', context), false);
   assert.equal(writes.length, 1);
 });
-test('custom vocabulary displays plain spoken spellings without phoneme delimiters', () => {
-  const {context, elements} = setup();
-  vm.runInContext('vocabDraftEntries = [{spelling:"PA3", pronunciation:"P A three"}]; renderVocabList()', context);
-  const row = elements.get('vocab-list').children[0];
-  assert.equal(row.children[0].children[2].textContent, 'P A three');
+test('pronunciations are managed exclusively in PA3', () => {
+  assert.doesNotMatch(html, /id="(?:manage-vocab|vocab-dialog)"/);
+  assert.doesNotMatch(source, /pa3CustomVocab|customVocab/);
+  assert.match(html, /Dictionaries… → Narration/);
 });
 
 test('settings preview plays one continuous PCM sentence and stops scheduled sources', async () => {

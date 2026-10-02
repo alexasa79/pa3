@@ -131,22 +131,27 @@ enum NarrationText {
 
     static func prepare(_ input: NarrationInput) throws -> [String] { try plan(input).map(\.text) }
 
-    static func plan(_ input: NarrationInput) throws -> [NarrationPiece] {
+    static func plan(_ input: NarrationInput, dictionary: [String: String] = [:]) throws -> [NarrationPiece] {
         let original = input.text
         guard !original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw Invalid("Text is empty") }
         guard original.count <= 100_000 else { throw Invalid("Text exceeds 100,000 characters") }
-        let aliases = input.pronunciations ?? [:]
+        var aliases: [String: String] = [:]
+        for (key, value) in dictionary { aliases[key.lowercased()] = value }
+        for (key, value) in input.pronunciations ?? [:] { aliases[key.lowercased()] = value }
         guard aliases.count <= 100, aliases.allSatisfy({ !$0.key.isEmpty && !$0.value.isEmpty && $0.key.count <= 128 && $0.value.count <= 256 }) else {
             throw Invalid("Use at most 100 nonempty pronunciation entries, with keys up to 128 and values up to 256 characters")
         }
         let keys = aliases.keys.sorted { $0.count == $1.count ? $0 < $1 : $0.count > $1.count }
         let aliasRegex = keys.isEmpty ? nil : try NSRegularExpression(pattern:
-            "(?<![\\p{L}\\p{N}_])(?:" + keys.map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|") + ")(?![\\p{L}\\p{N}_])")
+            "(?<![\\p{L}\\p{N}_])(?:" + keys.map { "(" + NSRegularExpression.escapedPattern(for: $0) + ")" }.joined(separator: "|") + ")(?![\\p{L}\\p{N}_])", options: .caseInsensitive)
         let marker = try NSRegularExpression(pattern: #"^[ \t]*(?:(\d+)[.)]|[-*+•◦▪‣●○■□⁃–—])(?:[ \t]+|$)"#)
         let newlines = try NSRegularExpression(pattern: #"[\r\n\x{2028}\x{2029}]+[ \t]*"#)
         let rangeOperator = try NSRegularExpression(pattern: #"(?<=[\p{L}\p{N}_)\]}])[ \t]*\.\.[ \t]*(?=[+\-−]?[\p{L}\p{N}_(\[{])"#)
         let pathToken = try NarrationPath.tokenRegex()
         let identifiers = try NarrationIdentifier()
+        let comparisons = try NSRegularExpression(pattern: #"[ \t]*([≥≤≠≈])[ \t]*"#)
+        let comparisonWords = ["≥": "is greater than or equal to", "≤": "is less than or equal to",
+                               "≠": "is not equal to", "≈": "is approximately equal to"]
         var blocks: [Block] = [], current: Block?, blankBefore = false
         let filtered = maskParentheses(original)
         let source = filtered as NSString
@@ -203,7 +208,17 @@ enum NarrationText {
                     match.range(at: 1).location != NSNotFound ? value.substring(with: match.range(at: 1)) + ", " : ""
                 }
             }
-            if let aliasRegex { try mapped.replace(aliasRegex) { match, value in aliases[value.substring(with: match.range)]! } }
+            if let aliasRegex {
+                try mapped.replace(aliasRegex) { match, _ in
+                    // Use the matched alternative, since Unicode case-insensitive
+                    // matching can equate spellings with different lowercase forms.
+                    let index = keys.indices.first { match.range(at: $0 + 1).location != NSNotFound }!
+                    return aliases[keys[index]]!
+                }
+            }
+            try mapped.replace(comparisons) { match, value in
+                " " + comparisonWords[value.substring(with: match.range(at: 1))]! + " "
+            }
             expandedCount += mapped.text.count
             guard expandedCount <= 200_000 else { throw Invalid("Expanded pronunciation text is too large") }
             let boundaryText = mapped.text

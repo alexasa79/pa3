@@ -10,6 +10,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: DictationController?
     private let narration = NarrationService()
     private let downloads = ModelDownloadManager()
+    private lazy var narrationDictionary = NarrationDictionary(path: userDataDirectory().appendingPathComponent("narration-dictionary.json"))
+    private var dictionariesEditor: DictionariesEditor?
+    private var dictionariesWindow: NSWindow?
     private var downloadWindow: NSWindow?
     private var hotKey: GlobalHotKey?
     private var narrationHotKey: GlobalHotKey?
@@ -37,6 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.quit()
         }
         self.controller = controller
+        controller.onOpenDictionaries = { [weak self] in self?.openDictionaries(tab: 0) }
+        narration.pronunciationDictionary = { [weak self] in try self?.narrationDictionary.pronunciations() ?? [:] }
         downloads.onPresent = { [weak self] in self?.showModelDownloads() }
         controller.prepareModels = { [weak self] in self?.downloads.ensure(["whisper"]) ?? false }
         narration.prepareModels = { [weak self] in self?.downloads.ensure(["qwen", "audio"]) ?? false }
@@ -85,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Start dictation", action: #selector(startFromMenu), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Read selection / Stop   ⌃⌥⌘O", action: #selector(readSelection), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Stop narration", action: #selector(stopNarrationFromMenu), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Dictionaries…", action: #selector(showDictionaries), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Speech models…", action: #selector(showModelDownloads), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitFromMenu), keyEquivalent: "q"))
         for item in menu.items {
@@ -92,6 +98,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         item.menu = menu
         statusItem = item
+    }
+
+    @objc private func showDictionaries() { openDictionaries(tab: 1) }
+
+    private func openDictionaries(tab: Int) {
+        guard let controller else { return }
+        if let dictionariesWindow, dictionariesWindow.isVisible {
+            dictionariesEditor?.tab = tab
+            dictionariesWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let editor = DictionariesEditor(controller: controller, dictionary: narrationDictionary, tab: tab)
+        dictionariesEditor = editor
+        let view = DictionariesView(controller: controller, dictionary: narrationDictionary,
+            preview: { [weak self] entry in
+                guard let self else { return "PA3 is unavailable." }
+                do {
+                    let data = try JSONSerialization.data(withJSONObject: ["text": entry.spelling,
+                        "mode": "replace", "pronunciations": [entry.spelling: entry.pronunciation]])
+                    let response = self.narration.submit(data)
+                    guard response.status == 202 else {
+                        let json = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any]
+                        return json?["error"] as? String ?? "Could not start preview."
+                    }
+                    return nil
+                } catch { return error.localizedDescription }
+            }, stopPreview: { [weak self] in self?.narration.stopAll() }, editor: editor)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 480),
+                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.title = "PA3 Dictionaries"
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: view)
+        window.center()
+        dictionariesWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func menuBarIcon() -> NSImage? {

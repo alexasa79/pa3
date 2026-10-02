@@ -17,6 +17,7 @@ private final class RecoveryTestWorker: NarrationWorker {
 
 @MainActor
 func runNarrationRecoveryTests() async -> Int32 {
+    guard await runSharedDictionaryServiceTests() else { return 1 }
     var workers: [RecoveryTestWorker] = []
     let service = NarrationService(isConfigured: { true }) { callback in
         let worker = RecoveryTestWorker(callback)
@@ -227,4 +228,38 @@ private func runNarrationStreamTests() async -> Int32 {
         print("PASS whole-sentence streaming, early PCM, auth, ordering, completion, and partial cancellation")
         return 0
     } catch { print("FAIL narration streaming: \(error)"); return 1 }
+}
+
+@MainActor
+private func runSharedDictionaryServiceTests() async -> Bool {
+    for output in ["selection", "stream", "preview"] {
+        var worker: RecoveryTestWorker?
+        let service = NarrationService(isConfigured: { true }) { callback in
+            let created = RecoveryTestWorker(callback)
+            worker = created
+            return created
+        }
+        defer { service.shutdown() }
+        service.pronunciationDictionary = { ["SQL": "sequel", "src/main.cpp": "the main source"] }
+        let text = "Read sql in src/main.cpp."
+        let response: NarrationHTTPResponse
+        if output == "selection" {
+            response = service.narrateSelection(SelectedTextResult(text: text, message: ""))
+        } else {
+            var body: [String: Any] = ["text": text, "output": "stream"]
+            if output == "preview" { body["pronunciations"] = ["sql": "ess cue ell"] }
+            response = service.submit(try! JSONSerialization.data(withJSONObject: body))
+        }
+        guard response.status == 202, let worker else {
+            print("FAIL shared dictionary service acceptance: \(output)"); return false
+        }
+        worker.emit(TTSWorkerEvent(event: "ready"))
+        try? await Task.sleep(for: .milliseconds(30))
+        let expected = output == "preview" ? "Read ess cue ell in the main source." : "Read sequel in the main source."
+        guard worker.requests.first?.text == expected else {
+            print("FAIL shared dictionary did not reach model: \(output)"); return false
+        }
+    }
+    print("PASS shared dictionary for selected text, browser streams, and unsaved preview overrides")
+    return true
 }

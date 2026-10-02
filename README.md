@@ -70,6 +70,12 @@ Add `--reference file.txt` to compare against known text. Without it, the replay
 
 `--context-seconds N` sets the replay audio duration limit (5–28 seconds; default 28).
 
+## Dictionaries
+
+Open **Dictionaries…** from PA3’s menu-bar menu without starting dictation. The **Transcription** tab edits the words and phrases Whisper should recognize; the dictation toolbar’s Dictionary button and `D` open this tab. The **Narration** tab stores written-text → spoken-pronunciation entries shared by selected-text narration, HTTP narration, and Reedah. Use **Add entry**, edit either field, **Preview** to listen without saving, and **Save** to persist changes. **Stop preview** stops narration. Transcription vocabulary and narration pronunciations are stored separately.
+
+Narration matching ignores case, matches whole words or phrases, prefers longer phrases, and does not recursively substitute replacements. Dictionary substitutions run before filename, identifier, and comparison-symbol pronunciation. Request-specific `pronunciations` override saved entries with the same written text; previews do not alter the saved dictionary. Up to 100 entries are stored in `~/Library/Application Support/PA3/narration-dictionary.json`.
+
 ## Read selected text
 
 Select text in another app and press **Ctrl+Option+Command+O**. PA3 reads it through macOS Accessibility and narrates it using VCTK p311. Press the same shortcut again to stop and cancel queued narration, including while speech is being generated or a selection is being read. The menu bar also has **Read selection / Stop**. The shortcut leaves focus in the source app and does not open the microphone or use the clipboard.
@@ -113,7 +119,7 @@ The response is HTTP 202 with a job `id` and its current `state`. Accepted jobs 
 
 All job endpoints require the bearer token. POST requests require JSON and a Content-Length, as curl supplies above. Browser cross-origin requests, chunked request bodies, and HTTP pipelining are rejected. The listener binds only to IPv4 loopback. Set `PA3_NARRATION_PORT` in the app process environment to change its port.
 
-Optional JSON fields are `voice`, `language`, `instruct`, `mode`, and `pronunciations`. Defaults are `vctk-p311`, `English`, and `enqueue`. Omitting `voice` uses p311; `"voice":"p311"` and `"voice":"vctk-p311"` select it explicitly. Use `mode: "replace"` to cancel existing narration before speaking the new text. The default inherits its delivery from the saved reference recording. Nonempty `instruct` returns 422 because this native runtime has no delivery-instruction option. `pronunciations` maps literal written words or phrases to spoken spellings; matches are case-sensitive and do not replace parts of larger words. Longer matching phrases win, and substitutions do not run recursively.
+Optional JSON fields are `voice`, `language`, `instruct`, `mode`, and `pronunciations`. Defaults are `vctk-p311`, `English`, and `enqueue`. Omitting `voice` uses p311; `"voice":"p311"` and `"voice":"vctk-p311"` select it explicitly. Use `mode: "replace"` to cancel existing narration before speaking the new text. The default inherits its delivery from the saved reference recording. Nonempty `instruct` returns 422 because this native runtime has no delivery-instruction option. `pronunciations` maps literal written words or phrases to spoken spellings; matches are case-insensitive and do not replace parts of larger words. Longer matching phrases win, and substitutions do not run recursively.
 
 The previous named preset voices and `Auto` language are no longer supported and return 422. Languages are English, Russian, Chinese, Japanese, Korean, German, French, Portuguese, Spanish, and Italian. Hebrew is unsupported. Voice and language names are case-insensitive.
 
