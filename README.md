@@ -80,7 +80,7 @@ Narration plays in the background without a reader window or changing the origin
 
 ## Local narration
 
-Narration skips text inside complete parentheses, including nested asides, in both selected-text narration and Reedah. Unmatched parentheses are left alone, and source text and highlighting positions are preserved.
+Narration skips only parenthesized single file/path references with a colon and line number, such as `(src/file.swift:42)`. Line ranges and optional columns also qualify. Ordinary parenthetical explanations, nested prose, and unmatched parentheses remain spoken. Source text and highlighting positions are unchanged.
 
 Narration reads filenames and paths explicitly, including underscores, `:line:column` references, and line ranges such as `file.c:100-200` ("file dot C, lines 100 to 200"). Standalone identifiers such as `type_name_t` read as "type underscore name underscore tee", with single-letter parts pronounced by their letter names. See the [supported file extensions and pronunciation rules](FileExtensions.md).
 

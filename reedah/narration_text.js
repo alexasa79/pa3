@@ -1,4 +1,14 @@
 (() => {
+  function isParenthesizedCodeReference(value) {
+    value = value.trim();
+    if (value.startsWith("`") && value.endsWith("`") && value.length >= 2) {
+      value = value.slice(1, -1);
+    }
+    if (!/^(?:[A-Za-z]:[\\/])?[\p{L}\p{N}_@~.+/\\-]+:[0-9]+(?:-[0-9]+)?(?::[0-9]+)?$/u.test(value)) return false;
+    return /[/\\]/u.test(value) || /\.[\p{L}_][\p{L}\p{N}_-]*:/u.test(value) ||
+      ["Makefile", "Dockerfile", "Gemfile", "Rakefile", "Procfile"].includes(value.split(":")[0]);
+  }
+
   // Use UTF-16 code units so source positions survive emoji and nested groups.
   function maskParentheses(text) {
     const units = text.split("");
@@ -9,8 +19,9 @@
         depth += 1;
       } else if (units[i] === ")" && depth > 0) {
         depth -= 1;
-        // Empty function-call parentheses contain nothing to omit.
-        if (depth === 0 && i > start + 1) units.fill(" ", start, i + 1);
+        if (depth === 0 && i > start + 1 && isParenthesizedCodeReference(text.slice(start + 1, i))) {
+          units.fill(" ", start, i + 1);
+        }
       }
     }
     return units.join("");
@@ -23,7 +34,8 @@
 
   const api = {
     normalizeNarrationText,
-    maskParentheses
+    maskParentheses,
+    isParenthesizedCodeReference
   };
 
   if (typeof module !== "undefined" && module.exports) {

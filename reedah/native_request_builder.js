@@ -169,7 +169,7 @@
 
     const narrationText = typeof module !== "undefined" && module.exports
       ? require("./narration_text") : globalThis.ReedahNarrationText;
-    // Filter the whole source: a parenthesized aside may cross sentence ranges.
+    // Filter the whole source: a parenthesized code reference may cross supplied sentence ranges.
     const filtered = narrationText.maskParentheses(text);
     const maxLength = text.length;
     const jobs = [];

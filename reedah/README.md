@@ -28,7 +28,7 @@ All future development belongs in this repository's `reedah/` directory. An unpa
 
 The voice is PA3's American male (Iowa), VCTK p311. Playback speed is applied in Chrome without changing pitch. Custom vocabulary uses plain spoken spellings, for example `PA3` → `P A three`. Legacy model-specific voices and phonemes are not used.
 
-Parenthesized asides are omitted from speech, including nested groups. The page text is unchanged; highlighting still uses the original text positions. Unmatched parentheses are left alone.
+Narration skips only parenthesized single file/path references with a colon and line number, such as `(src/file.swift:42)`. Line ranges and optional columns also qualify. Ordinary parenthetical explanations, nested prose, and unmatched parentheses remain spoken. Source text and highlighting positions are unchanged.
 
 Each complete sentence is a streaming request. Highlighting is approximate because Qwen does not supply word timestamps. Generation can fall behind playback on a busy GPU; the player then shows **Buffering** and resumes when audio is available.
 

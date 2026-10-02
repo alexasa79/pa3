@@ -54,7 +54,25 @@ enum NarrationText {
         }
     }
 
-    // Mask complete groups before paragraph/sentence splitting. Equal UTF-16 length
+    // A single file/path plus a line reference, optionally wrapped in Markdown ticks.
+    // Require a path separator or filename extension to avoid swallowing prose like (ratio:2).
+    private static let codeReference = try! NSRegularExpression(
+        pattern: #"^(?:[A-Za-z]:[\\/])?[\p{L}\p{N}_@~.+/\\-]+:[0-9]+(?:-[0-9]+)?(?::[0-9]+)?$"#)
+
+    static func isParenthesizedCodeReference(_ value: String) -> Bool {
+        var value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("`"), value.hasSuffix("`"), value.count >= 2 {
+            value = String(value.dropFirst().dropLast())
+        }
+        let range = NSRange(location: 0, length: value.utf16.count)
+        guard codeReference.firstMatch(in: value, range: range)?.range == range else { return false }
+        let path = value.components(separatedBy: ":").dropLast().joined(separator: ":")
+        return path.contains("/") || path.contains("\\") ||
+            value.range(of: #"\.[\p{L}_][\p{L}\p{N}_-]*:"#, options: .regularExpression) != nil ||
+            ["Makefile", "Dockerfile", "Gemfile", "Rakefile", "Procfile"].contains(value.components(separatedBy: ":")[0])
+    }
+
+    // Mask matching complete groups before paragraph/sentence splitting. Equal UTF-16 length
     // keeps every later source range aligned, even across newlines and emoji.
     private static func maskParentheses(_ text: String) -> String {
         var units = Array(text.utf16)
@@ -65,8 +83,8 @@ enum NarrationText {
                 depth += 1
             } else if units[index] == 41, depth > 0 {
                 depth -= 1
-                // Empty function-call parentheses contain nothing to omit.
-                if depth == 0, index > start + 1 {
+                if depth == 0, index > start + 1,
+                   isParenthesizedCodeReference(String(decoding: units[(start + 1)..<index], as: UTF16.self)) {
                     for hidden in start...index { units[hidden] = 32 }
                 }
             }

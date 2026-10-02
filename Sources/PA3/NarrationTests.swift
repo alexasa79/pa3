@@ -38,14 +38,38 @@ func runNarrationTests() -> [String] {
     check(parsedStatus("POST / HTTP/1.1\r\nContent-Length: 512001\r\n\r\n") == 413, "oversized body accepted")
     check(parsedStatus(String(repeating: "x", count: 16_385)) == 413, "oversized header accepted")
     check(parsedStatus("GET /health HTTP/1.1\r\n\r\nGET /health HTTP/1.1\r\n\r\n") == 400, "pipelined requests accepted")
+    check(NarrationText.isParenthesizedCodeReference("src/file.swift:42") == true, "code reference classification: " + "src/file.swift:42")
+    check(NarrationText.isParenthesizedCodeReference("file.c:100-200") == true, "code reference classification: " + "file.c:100-200")
+    check(NarrationText.isParenthesizedCodeReference("file.ts:12:3") == true, "code reference classification: " + "file.ts:12:3")
+    check(NarrationText.isParenthesizedCodeReference("src/worker:8") == true, "code reference classification: " + "src/worker:8")
+    check(NarrationText.isParenthesizedCodeReference("C:\\src\\main.cpp:42") == true, "code reference classification: " + "C:\\src\\main.cpp:42")
+    check(NarrationText.isParenthesizedCodeReference("Makefile:9") == true, "code reference classification: " + "Makefile:9")
+    check(NarrationText.isParenthesizedCodeReference(" src/main.rs:42 ") == true, "code reference classification: " + " src/main.rs:42 ")
+    check(NarrationText.isParenthesizedCodeReference("`src/main.rs:42`") == true, "code reference classification: " + "`src/main.rs:42`")
+    check(NarrationText.isParenthesizedCodeReference("источник/файл.py:12") == true, "code reference classification: " + "источник/файл.py:12")
+    check(NarrationText.isParenthesizedCodeReference("meaningful") == false, "code reference classification: " + "meaningful")
+    check(NarrationText.isParenthesizedCodeReference("an important explanation") == false, "code reference classification: " + "an important explanation")
+    check(NarrationText.isParenthesizedCodeReference("ratio:2") == false, "code reference classification: " + "ratio:2")
+    check(NarrationText.isParenthesizedCodeReference("12:30") == false, "code reference classification: " + "12:30")
+    check(NarrationText.isParenthesizedCodeReference("John 3:16") == false, "code reference classification: " + "John 3:16")
+    check(NarrationText.isParenthesizedCodeReference("file.swift") == false, "code reference classification: " + "file.swift")
+    check(NarrationText.isParenthesizedCodeReference("file.swift:abc") == false, "code reference classification: " + "file.swift:abc")
+    check(NarrationText.isParenthesizedCodeReference("file.swift:42 extra") == false, "code reference classification: " + "file.swift:42 extra")
+    check(NarrationText.isParenthesizedCodeReference("file.swift:42,other.swift:5") == false, "code reference classification: " + "file.swift:42,other.swift:5")
+    check(NarrationText.isParenthesizedCodeReference("see file.swift:42") == false, "code reference classification: " + "see file.swift:42")
+    check(NarrationText.isParenthesizedCodeReference("file name.swift:42") == false, "code reference classification: " + "file name.swift:42")
+    check(NarrationText.isParenthesizedCodeReference("https://example.org:443") == false, "code reference classification: " + "https://example.org:443")
+    check(NarrationText.isParenthesizedCodeReference("an aside (nested)") == false, "code reference classification: " + "an aside (nested)")
+    check(NarrationText.isParenthesizedCodeReference("src/file.swift:\n42") == false, "code reference classification: " + "src/file.swift:\n42")
+    check(NarrationText.isParenthesizedCodeReference("") == false, "code reference classification: " + "")
     do {
         for output in ["playback", "pieces", "stream"] {
             for (source, expected) in [
-                ("Read (skip this) aloud.", "Read aloud."),
-                ("Read (an aside (nested). Another sentence!) aloud.", "Read aloud."),
-                ("Read (across\n\nparagraphs) aloud.", "Read aloud."),
-                ("Read(skip)aloud (skip too).", "Read aloud."),
-                ("🙂 Read (שלום 🙂) aloud.", "🙂 Read aloud."),
+                ("Read (src/file.swift:42) aloud.", "Read aloud."),
+                ("Read(file.c:100-200)aloud (file.ts:12:3).", "Read aloud."),
+                ("Read (an important detail) aloud.", "Read (an important detail) aloud."),
+                ("Read (an aside (nested)) aloud.", "Read (an aside (nested)) aloud."),
+                ("🙂 Read (שלום 🙂) aloud.", "🙂 Read (שלום 🙂) aloud."),
                 ("Read (unfinished aloud.", "Read (unfinished aloud."),
                 ("Call function() now.", "Call function() now.")
             ] {
@@ -53,16 +77,16 @@ func runNarrationTests() -> [String] {
                 check(parts.map(\.text) == [expected], "parentheses filtering: \(source), \(output)")
                 check(parts.first?.sourceRange == NSRange(location: 0, length: source.utf16.count), "parentheses retain source offsets")
             }
-            let source = "(Ignore this.) 🙂 Read this. (Skip this too.) Then continue reading."
+            let source = "(file.swift:1) 🙂 Read this. (src/file.swift:2) Then continue reading."
             let parts = try NarrationText.plan(NarrationInput(text: source, output: output))
             check(parts.map(\.text) == ["🙂 Read this.", "Then continue reading."], "omitted standalone sentences")
             check(parts.map { (source as NSString).substring(with: $0.sourceRange) } == ["🙂 Read this.", "Then continue reading."], "offsets after omitted sentences")
         }
         do {
-            _ = try NarrationText.plan(NarrationInput(text: "(Only an aside.)."))
-            failures.append("narration: parenthesis-only text should not generate audio")
+            _ = try NarrationText.plan(NarrationInput(text: "(file.swift:42)."))
+            failures.append("narration: reference-only text should not generate audio")
         } catch let error as NarrationText.Invalid {
-            check(error.message == "No speakable text", "parenthesis-only input reports no speakable text")
+            check(error.message == "No speakable text", "reference-only input reports no speakable text")
         }
         let input = NarrationInput(text: "SQL SQLAlchemy PA3 PA30. New York York.", pronunciations: ["SQL": "sequel", "PA3": "P A three", "New York": "York", "York": "Y"])
         let result = try NarrationText.prepare(input).joined(separator: " ")
@@ -305,7 +329,7 @@ func runNarrationTests() -> [String] {
             ("type_name_t", "type underscore name underscore tee"),
             ("uint32_t", "uint32 underscore tee"),
             ("get_type_name()", "get underscore type underscore name()"),
-            ("get_type_name(type_name_t)", "get underscore type underscore name"),
+            ("get_type_name(type_name_t)", "get underscore type underscore name(type underscore name underscore tee)"),
             ("ns::get_name_t()", "ns::get underscore name underscore tee()"),
             ("x_y_t", "ex underscore why underscore tee"),
             ("TYPE_NAME_T", "TYPE underscore NAME underscore tee"),
@@ -319,7 +343,7 @@ func runNarrationTests() -> [String] {
             ("constructor_t", "constructor underscore tee"),
             ("__proto__", "underscore underscore proto underscore underscore"),
             ("\"type_name_t\"", "\"type underscore name underscore tee\""),
-            ("`type_name_t`; (get_name_t())", "`type underscore name underscore tee`;"),
+            ("`type_name_t`; (get_name_t())", "`type underscore name underscore tee`; (get underscore name underscore tee())"),
             ("type_name_t*", "type underscore name underscore tee*"),
             ("type_name_t,other_type_t", "type underscore name underscore tee,other underscore type underscore tee")
         ] {
