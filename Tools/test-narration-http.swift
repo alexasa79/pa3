@@ -22,7 +22,7 @@ func call(_ method: String, _ path: String, _ body: [String: Any]? = nil, auth: 
 }
 func submit(_ text: String, mode: String = "enqueue") async throws -> String {
     let (status, job) = try await call("POST", "/v1/narrations", ["text": text, "mode": mode, "pronunciations": ["PA3": "P A three"]])
-    try check(status == 202 && job["voice"] as? String == "senior-engineer-american", "Submission failed: \(job)")
+    try check(status == 202 && job["voice"] as? String == "vctk-p311", "Submission failed: \(job)")
     return job["id"] as! String
 }
 func job(_ id: String) async throws -> [String: Any] {
@@ -76,7 +76,7 @@ Task {
         let completed = try await wait(first, for: ["completed"])
         try check(completed["pieces_played"] as? Int == 2 && completed["pieces"] as? Int == 2, "Not all pieces played")
         _ = try await wait(second, for: ["completed"])
-        print("PASS sample 4, pronunciation, two-piece playback, and FIFO")
+        print("PASS p311, pronunciation, two-piece playback, and FIFO")
 
         let regression = try await submit("Done. The reader is now compact, opens in the top-right corner, and stays above other windows when you switch apps.\n\nTests passed; PA3 is rebuilt and restarted.")
         let regressionResult = try await wait(regression, for: ["completed"])

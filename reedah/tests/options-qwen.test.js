@@ -40,7 +40,7 @@ test('Qwen settings initialize without any voice picker or stored preset depende
   const {elements, reads} = setup();
   assert.doesNotMatch(html, /<select|am_adam|af_heart|Kokoro/i);
   assert.match(html, /Qwen3-TTS/);
-  assert.match(html, /American senior engineer/);
+  assert.match(html, /American male \(Iowa\), VCTK p311/);
   assert.deepEqual(reads, [['pa3Rate','pa3CustomVocab']]);
   assert.equal(elements.get('rate').value, '1.25');
 });

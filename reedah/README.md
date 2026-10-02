@@ -26,7 +26,7 @@ All future development belongs in this repository's `reedah/` directory. An unpa
 
 ## Voice and playback
 
-The voice is PA3's American senior engineer. Playback speed is applied in Chrome without changing pitch. Custom vocabulary uses plain spoken spellings, for example `PA3` → `P A three`. Legacy model-specific voices and phonemes are not used.
+The voice is PA3's American male (Iowa), VCTK p311. Playback speed is applied in Chrome without changing pitch. Custom vocabulary uses plain spoken spellings, for example `PA3` → `P A three`. Legacy model-specific voices and phonemes are not used.
 
 Parenthesized asides are omitted from speech, including nested groups. The page text is unchanged; highlighting still uses the original text positions. Unmatched parentheses are left alone.
 

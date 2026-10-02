@@ -7,9 +7,9 @@ func runNarrationTests() -> [String] {
     check(SelectedText.substring("hello", range: CFRange(location: 0, length: 0)) == nil, "empty selection must not read the whole field")
     check(SelectedText.substring("hello", range: CFRange(location: Int.max, length: Int.max)) == nil, "invalid AX range must not overflow")
     check(SelectedText.substring("hello", range: CFRange(location: -1, length: 2)) == nil, "negative AX range must be rejected")
-    check(NarrationVoice.resolve(nil) == "senior-engineer-american", "omitted voice must select sample 4")
-    check(NarrationVoice.resolve("4") == NarrationVoice.resolve(nil), "sample number must select the default voice")
-    check(NarrationVoice.resolve("04-senior-engineer-american") == NarrationVoice.resolve(nil), "sample filename alias must select the default voice")
+    check(NarrationVoice.resolve(nil) == "vctk-p311", "omitted voice must select p311")
+    check(NarrationVoice.resolve("p311") == NarrationVoice.resolve(nil), "speaker ID must select the default voice")
+    check(NarrationVoice.resolve("VCTK-P311") == NarrationVoice.resolve(nil), "voice ID is case insensitive")
     check(NarrationVoice.resolve("aiden") == nil, "unsupported preset must be rejected")
     check(NarrationVoice.resolve("unknown") == nil, "unknown voice accepted")
     func parsedStatus(_ raw: String) -> Int {

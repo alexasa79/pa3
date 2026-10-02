@@ -35,7 +35,7 @@ final class TTSWorker: NarrationWorker, @unchecked Sendable {
     static var modelDirectory: URL { SpeechRuntime.models.appendingPathComponent("qwen3-tts") }
     static var model: URL { modelDirectory.appendingPathComponent("Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf") }
     static var projector: URL { modelDirectory.appendingPathComponent("mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf") }
-    static var reference: URL { appResourceDirectory().appendingPathComponent("tts-voices/senior-engineer-american.wav") }
+    static var reference: URL { appResourceDirectory().appendingPathComponent("tts-voices/\(NarrationVoice.defaultVoice).wav") }
     static var executable: URL {
         if Bundle.main.bundlePath.hasSuffix(".app"), let directory = Bundle.main.executableURL?.deletingLastPathComponent() {
             return directory.appendingPathComponent("pa3-narrator")

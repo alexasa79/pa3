@@ -12,11 +12,11 @@ struct NarrationInput: Decodable {
 }
 
 enum NarrationVoice {
-    static let defaultVoice = "senior-engineer-american"
+    static let defaultVoice = "vctk-p311"
 
     static func resolve(_ value: String?) -> String? {
         guard let value else { return defaultVoice }
-        if [defaultVoice, "4", "04-senior-engineer-american"].contains(value.lowercased()) { return defaultVoice }
+        if [defaultVoice, "p311"].contains(value.lowercased()) { return defaultVoice }
         return nil
     }
 }
@@ -184,11 +184,11 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         guard ["enqueue", "replace"].contains(input.mode ?? "enqueue") else { return .error(422, "Mode must be enqueue or replace") }
         guard let voice = NarrationVoice.resolve(input.voice),
               let language = languages.first(where: { $0.lowercased() == (input.language ?? "English").lowercased() }) else {
-            return .error(422, "Use voice senior-engineer-american and an explicit supported language; native narration does not support presets or Auto")
+            return .error(422, "Use voice vctk-p311 and an explicit supported language; native narration does not support presets or Auto")
         }
         guard (input.instruct?.count ?? 0) <= 1000 else { return .error(422, "Instructions exceed 1,000 characters") }
         if voice == NarrationVoice.defaultVoice, !(input.instruct ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return .error(422, "The voice uses saved sample 4. Native narration does not support delivery instructions.")
+            return .error(422, "The voice uses the saved VCTK p311 reference. Native narration does not support delivery instructions.")
         }
         guard prepareModels() else { return .error(503, "Speech models are downloading. See PA3 for progress, then retry this request.") }
         guard isConfigured() else { return .error(503, "Install speech tools with brew install whisper.cpp, then retry.") }
@@ -243,6 +243,9 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             do {
                 let player = try AVAudioPlayer(contentsOf: path)
                 player.delegate = self
+                // AVAudioPlayer rate adjustment preserves pitch; enable before preparing.
+                player.enableRate = true
+                player.rate = 1.1
                 player.prepareToPlay()
                 guard player.play() else { throw NarrationText.Invalid("Audio output could not start") }
                 self.player = player

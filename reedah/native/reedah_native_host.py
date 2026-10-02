@@ -153,7 +153,7 @@ def narrate(message, messenger, cancelled, client_factory=PA3Client, flow=None):
         flow = flow or SentenceWindow(message.get("window", 2))
         client = client_factory()
         messenger.send({"event": "started", "utteranceId": utterance,
-                        "voiceName": "PA3 · American senior engineer", "voiceIdentifier": "senior-engineer-american"})
+                        "voiceName": "PA3 · American male (Iowa), VCTK p311", "voiceIdentifier": "vctk-p311"})
         for sentence in jobs:
             if not flow.acquire(sentence["index"], cancelled):
                 return

@@ -1,0 +1,16 @@
+{
+  "id": "vctk-p311",
+  "name": "VCTK p311: American male (Iowa)",
+  "reference_audio": "vctk-p311.wav",
+  "reference_text": "The difference in the rainbow depends considerably upon the size of the drops, and the width of the colored band increases as the size of the drops increases.",
+  "source_url": "https://huggingface.co/datasets/yfyeung/vctk/resolve/main/audio/p311_021_pad.wav",
+  "dataset": "CSTR VCTK Corpus",
+  "speaker": "p311",
+  "accent": "American",
+  "region": "Iowa",
+  "license": "CC BY 4.0",
+  "license_url": "https://creativecommons.org/licenses/by/4.0/",
+  "attribution": "Junichi Yamagishi, Christophe Veaux, and Kirsten MacDonald, CSTR, University of Edinburgh. CSTR VCTK Corpus (version 0.92). https://doi.org/10.7488/ds/2645",
+  "description": "10-second excerpt distributed by yfyeung/vctk; no additional pitch or speed adjustment.",
+  "sha256": "17ced8c3734cfde49a7c78c434d2de8e7dd503bcb8e989166cbdd5b4110eeabe"
+}
