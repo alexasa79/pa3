@@ -95,7 +95,71 @@ func runTranscriptLayoutTests() -> [String] {
     manager.ensureLayout(for: container)
     check(manager.usedRect(for: container).height > 100, "mixed text wraps at narrow widths")
 
+    // Measure actual wrapped rows, not just paragraph-style properties.
+    for words in [["English", "words", "wrap", "across", "several", "lines"],
+                  ["שלום", "עולם", "שלום", "עולם", "שלום", "עולם"],
+                  ["مرحبا", "بالعالم", "مرحبا", "بالعالم", "مرحبا", "بالعالم"]] {
+        let tokens = words.enumerated().map {
+            TranscriptToken(id: $0.offset, text: $0.element, paragraph: 0, selected: false, pending: false)
+        }
+        let wrapped = TranscriptLayout.content(tokens: tokens, language: nil)
+        let storage = NSTextStorage(attributedString: wrapped.text)
+        let layout = NSLayoutManager()
+        let container = NSTextContainer(size: NSSize(width: 125, height: 2000))
+        storage.addLayoutManager(layout)
+        layout.addTextContainer(container)
+        layout.ensureLayout(for: container)
+        var rows: [CGRect] = []
+        layout.enumerateLineFragments(forGlyphRange: NSRange(location: 0, length: layout.numberOfGlyphs)) {
+            rect, _, _, _, _ in rows.append(rect)
+        }
+        check(rows.count > 1, "spacing fixture wraps: \(words[0])")
+        for (previous, next) in zip(rows, rows.dropFirst()) {
+            check(next.minY - previous.minY >= 26.9, "wrapped lines retain a visible gap: \(words[0])")
+        }
+        if words[0] == "English", rows.count > 1 {
+            check(abs(rows[1].minY - rows[0].minY - 27) < 0.1, "English uses 27-point row spacing")
+        }
+    }
+
     if CommandLine.arguments.contains("--transcript-layout-test") {
+        let previewWords = (Array(repeating: "The active transcript should have a clear gap between wrapped lines.", count: 3).joined(separator: " ")
+            + "\n" + Array(repeating: "שלום עולם זה טקסט בעברית עם מילים רבות", count: 3).joined(separator: " ")).components(separatedBy: "\n")
+        var previewTokens: [TranscriptToken] = []
+        for (paragraph, text) in previewWords.enumerated() {
+            for word in text.split(separator: " ") {
+                previewTokens.append(TranscriptToken(id: previewTokens.count, text: String(word), paragraph: paragraph, selected: false, pending: true))
+            }
+        }
+        let wrappedPreview = TranscriptTextView.TextView(frame: NSRect(x: 0, y: 0, width: 560, height: 360))
+        wrappedPreview.textContainerInset = NSSize(width: 18, height: 18)
+        wrappedPreview.backgroundColor = .white
+        wrappedPreview.textStorage?.setAttributedString(TranscriptLayout.content(tokens: previewTokens, language: nil).text)
+        wrappedPreview.layoutManager?.ensureLayout(for: wrappedPreview.textContainer!)
+        check(wrappedPreview.textStorage?.length == TranscriptLayout.content(tokens: previewTokens, language: nil).text.length,
+              "native view retains text storage when installing highlight renderer")
+        check((wrappedPreview.layoutManager?.numberOfGlyphs ?? 0) > 0, "native view lays out visible glyphs")
+        if let bitmap = wrappedPreview.bitmapImageRepForCachingDisplay(in: wrappedPreview.bounds) {
+            wrappedPreview.cacheDisplay(in: wrappedPreview.bounds, to: bitmap)
+            let scaleX = CGFloat(bitmap.pixelsWide) / wrappedPreview.bounds.width
+            let scaleY = CGFloat(bitmap.pixelsHigh) / wrappedPreview.bounds.height
+            let layout = wrappedPreview.layoutManager!
+            var checkedGaps = 0
+            layout.enumerateLineFragments(forGlyphRange: NSRange(location: 0, length: layout.numberOfGlyphs)) {
+                row, _, _, _, _ in
+                guard row.height >= 27 else { return }
+                let y = Int((wrappedPreview.textContainerOrigin.y + row.maxY - 3) * scaleY)
+                guard y < bitmap.pixelsHigh else { return }
+                let clear = (Int(24 * scaleX)..<Int(530 * scaleX)).allSatisfy { x in
+                    guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { return false }
+                    return color.redComponent > 0.98 && color.greenComponent > 0.98 && color.blueComponent > 0.98
+                }
+                check(clear, "rendered highlight leaves the interline gap unpainted")
+                checkedGaps += 1
+            }
+            check(checkedGaps >= 4, "rendered spacing checked across English and Hebrew rows")
+            try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/pa3-line-spacing.png"))
+        }
         let highlighted = TranscriptLayout.content(tokens: controller.tokens().map {
             TranscriptToken(id: $0.id, text: $0.text, paragraph: $0.paragraph, selected: false, pending: true)
         }, language: controller.detectedLanguage)

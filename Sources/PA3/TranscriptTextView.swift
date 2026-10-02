@@ -36,7 +36,10 @@ enum TranscriptLayout {
             let style = NSMutableParagraphStyle()
             style.baseWritingDirection = writingDirection(for: (result.string as NSString).substring(with: range), language: language)
             style.alignment = style.baseWritingDirection == .rightToLeft ? .right : .left
-            style.lineSpacing = 2
+            // Keep an explicit gap between wrapped lines. Let taller glyphs expand
+            // the line so RTL scripts and combining marks are not clipped.
+            style.minimumLineHeight = 21
+            style.lineSpacing = 6
             style.paragraphSpacing = 10
             result.addAttribute(.paragraphStyle, value: style, range: range)
         }
@@ -119,7 +122,60 @@ struct TranscriptTextView: NSViewRepresentable {
         }
     }
 
+    final class HighlightLayoutManager: NSLayoutManager {
+        private var backgroundOrigin = NSPoint.zero
+
+        override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+            backgroundOrigin = origin
+            super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+        }
+
+        override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>, count rectCount: Int,
+                                              forCharacterRange charRange: NSRange, color: NSColor) {
+            guard let storage = textStorage else { return }
+            let glyphs = glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
+            color.setFill()
+            // TextKit can merge backgrounds across several rows. Intersect each
+            // rectangle with the text portion of each row to leave spacing clear.
+            enumerateLineFragments(forGlyphRange: glyphs) { line, _, _, range, _ in
+                let character = self.characterIndexForGlyph(at: range.location)
+                let style = storage.attribute(.paragraphStyle, at: character, effectiveRange: nil) as? NSParagraphStyle
+                var band = line.offsetBy(dx: self.backgroundOrigin.x, dy: self.backgroundOrigin.y)
+                if let style, band.height >= style.minimumLineHeight + style.lineSpacing {
+                    band.size.height -= style.lineSpacing
+                }
+                for index in 0..<rectCount {
+                    let rect = rectArray[index].intersection(band)
+                    if !rect.isNull && !rect.isEmpty { rect.fill() }
+                }
+            }
+        }
+    }
+
     final class TextView: NSTextView {
+        private var retainedTextStorage: NSTextStorage?
+
+        override init(frame frameRect: NSRect, textContainer container: NSTextContainer? = nil) {
+            let storage = NSTextStorage()
+            let manager = HighlightLayoutManager()
+            let container = container ?? NSTextContainer(size: NSSize(width: frameRect.width, height: .greatestFiniteMagnitude))
+            storage.addLayoutManager(manager)
+            manager.addTextContainer(container)
+            super.init(frame: frameRect, textContainer: container)
+            retainedTextStorage = storage
+            container.widthTracksTextView = true
+        }
+
+        required init?(coder: NSCoder) {
+            super.init(coder: coder)
+            if let storage = textStorage, let container = textContainer {
+                let manager = HighlightLayoutManager()
+                storage.addLayoutManager(manager)
+                container.replaceLayoutManager(manager)
+                retainedTextStorage = storage
+            }
+        }
+
         var onKey: ((KeyEvent) -> Void)?
         var onFrames: (([Int: CGRect]) -> Void)?
         var ranges: [Int: NSRange] = [:]
