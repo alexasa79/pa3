@@ -1,4 +1,5 @@
 import Foundation
+import ApplicationServices
 
 func runSelectedTextTests() -> [String] {
     var failures: [String] = []
@@ -22,6 +23,33 @@ func runSelectedTextTests() -> [String] {
         }
     }
     do {
+        let marker = "opaque marker" as CFString
+        var emptyRange = CFRange(location: 0, length: 0)
+        let emptyValue = AXValueCreate(.cfRange, &emptyRange)!
+        let webText = "Partial first paragraph.\n\nLast selected paragraph 🙂."
+        let webSelection = try SelectedText.selection(attribute: { name in
+            if name == "AXSelectedTextMarkerRange" { return marker }
+            if name == kAXSelectedTextRangeAttribute { return emptyValue }
+            return nil
+        }, parameterized: { name, value in
+            check(name == "AXStringForTextMarkerRange" && CFEqual(value, marker), "opaque marker is passed to the document")
+            return webText
+        })
+        check(webSelection == webText, "web marker selection works with an empty ordinary range")
+        check(try SelectedText.selection(attribute: { _ in marker }, parameterized: { _, _ in nil }) == "opaque marker",
+              "standard selected text takes priority")
+        check(try SelectedText.selection(attribute: { name in
+            name == "AXSelectedTextMarkerRange" ? marker : nil
+        }, parameterized: { _, _ in "" }) == nil, "collapsed web selection does not read the document")
+        var range = CFRange(location: 1, length: 2)
+        let rangeValue = AXValueCreate(.cfRange, &range)!
+        check(try SelectedText.selection(attribute: { name in
+            if name == "AXSelectedTextMarkerRange" { return marker }
+            if name == kAXSelectedTextRangeAttribute { return rangeValue }
+            if name == kAXValueAttribute { return "A🙂B" as CFString }
+            return nil
+        }, parameterized: { _, _ in nil }) == "🙂", "unsupported marker lookup retains UTF-16 range fallback")
+
         // Apple article views expose each selected paragraph as a sibling AXStaticText.
         let paragraphs = (1...8).map { "Selected paragraph \($0)." }
         var article = [0: Node(children: Array(1...8))]
@@ -72,6 +100,11 @@ func runSelectedTextTests() -> [String] {
         check(withinLimit?.count == 100_000, "combined character limit includes paragraph separators")
     } catch { failures.append("selection: unexpected read failure \(error)") }
 
+    rejects(.tooLarge, "web marker selection obeys character limit") {
+        try SelectedText.selection(attribute: { name in
+            name == "AXSelectedTextMarkerRange" ? "marker" as CFString : nil
+        }, parameterized: { _, _ in String(repeating: "a", count: 100_001) })
+    }
     rejects(.incomplete, "node limit must not silently return the first paragraph") {
         try read([0: Node(children: [1, 2]), 1: Node(text: "One."), 2: Node(text: "Two.")], limit: 2)
     }

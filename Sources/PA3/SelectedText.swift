@@ -43,6 +43,29 @@ enum SelectedText {
         return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
     }
 
+    // Web documents can expose a cross-element selection only as opaque text
+    // markers, while their ordinary selected-text range is empty or unsupported.
+    static func selection(attribute: (String) throws -> CFTypeRef?,
+                          parameterized: (String, CFTypeRef) throws -> String?) throws -> String? {
+        func nonempty(_ text: String?) throws -> String? {
+            guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            guard text.count <= 100_000 else { throw ReadFailure.tooLarge }
+            return text
+        }
+        if let text = try nonempty(attribute(kAXSelectedTextAttribute) as? String) { return text }
+        if let markers = try attribute("AXSelectedTextMarkerRange"),
+           let text = try nonempty(parameterized("AXStringForTextMarkerRange", markers)) { return text }
+        guard let raw = try attribute(kAXSelectedTextRangeAttribute), CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
+        let value = raw as! AXValue
+        guard AXValueGetType(value) == .cfRange else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(value, .cfRange, &range), range.location >= 0, range.length > 0 else { return nil }
+        guard range.length <= 200_000 else { throw ReadFailure.tooLarge }
+        if let text = try nonempty(parameterized(kAXStringForRangeParameterizedAttribute, value)) { return text }
+        if let text = try attribute(kAXValueAttribute) as? String { return try nonempty(substring(text, range: range)) }
+        return nil
+    }
+
     static func read(pid: pid_t) -> SelectedTextResult {
         guard AXIsProcessTrusted() else {
             return SelectedTextResult(message: "Allow PA3 in System Settings → Privacy & Security → Accessibility.")
@@ -68,22 +91,14 @@ enum SelectedText {
             return (value as! AXUIElement)
         }
         func selected(_ item: AXUIElement) throws -> String? {
-            if let text = try attribute(item, kAXSelectedTextAttribute) as? String,
-               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return text }
-            guard let raw = try attribute(item, kAXSelectedTextRangeAttribute), CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
-            let value = raw as! AXValue
-            guard AXValueGetType(value) == .cfRange else { return nil }
-            var range = CFRange()
-            guard AXValueGetValue(value, .cfRange, &range), range.location >= 0, range.length > 0 else { return nil }
-            guard range.length <= 200_000 else { throw ReadFailure.tooLarge }
-            var text: CFTypeRef?
-            AXUIElementSetMessagingTimeout(item, 0.15)
-            try check(.success)
-            let error = AXUIElementCopyParameterizedAttributeValue(item, kAXStringForRangeParameterizedAttribute as CFString, value, &text)
-            try check(error)
-            if error == .success, let text = text as? String { return text }
-            if let text = try attribute(item, kAXValueAttribute) as? String { return substring(text, range: range) }
-            return nil
+            try selection(attribute: { try attribute(item, $0) }, parameterized: { name, value in
+                AXUIElementSetMessagingTimeout(item, 0.15)
+                try check(.success)
+                var text: CFTypeRef?
+                let error = AXUIElementCopyParameterizedAttributeValue(item, name as CFString, value, &text)
+                try check(error)
+                return error == .success ? text as? String : nil
+            })
         }
         do {
             let focused = element(try attribute(app, kAXFocusedUIElementAttribute))

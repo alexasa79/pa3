@@ -221,7 +221,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotKey?.register()
         Logger.info("global hotkey registered Ctrl+Option+Command+P")
         narrationHotKey = GlobalHotKey(keyCode: UInt32(kVK_ANSI_O), modifiers: modifiers) { [weak self] in
-            DispatchQueue.main.async { self?.readSelection() }
+            DispatchQueue.main.async {
+                Logger.info("narration hotkey pressed")
+                self?.readSelection()
+            }
         }
         narrationHotKey?.register()
         Logger.info("narration hotkey registered Ctrl+Option+Command+O")
@@ -247,6 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let source = frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? lastExternalApp : frontmost
         guard let source, !source.isTerminated else { showNarrationNotice("No active app to read from."); return }
         let pid = source.processIdentifier
+        Logger.info("Selection read requested pid=\(pid) app=\(source.bundleIdentifier ?? "unknown")")
         let request = UUID()
         selectionRequest = request
         showNarrationNotice("Reading selection…")
@@ -255,7 +259,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in
                 guard let self, self.selectionRequest == request else { return }
                 self.selectionRequest = nil
-                guard let text = result.text else { self.showNarrationNotice(result.message); return }
+                guard let text = result.text else {
+                    Logger.warn("Selection read failed pid=\(pid): \(result.message)")
+                    self.showNarrationNotice(result.message)
+                    return
+                }
                 let response = self.narration.narrateSelection(result)
                 if response.status == 202 {
                     self.showNarrationNotice("Narrating selection · ⌃⌥⌘O to stop")
@@ -269,6 +277,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showNarrationNotice(_ message: String) {
+        Logger.info("Narration notice: \(message)")
         narrationNotice?.orderOut(nil)
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 76),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
