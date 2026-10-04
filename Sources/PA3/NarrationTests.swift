@@ -63,6 +63,20 @@ func runNarrationTests() -> [String] {
     check(NarrationText.isParenthesizedCodeReference("src/file.swift:\n42") == false, "code reference classification: " + "src/file.swift:\n42")
     check(NarrationText.isParenthesizedCodeReference("") == false, "code reference classification: " + "")
     do {
+        let source = "🙂 Use SQL (src/file.swift:42). Then use SQL again."
+        let plan = try NarrationText.plan(NarrationInput(text: source, output: "stream", timing: "words"), dictionary: ["SQL": "ess cue ell"])
+        check(plan.count == 1, "timed narration groups sentences into one paragraph")
+        check(plan[0].text.contains("Then use ess cue ell again."), "paragraph retains dictionary pronunciations")
+        let mapped = plan.flatMap(\.words)
+        let sql = mapped.filter { $0.text == "ess" || $0.text == "cue" || $0.text == "ell" }
+        check(sql.count == 6 && sql.allSatisfy { (source as NSString).substring(with: NSRange(location: $0.location, length: $0.length)) == "SQL" }, "expanded words retain original UTF16 dictionary range")
+        check(!mapped.contains { $0.text.contains("swift") }, "skipped references produce no timing words")
+        let long = try NarrationText.plan(NarrationInput(text: String(repeating: "A useful explanation. ", count: 80), output: "stream", timing: "words"))
+        check(long.count > 1 && long.allSatisfy { $0.text.count <= 600 }, "long paragraphs have bounded generation chunks")
+        let paragraphs = try NarrationText.plan(NarrationInput(text: "First paragraph. More context.\n\nSecond paragraph. More context.", output: "stream", timing: "words"))
+        check(paragraphs.count == 2, "paragraph boundaries survive sentence grouping")
+    } catch { failures.append("narration paragraph planning: \(error)") }
+    do {
         for output in ["playback", "pieces", "stream"] {
             for (source, expected) in [
                 ("Read (src/file.swift:42) aloud.", "Read aloud."),

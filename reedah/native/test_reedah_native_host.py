@@ -21,7 +21,7 @@ class Client:
         self.calls.append((method, path, payload))
         if method == "DELETE": return {}
         if audio: return self.audio
-        return {"id": "abc-123", "state": self.state, "error": "fixture failure", "audio_chunks": [{"samples": len(self.audio) // 4, "sample_rate": 24000}]}
+        return {"id": "abc-123", "state": self.state, "error": "fixture failure", "audio_chunks": [{"samples": len(self.audio) // 4, "sample_rate": 24000, "word_timings": [{"location":0,"length":1,"start":0,"end":0.1}]}]}
 
 
 class HostTests(unittest.TestCase):
@@ -31,11 +31,12 @@ class HostTests(unittest.TestCase):
     def test_audio_is_chunked_and_job_released(self):
         client, messenger = Client(), Messenger()
         narrate(self.message(), messenger, threading.Event(), lambda: client)
-        self.assertEqual(client.calls[0][2], {"text": "P A three", "output": "stream"})
+        self.assertEqual(client.calls[0][2], {"text": "P A three", "output": "stream", "timing": "words"})
         chunks = [e for e in messenger.events if e["event"] == "audio_chunk"]
         self.assertGreater(len(chunks), 1)
         self.assertEqual(base64.b64decode("".join(c["audioBase64"] for c in chunks)), client.audio)
         self.assertTrue(chunks[-1]["final"])
+        self.assertEqual(chunks[-1]["wordTimings"], [{"location":0,"length":1,"start":0,"end":0.1}])
         for i, chunk in enumerate(chunks):
             self.assertEqual(chunk["part"], i)
             self.assertEqual((chunk["index"], chunk["location"], chunk["length"]), (2, 12, 8))

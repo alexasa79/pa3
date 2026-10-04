@@ -97,8 +97,9 @@ test('native failure reaches content without selecting another engine', async ()
 
 test('background forwards PCM format and explicit sentence completion', async () => {
   const {hosts, content}=setup(); await content.onMessage.emit(start);
-  await hosts[0].onMessage.emit({event:'audio_chunk',utteranceId:'test',index:0,pieceIndex:0,stream:true,samples:1,sampleRate:24000,part:0,final:true,audioBase64:'AAAAAA=='});
+  await hosts[0].onMessage.emit({event:'audio_chunk',utteranceId:'test',index:0,pieceIndex:0,stream:true,samples:1,sampleRate:24000,wordTimings:[{location:0,length:1,start:0,end:0}],part:0,final:true,audioBase64:'AAAAAA=='});
   const audio=content.sent.at(-1);
+  assert.deepEqual(JSON.parse(JSON.stringify(audio.wordTimings)),[{location:0,length:1,start:0,end:0}]);
   assert.equal(audio.stream,true); assert.equal(audio.samples,1); assert.equal(audio.sampleRate,24000);
   await hosts[0].onMessage.emit({event:'audio_end',utteranceId:'test',index:0,chunks:1});
   assert.equal(content.sent.at(-1).type,'audio_end');

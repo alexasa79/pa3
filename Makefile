@@ -34,6 +34,7 @@ decoder-test: native-stream-test
 test: pa3-test reedah-test
 
 pa3-test: decoder-test
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Resources/Narration -p 'test_*.py'
 	swift build
 	.build/debug/pa3 --whisper-text-test
 	.build/debug/pa3 --transcript-layout-test
@@ -115,6 +116,8 @@ app: build icons speech-tools-check codesign-identity
 	cp Info.plist "$(CONTENTS)/Info.plist"
 	cp "$(ASSETS)/AppIcon.icns" "$(RESOURCES)/AppIcon.icns"
 	cp "$(ASSETS)/MenuBarIcon.png" "$(RESOURCES)/MenuBarIcon.png"
+	mkdir -p "$(RESOURCES)/narration"
+	cp Resources/Narration/timing.py "$(RESOURCES)/narration/"
 	cp -R Resources/Voices "$(RESOURCES)/tts-voices"
 	codesign --force --deep --sign "$(SIGN_IDENTITY)" "$(APP)"
 

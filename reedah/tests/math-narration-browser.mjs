@@ -221,8 +221,7 @@ export async function checkMathUpdates(call) {
     '🙂 Read fraction alpha over beta end fraction in this expression. Then continue with the explanation.'
   ]);
   for (const message of starts) {
-    assert.equal(message.sentenceRanges.length,2);
-    assert.equal(message.text.slice(message.sentenceRanges[1].start,message.sentenceRanges[1].end),'Then continue with the explanation.');
+    assert.deepEqual(message.sentenceRanges,[{start:0,end:message.text.length}]);
   }
   assert.equal(failed,null);
   assert.equal(recovered,'🙂 Read y cubed in this expression. Then continue with the explanation.');

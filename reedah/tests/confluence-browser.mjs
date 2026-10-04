@@ -145,7 +145,7 @@ export async function checkConfluence(call) {
   assert.deepEqual(data.cancelled,{active:true,session:true,highlights:0,sentStop:true,staysStopped:true});
   for(const key of ['cursorIgnored','prefetchDiscarded','expanded','added','removed','dark','unsupported','failedHighlight','cleanup']) assert.equal(data[key],true,key);
   assert.equal(data.starts[0].text,'🙂 The first sentence contains bold text and emphasis, plus type_name_t for narration. The second sentence follows without editing the document.');
-  assert.equal(data.starts[0].sentenceRanges.length,2);
+  assert.deepEqual(data.starts[0].sentenceRanges,[{start:0,end:data.starts[0].text.length}]);
   assert.equal(data.errors.length,2,JSON.stringify(data.errors));
   console.log('PASS: Confluence live editor detection, exact narration, non-mutating highlights/caret, cursor filtering, edits, prefetch invalidation, node replacement, light/dark themes and cleanup.');
 }

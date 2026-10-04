@@ -1,5 +1,5 @@
 (() => {
-  function buildSentenceJobs(text, sentenceRanges) {
+  function buildSentenceJobs(text, sentenceRanges, {preserveOffsets = false} = {}) {
     if (typeof text !== "string") {
       throw new Error("Narration text must be a string.");
     }
@@ -29,7 +29,8 @@
         continue;
       }
 
-      let rawSentence = filtered.slice(start, end);
+      if (/^[\s\p{P}]*$/u.test(filtered.slice(start, end))) continue;
+      let rawSentence = preserveOffsets ? text.slice(start, end) : filtered.slice(start, end);
       if (rawSentence !== text.slice(start, end)) {
         rawSentence = rawSentence.replace(/[ \t]{2,}(?=[,.;:!?])/gu, "")
           .replace(/\s+/gu, " ").trim();

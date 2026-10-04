@@ -138,3 +138,24 @@ test('context interruption reports waiting, recovery reports playing and closure
   ctx.state='running';change();assert.equal(playing,1);assert.equal(audio.waiting,false);
   ctx.state='closed';change();assert.equal(errors,1);audio.dispose();
 });
+
+test('recognized groups follow the audio clock, deduplicate expansions, and rewind', async () => {
+  const {audio, ctx}=setup({sourceLength:100, playbackRate:1.1});
+  const words=[{location:0,length:3,start:0,end:.2},{location:0,length:3,start:.2,end:.3},
+    {location:4,length:4,start:.3,end:.5},{location:9,length:2,start:.5,end:.6},
+    {location:12,length:4,start:.7,end:.9}];
+  audio.append({...chunk(0),wordTimings:words});
+  assert.deepEqual(audio.focusRange,{start:0,end:11});
+  await audio.play(); ctx.currentTime=.8; audio.pause();
+  assert.deepEqual(audio.focusRange,{start:12,end:16});
+  const held=audio.focusRange; ctx.currentTime=10;
+  assert.deepEqual(audio.focusRange,held);
+  audio.rewind(); assert.deepEqual(audio.focusRange,{start:0,end:11}); audio.dispose();
+});
+test('timed streams reject absent or invalid source metadata instead of estimating progress', () => {
+  for(const words of [undefined,[],[{location:101,length:1,start:0,end:1}],
+    [{location:0,length:1,start:.8,end:.2}], [{location:0,length:1,start:0,end:2}]]) {
+    const {audio}=setup({sourceLength:100});
+    assert.throws(()=>audio.append({...chunk(0),wordTimings:words})); audio.dispose();
+  }
+});

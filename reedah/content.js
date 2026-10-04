@@ -49,6 +49,7 @@
     currentHighlightSpans: [],
     editorHighlight: null,
     editorHighlightProgress: 0,
+    editorHighlightRange: null,
     currentHighlightEntries: [],
     currentWordEntries: [],
     highlightFrameId: null,
@@ -578,6 +579,7 @@
         state.editorHighlight = new editorNarration.RangeHighlight(document, slices, sentence, highlightMode);
         state.currentSentenceLength = sentenceLength;
         state.editorHighlightProgress = 0;
+        state.editorHighlightRange = null;
       } catch (error) {
         console.error("Reedah: Failed to highlight document editor text.", error);
         stopNarration();
@@ -811,6 +813,7 @@
     state.editorHighlight?.clear();
     state.editorHighlight = null;
     state.editorHighlightProgress = 0;
+    state.editorHighlightRange = null;
     const spans = state.currentHighlightSpans;
     if (!spans.length) {
       state.currentHighlightSpans = [];
@@ -977,10 +980,12 @@
     span.style.removeProperty("--reedah-word-focus");
   }
 
-  function applyHighlightWordFocus(progress) {
+  function applyHighlightWordFocus(progress, range = null) {
     if (state.editorHighlight) {
       try {
-        state.editorHighlight.update(progress);
+        if (range) state.editorHighlight.updateRange(range.start, range.end);
+        else state.editorHighlight.update(progress);
+        state.editorHighlightRange = range;
         state.editorHighlightProgress = progress;
       } catch (error) {
         console.error("Reedah: Failed to update document editor highlight.", error);
@@ -1004,8 +1009,8 @@
     const windowLength = Math.max(1, Math.min(WORD_FOCUS_WINDOW_CHARS, sentenceLength));
     const maxStart = Math.max(0, sentenceLength - windowLength);
     const desiredStart = (clampedProgress * sentenceLength) - (windowLength * 0.5);
-    const focusStart = Math.max(0, Math.min(desiredStart, maxStart));
-    const focusEnd = Math.min(sentenceLength, focusStart + windowLength);
+    const focusStart = range ? range.start : Math.max(0, Math.min(desiredStart, maxStart));
+    const focusEnd = range ? range.end : Math.min(sentenceLength, focusStart + windowLength);
 
     for (const entry of entries) {
       if (!entry || !entry.span) continue;
@@ -1014,7 +1019,7 @@
         entry.endOffset,
         focusStart,
         focusEnd,
-        WORD_FOCUS_EDGE_CHARS
+        range ? 0 : WORD_FOCUS_EDGE_CHARS
       );
       if (!Number.isFinite(strength)) {
         console.error("Reedah: Invalid word focus strength.");
@@ -1056,7 +1061,8 @@
 
       const duration = audio.duration;
       if (Number.isFinite(duration) && duration > 0) {
-        applyHighlightWordFocus(state.currentAudioItem?.stream ? audio.progress : playbackHistory.pieceProgress(state.currentAudioItem, audio.currentTime / duration));
+        if (state.currentAudioItem?.stream) applyHighlightWordFocus(0, audio.focusRange);
+        else applyHighlightWordFocus(playbackHistory.pieceProgress(state.currentAudioItem, audio.currentTime / duration));
       } else {
         applyHighlightWordFocus(playbackHistory.pieceProgress(state.currentAudioItem, 0));
       }
@@ -1131,7 +1137,7 @@
       return;
     }
 
-    const sentenceRanges = sentence.buildSentenceRanges(narration.text);
+    const sentenceRanges = sentence.buildParagraphRanges(narration.text);
     if (!sentenceRanges.length) {
       console.error("Reedah: No sentences available for narration.");
       clearActiveNarration();
@@ -1282,7 +1288,7 @@
       try {
         let item = session.streams.get(message.index);
         if (!item) {
-          const stream = new ReedahStreamAudio.StreamAudio({estimatedDuration: message.length / 14, playbackRate: message.rate ?? 1});
+          const stream = new ReedahStreamAudio.StreamAudio({sourceLength: message.length, estimatedDuration: message.length / 14, playbackRate: message.rate ?? 1});
           item = {url: `reedah-stream:${session.utteranceId}:${message.index}`, stream,
             index:message.index, location:message.location, rate:message.rate ?? 1,
             pieceIndex:0, pieceCount:1, progressStart:0, progressEnd:1};
@@ -1409,7 +1415,7 @@
     const narration = buildNarrationPayload(next);
     if (!narration) return;
 
-    const sentenceRanges = sentence.buildSentenceRanges(narration.text);
+    const sentenceRanges = sentence.buildParagraphRanges(narration.text);
     if (!sentenceRanges.length) return;
 
     const prefetchId = ++state.prefetchId;
@@ -1464,8 +1470,9 @@
     // ranges against the current nodes, retaining playback's focus position.
     if (refreshHighlight && state.editorHighlight && state.activeSession?.editorRoot) {
       const progress = state.editorHighlightProgress;
+      const range = state.editorHighlightRange;
       highlightSentence(state.activeEl, state.currentSentenceRanges[state.currentSentenceIndex]);
-      applyHighlightWordFocus(progress);
+      applyHighlightWordFocus(progress, range);
     }
   }
 
@@ -2222,7 +2229,7 @@
     prevSentence.className = "reedah-controls__btn";
     prevSentence.dataset.action = "prev-sentence";
     prevSentence.textContent = "‹";
-    prevSentence.setAttribute("title", "Previous sentence");
+    prevSentence.setAttribute("title", "Previous passage");
 
     const playPause = document.createElement("button");
     playPause.type = "button";
@@ -2236,7 +2243,7 @@
     skipSentenceButton.className = "reedah-controls__btn";
     skipSentenceButton.dataset.action = "skip-sentence";
     skipSentenceButton.textContent = "›";
-    skipSentenceButton.setAttribute("title", "Next sentence");
+    skipSentenceButton.setAttribute("title", "Next passage");
 
     const skipParagraphButton = document.createElement("button");
     skipParagraphButton.type = "button";

@@ -9,6 +9,7 @@ struct NarrationInput: Decodable {
     var instruct: String?
     var pronunciations: [String: String]?
     var output: String?
+    var timing: String?
 }
 
 enum NarrationVoice {
@@ -27,7 +28,12 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         let path: URL
         let samples: Int
         let sampleRate: Int
-        var json: [String: Int] { ["samples": samples, "sample_rate": sampleRate] }
+        var words: [NarrationWordTiming]?
+        var json: [String: Any] {
+            var result: [String: Any] = ["samples": samples, "sample_rate": sampleRate]
+            if let words { result["word_timings"] = words.map(\.json) }
+            return result
+        }
     }
     private struct Job {
         let id: String
@@ -38,6 +44,10 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         var chunks: [NarrationPiece]
         let isSelection: Bool
         let output: String
+        var timed = false
+        var published = 0
+        var segmentStart = 0
+        var sourceLength = 0
         var audioExpires: Date?
         var streamChunks: [StreamChunk] = []
         var nextStreamChunk = 0
@@ -52,7 +62,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             var value: [String: Any] = ["id": id, "state": state, "characters": characters,
                 "voice": voice, "language": language, "pieces": total, "pieces_played": played,
                 "pieces_generated": generated, "output": output, "audio_available": audioExpires != nil]
-            if output == "stream" { value["audio_chunks"] = streamChunks.map(\.json) }
+            if output == "stream" { value["audio_chunks"] = Array(streamChunks.prefix(published)).map(\.json) }
             if output == "pieces" { value["audio_pieces"] = Array(audioPieces.prefix(generated)) }
             if let error { value["error"] = error }
             return value
@@ -67,6 +77,9 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     private var worker: (any NarrationWorker)?
     private let makeWorker: (@escaping @Sendable (UUID, TTSWorkerEvent) -> Void) -> any NarrationWorker
     private let isConfigured: () -> Bool
+    private var timingWorker: (any NarrationTimingWorker)?
+    private var timingDeadline: Date?
+    private let makeTimingWorker: (@escaping @Sendable (UUID, NarrationTimingEvent) -> Void) -> any NarrationTimingWorker
     private var workerReady = false
     private var workerDeadline: Date?
     private var generatingPath: URL?
@@ -86,10 +99,12 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     var hasNarration: Bool { active != nil || !pending.isEmpty }
 
     init(isConfigured: @escaping () -> Bool = { TTSWorker.configured }, token: String = "",
-         makeWorker: @escaping (@escaping @Sendable (UUID, TTSWorkerEvent) -> Void) -> any NarrationWorker = { TTSWorker(onEvent: $0) }) {
+         makeWorker: @escaping (@escaping @Sendable (UUID, TTSWorkerEvent) -> Void) -> any NarrationWorker = { TTSWorker(onEvent: $0) },
+         makeTimingWorker: @escaping (@escaping @Sendable (UUID, NarrationTimingEvent) -> Void) -> any NarrationTimingWorker = { NarrationTiming(onEvent: $0) }) {
         self.token = token
         self.isConfigured = isConfigured
         self.makeWorker = makeWorker
+        self.makeTimingWorker = makeTimingWorker
         super.init()
     }
 
@@ -121,6 +136,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
                     guard let self else { return }
                     self.expireAudio()
                     if self.active != nil && self.isDictationBusy() { self.stopAll() }
+                    if let deadline = self.timingDeadline, Date() > deadline { self.failActive("Narration recognition timed out") }
                     if let deadline = self.workerDeadline, Date() > deadline { self.workerFailed("Qwen worker timed out") }
                     if !self.warmupAttempted, TTSWorker.configured, !self.isDictationBusy() {
                         self.startWorker()
@@ -182,6 +198,9 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         guard let input = try? JSONDecoder().decode(NarrationInput.self, from: data) else { return .error(400, "Invalid JSON; text must be a string") }
         guard ["playback", "audio", "pieces", "stream"].contains(input.output ?? "playback") else { return .error(422, "Output must be playback, audio, pieces, or stream") }
         if ["audio", "pieces", "stream"].contains(input.output ?? ""), input.text.count > 4000 { return .error(422, "Audio requests are limited to 4,000 characters") }
+        guard input.timing == nil || (input.timing == "words" && input.output == "stream") else {
+            return .error(422, "Word timing requires stream output")
+        }
         guard ["enqueue", "replace"].contains(input.mode ?? "enqueue") else { return .error(422, "Mode must be enqueue or replace") }
         guard let voice = NarrationVoice.resolve(input.voice),
               let language = languages.first(where: { $0.lowercased() == (input.language ?? "English").lowercased() }) else {
@@ -201,6 +220,8 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             let id = UUID().uuidString.lowercased()
             jobs[id] = Job(id: id, characters: input.text.count, voice: voice, language: language,
                            instruct: input.instruct, chunks: chunks, isSelection: selection != nil, output: input.output ?? "playback", total: chunks.count)
+            jobs[id]?.timed = input.timing == "words"
+            jobs[id]?.sourceLength = input.text.utf16.count
             jobs[id]?.audioPieces = chunks.map {
                 ["start": Double($0.sourceRange.location) / Double(input.text.utf16.count),
                  "end": Double(NSMaxRange($0.sourceRange)) / Double(input.text.utf16.count)]
@@ -263,12 +284,14 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             let path = directory.appendingPathComponent("\(job.generated).wav")
             generatingPath = path
             jobs[id]?.nextStreamChunk = 0
+            jobs[id]?.segmentStart = job.streamChunks.count
             workerDeadline = Date().addingTimeInterval(120)
             if player == nil { jobs[id]?.state = "generating" }
             worker?.generate(id: id, text: job.chunks[job.generated].text, voice: job.voice,
                              language: job.language, instruct: job.instruct, path: path,
                              pause: job.chunks[job.generated].pauseAfter, seed: 7 + job.silenceRetries, stream: job.output == "stream")
         } else if job.output != "playback", generatingPath == nil, job.generated == job.total {
+            guard job.published == job.streamChunks.count else { return }
             let directory = audioDirectory.appendingPathComponent(id)
             do {
                 if job.output == "audio" {
@@ -313,6 +336,21 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
                   audioWithinLimit(active) else { failActive("Invalid streaming audio or storage limit exceeded"); return }
             jobs[active]?.streamChunks.append(StreamChunk(path: chunkPath, samples: samples, sampleRate: rate))
             jobs[active]?.nextStreamChunk += 1
+            if job.timed {
+                if timingWorker == nil {
+                    let timing = makeTimingWorker { [weak self] workerID, event in
+                        Task { @MainActor in self?.timingEvent(workerID, event) }
+                    }
+                    timingWorker = timing
+                    do { try timing.start() }
+                    catch { failActive("Could not start narration recognition: \(error)"); return }
+                }
+                let chunks = jobs[active]!.streamChunks
+                if timingDeadline == nil { timingDeadline = Date().addingTimeInterval(120) }
+                timingWorker?.recognize(id: active, chunk: chunks.count - 1, segment: job.generated,
+                    paths: chunks[job.segmentStart...].map(\.path), words: job.chunks[job.generated].words,
+                    offset: chunks[..<job.segmentStart].reduce(0) { $0 + Double($1.samples) / Double($1.sampleRate) }, language: job.language)
+            } else { jobs[active]?.published = job.streamChunks.count + 1 }
             workerDeadline = Date().addingTimeInterval(120)
         case "audio":
             guard let active, event.id == active, let path = generatingPath, event.path == path.path else {
@@ -369,7 +407,40 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         warmupAttempted = false
     }
 
+    private func timingEvent(_ workerID: UUID, _ event: NarrationTimingEvent) {
+        guard timingWorker?.id == workerID else { return }
+        if let error = event.error {
+            Logger.error("Narration recognition failure: \(error)")
+            timingWorker?.stop()
+            timingWorker = nil
+            timingDeadline = nil
+            if let active, jobs[active]?.timed == true { failActive(error) }
+            return
+        }
+        guard let active, event.id == active, let job = jobs[active],
+              let index = event.chunk, index == job.published, index < job.streamChunks.count,
+              let words = event.words else { failActive("Unexpected narration timing response"); return }
+        let duration = job.streamChunks.prefix(index + 1).reduce(0) { $0 + Double($1.samples) / Double($1.sampleRate) }
+        var last = job.streamChunks.prefix(index).compactMap { $0.words?.last?.start }.last ?? 0
+        for word in words {
+            guard word.location >= 0, word.length > 0, word.location <= job.sourceLength - word.length,
+                  word.start.isFinite, word.end.isFinite, word.start >= last,
+                  word.end >= word.start, word.end <= duration + 0.001 else {
+                failActive("Invalid narration word timing"); return
+            }
+            last = word.start
+        }
+        if index == 0 && words.isEmpty { failActive("Narration recognition returned no word timings"); return }
+        jobs[active]?.streamChunks[index].words = words
+        jobs[active]?.published += 1
+        timingDeadline = index + 1 < job.streamChunks.count ? Date().addingTimeInterval(120) : nil
+        pump()
+    }
+
     private func clearPlayback() {
+        timingWorker?.stop()
+        timingWorker = nil
+        timingDeadline = nil
         player?.stop()
         player = nil
         // Remove the job directory too, so a cancelled worker cannot publish late audio.
@@ -437,7 +508,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
 
     func streamResponse(_ id: String, index: Int) -> NarrationHTTPResponse {
         expireAudio()
-        guard let job = jobs[id], job.output == "stream", index >= 0, index < job.streamChunks.count,
+        guard let job = jobs[id], job.output == "stream", index >= 0, index < job.published,
               ["generating", "completed"].contains(job.state),
               job.state != "completed" || job.audioExpires != nil else {
             return .error(404, "Audio chunk is not ready or has expired")

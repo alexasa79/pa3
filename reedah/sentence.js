@@ -166,7 +166,30 @@
     return raw.replace(/\s+/g, " ").trim().length;
   }
 
-  const api = { buildSentenceRanges };
+  // Candidates are already DOM paragraphs/list items. Bound exceptionally long
+  // candidates for the narration API, preferring a sentence boundary.
+  function buildParagraphRanges(text) {
+    if (!text || !text.trim()) return [];
+    const result = [];
+    for (const match of text.matchAll(/[^\n\r\u2029]+(?:[\n\r](?![\n\r])[^\n\r\u2029]+)*/gu)) {
+      let start = match.index;
+      const end = start + match[0].length;
+      while (start < end) {
+        let cut = Math.min(end, start + 3800);
+        if (cut < end) {
+          const sentences = buildSentenceRanges(text.slice(start, cut));
+          const boundary = sentences.length > 1 ? sentences.at(-2).end : 0;
+          const space = text.lastIndexOf(' ', cut);
+          cut = boundary > 1900 ? start + boundary : space > start ? space : cut;
+          if (/[\uD800-\uDBFF]/.test(text[cut - 1])) cut--;
+        }
+        result.push({start, end:cut});
+        start = cut;
+      }
+    }
+    return result;
+  }
+  const api = { buildSentenceRanges, buildParagraphRanges };
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

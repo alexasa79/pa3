@@ -18,9 +18,11 @@
 
   // One continuous sentence. Retain its PCM for pause/resume and sentence replay.
   class StreamAudio {
-    constructor({getContext = context, estimatedDuration = 1, playbackRate = 1, budget = sharedBudget} = {}) {
+    constructor({getContext = context, estimatedDuration = 1, sourceLength = null, playbackRate = 1, budget = sharedBudget} = {}) {
       this.getContext = getContext;
       this.estimatedDuration = Math.max(1, estimatedDuration);
+      this.wordTimings = [];
+      this.sourceLength = sourceLength;
       this.buffers = [];
       this.sources = [];
       this.offset = 0;
@@ -62,6 +64,30 @@
       this.progressValue = Math.max(this.progressValue, Math.min(this.finished ? 1 : 0.95, fraction));
       return this.progressValue;
     }
+    get focusRange() {
+      const words = this.wordTimings;
+      if (!words.length) return null;
+      let current = 0;
+      while (current + 1 < words.length && words[current + 1].start <= this.currentTime) current++;
+      const from = Math.floor(current / 3) * 3;
+      const group = words.slice(from, from + 3);
+      return {start:group[0].location, end:Math.max(...group.map(w => w.location + w.length))};
+    }
+    appendTimings(timings, duration) {
+      if (!Array.isArray(timings)) throw new Error('Missing narration word timings');
+      let previous = this.wordTimings.at(-1);
+      for (const word of timings) {
+        if (!Number.isInteger(word.location) || !Number.isInteger(word.length) || word.location < 0 || word.length <= 0 ||
+            word.location + word.length > this.sourceLength || !Number.isFinite(word.start) || !Number.isFinite(word.end) ||
+            word.start < (previous?.start ?? 0) || word.end < word.start || word.end > duration + 0.001 ||
+            (previous && word.location < previous.location)) throw new Error('Invalid narration word timing');
+        // Several pronounced words can refer to one dictionary term in the document.
+        if (previous && word.location === previous.location && word.length === previous.length) {
+          previous.end = Math.max(previous.end, word.end);
+        } else { this.wordTimings.push({...word}); previous = this.wordTimings.at(-1); }
+      }
+      if (!this.wordTimings.length) throw new Error('Narration recognition returned no word timings');
+    }
     append(message) {
       if (this.disposed || this.finished) throw new Error('Audio received after stream closed');
       if (message.pieceIndex !== this.chunkCount || message.sampleRate !== 24000 ||
@@ -78,6 +104,7 @@
         if (!Number.isFinite(pcm[i])) throw new Error('Invalid PCM sample');
       }
       if (this.total + pcm.length / message.sampleRate > 350) throw new Error('Sentence audio exceeds limit');
+      if (this.sourceLength !== null) this.appendTimings(message.wordTimings, this.total + pcm.length / message.sampleRate);
       this.stretcher ??= new TimeStretch(this.playbackRate);
       this.total += pcm.length / message.sampleRate;
       this.chunkCount++;

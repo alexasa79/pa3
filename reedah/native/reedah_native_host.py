@@ -157,7 +157,7 @@ def narrate(message, messenger, cancelled, client_factory=PA3Client, flow=None):
         for sentence in jobs:
             if not flow.acquire(sentence["index"], cancelled):
                 return
-            result = client.request("POST", "/v1/narrations", {"text": sentence["text"], "output": "stream"})
+            result = client.request("POST", "/v1/narrations", {"text": sentence["text"], "output": "stream", "timing": "words"})
             job_id = result.get("id")
             if not isinstance(job_id, str) or not job_id or any(c not in "0123456789abcdef-" for c in job_id):
                 raise ValueError("PA3 returned an invalid job ID")
@@ -190,6 +190,7 @@ def narrate(message, messenger, cancelled, client_factory=PA3Client, flow=None):
                         messenger.send({"event": "audio_chunk", "utteranceId": utterance,
                                         "index": sentence["index"], "location": sentence["location"], "length": sentence["length"],
                                         "pieceIndex": sent, "stream": True, "samples": samples, "sampleRate": rate,
+                                        "wordTimings": bounds.get("word_timings"),
                                         "part": part, "final": offset + chunk_size >= len(encoded),
                                         "audioBase64": encoded[offset:offset + chunk_size]})
                     sent += 1

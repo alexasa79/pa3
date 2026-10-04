@@ -157,6 +157,7 @@ function relayServerEvent(port, event) {
       stream: event.stream,
       samples: event.samples,
       sampleRate: event.sampleRate,
+      wordTimings: event.wordTimings,
       pieceIndex: event.pieceIndex,
       pieceCount: event.pieceCount,
       progressStart: event.progressStart,
@@ -282,7 +283,7 @@ chrome.runtime.onConnect.addListener((port) => {
     }
     let sentenceJobs;
     try {
-      sentenceJobs = nativeRequestBuilder.buildSentenceJobs(text, sentenceRanges);
+      sentenceJobs = nativeRequestBuilder.buildSentenceJobs(text, sentenceRanges, {preserveOffsets: true});
     } catch (error) {
       const details = error.message || String(error);
       console.error("Reedah: Failed to build sentence jobs.", details);

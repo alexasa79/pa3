@@ -44,6 +44,11 @@ export async function checkHighlights(call) {
         positions});
       api.clearHighlight();
       results.at(-1).restored=p.innerHTML===original;
+      api.highlightSentence(p,{start:0,end:text.length});
+      api.applyHighlightWordFocus(0,{start:text.lastIndexOf('Next'),end:text.length});
+      results.at(-1).paragraphTint=[...p.querySelectorAll('.reedah-highlight')].map(s=>s.textContent).join('')===text;
+      results.at(-1).recognizedFocus=[...p.querySelectorAll('.reedah-highlight-word-focus')].map(s=>s.textContent).join('').trim();
+      api.clearHighlight();
       section.remove();
     }
     return results;
@@ -64,6 +69,8 @@ export async function checkHighlights(call) {
     assert.ok(check.positions[0].text.startsWith('First sentence'),`Focus begins at sentence start on ${check.background}`);
     assert.ok(check.positions[2].text.endsWith('another line.'),`Focus reaches sentence end on ${check.background}`);
     assert.notEqual(check.positions[0].text,check.positions[1].text,`Focus follows playback on ${check.background}`);
+    assert.equal(check.paragraphTint,true, 'Whole paragraph retains its primary highlight');
+    assert.equal(check.recognizedFocus,'Next sentence.', 'Explicit source timing selects only the spoken phrase');
     assert.equal(check.restored,true,`Restored inline markup on ${check.background}`);
   }
   console.log('PASS: continuous phrase tint including spaces, playback progress, unchanged wrapping and inline cleanup on ten light/dark CSS backgrounds.');

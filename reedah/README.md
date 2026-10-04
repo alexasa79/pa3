@@ -1,6 +1,6 @@
 # Reedah
 
-Reedah adds paragraph narration controls to web pages in Chrome. PA3 runs Qwen3-TTS locally and streams audio through Reedah's native messaging bridge. Chrome plays the audio and handles pause, sentence navigation, highlighting, and playback speed.
+Reedah adds paragraph narration controls to web pages in Chrome. PA3 runs Qwen3-TTS locally and streams audio through Reedah's native messaging bridge. Chrome plays the audio and handles pause, passage navigation, highlighting, and playback speed.
 
 Reedah lives in the PA3 repository so changes to the app, extension, and bridge can ship together. The extension remains separately loaded in Chrome; building PA3 does not install it.
 
@@ -30,13 +30,13 @@ The voice is PA3's American male (Iowa), VCTK p311. Playback speed is applied in
 
 Narration skips only parenthesized single file/path references with a colon and line number, such as `(src/file.swift:42)`. Line ranges and optional columns also qualify. Ordinary parenthetical explanations, nested prose, and unmatched parentheses remain spoken. Source text and highlighting positions are unchanged.
 
-Each complete sentence is a streaming request. Highlighting is approximate because Qwen does not supply word timestamps. Generation can fall behind playback on a busy GPU; the player then shows **Buffering** and resumes when audio is available.
+Each paragraph is a streaming request; very long paragraphs are divided into bounded passages. PA3 generates up to 600 spoken characters together and uses local Whisper recognition to estimate word timings. The entire paragraph has a subtle tint, with a stronger highlight moving through roughly three source words at a time. Dictionary expansions remain mapped to the original terms. Timings follow the audio clock across pause, replay, and pitch-preserving speed changes. Recognition adds startup buffering and can miss individual words; alignment failures stop narration. Generation can fall behind playback on a busy GPU; the player then shows **Buffering** and resumes when audio is available.
 
 ## Confluence live documents
 
 Reedah supports the main live document editor on Confluence Cloud page URLs. Paragraphs, headings, lists, quotations, and table-cell paragraphs receive narration controls. Comment composers, nested inputs, code editors, collaborator cursors, placeholders, and collapsed content are excluded.
 
-In this editor, sentence and phrase tinting uses CSS Custom Highlights on existing text ranges. It does not split text nodes, insert highlight spans into the document, or change the editing selection. If the active paragraph changes or disappears, narration stops; press Play to read the updated text. Changes to a prefetched paragraph discard its old audio. Collaborator cursor movements and replacement of DOM nodes with identical text do not interrupt playback. Ordinary web pages keep their existing highlighting.
+In this editor, paragraph and phrase tinting uses CSS Custom Highlights on existing text ranges. It does not split text nodes, insert highlight spans into the document, or change the editing selection. If the active paragraph changes or disappears, narration stops; press Play to read the updated text. Changes to a prefetched paragraph discard its old audio. Collaborator cursor movements and replacement of DOM nodes with identical text do not interrupt playback. Ordinary web pages keep their existing highlighting.
 
 ## Mathematical text
 

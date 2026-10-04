@@ -105,7 +105,14 @@
       if (!Number.isFinite(progress)) throw new Error('Invalid editor highlight progress.');
       const width = Math.min(30, this.length);
       const start = Math.max(0, Math.min(Math.max(0,Math.min(1,progress)) * this.length - width / 2, this.length - width));
-      const words = this.words.filter(word => word.end > start && word.start < start + width);
+      this.updateRange(start, start + width);
+    }
+
+    updateRange(start, end) {
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || end > this.length) {
+        throw new Error('Invalid editor highlight range.');
+      }
+      const words = this.words.filter(word => word.end > start && word.start < end);
       const key = words.length ? `${words[0].start}:${words.at(-1).end}` : '';
       if (key === this.focusKey) return;
       this.focusKey = key;

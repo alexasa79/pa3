@@ -2,6 +2,13 @@ import AppKit
 import AVFoundation
 import SwiftUI
 
+if CommandLine.arguments.contains("--narration-timing-live-test") {
+    let testApp = NSApplication.shared
+    testApp.setActivationPolicy(.accessory)
+    Task { @MainActor in exit(await runNarrationTimingLiveTest()) }
+    testApp.run()
+}
+
 if CommandLine.arguments.contains("--narration-recovery-test") {
     let testApp = NSApplication.shared
     testApp.setActivationPolicy(.accessory)

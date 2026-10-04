@@ -101,3 +101,13 @@ test("buildSentenceRanges still handles ellipses and punctuation outside quotes"
     assert.deepEqual(extractSentences(`${first} ${second}`, { minSentenceLength: 0 }), [first, second]);
   }
 });
+
+test('paragraph ranges retain several sentences and bound very long paragraphs', () => {
+  const {buildParagraphRanges}=require('../sentence');
+  const text='First sentence. Second sentence.\n\nNext paragraph.';
+  assert.deepEqual(buildParagraphRanges(text).map(r=>text.slice(r.start,r.end)),['First sentence. Second sentence.','Next paragraph.']);
+  const long='A useful technical explanation. '.repeat(200);
+  const ranges=buildParagraphRanges(long);
+  assert.equal(ranges.map(r=>long.slice(r.start,r.end)).join(''),long);
+  assert.ok(ranges.every(r=>r.end-r.start<=3800));
+});

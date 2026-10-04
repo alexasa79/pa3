@@ -47,3 +47,10 @@ test("parentheses cleanup preserves meaningful text and punctuation", () => {
     assert.equal(buildSentenceJobs(text, [{start:0,end:text.length}])[0].text, expected);
   }
 });
+
+test('timed paragraph jobs keep original offsets through skipped code references', () => {
+  const text='🙂 Read (file.swift:42). Then SQL.';
+  const jobs=buildSentenceJobs(text,[{start:0,end:text.length}],{preserveOffsets:true});
+  assert.equal(jobs[0].text,text);
+  assert.equal(jobs[0].length,text.length);
+});

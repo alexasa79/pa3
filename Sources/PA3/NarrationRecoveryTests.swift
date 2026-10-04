@@ -17,7 +17,7 @@ private final class RecoveryTestWorker: NarrationWorker {
 
 @MainActor
 func runNarrationRecoveryTests() async -> Int32 {
-    guard await runSharedDictionaryServiceTests() else { return 1 }
+    guard await runTimingServiceTests(), await runSharedDictionaryServiceTests() else { return 1 }
     var workers: [RecoveryTestWorker] = []
     let service = NarrationService(isConfigured: { true }) { callback in
         let worker = RecoveryTestWorker(callback)
@@ -261,5 +261,59 @@ private func runSharedDictionaryServiceTests() async -> Bool {
         }
     }
     print("PASS shared dictionary for selected text, browser streams, and unsaved preview overrides")
+    return true
+}
+
+private final class TimingTestWorker: NarrationTimingWorker {
+    let id = UUID()
+    let callback: @Sendable (UUID, NarrationTimingEvent) -> Void
+    var requests: [(id: String, chunk: Int, words: [NarrationWord])] = []
+    var stopped = false
+    init(_ callback: @escaping @Sendable (UUID, NarrationTimingEvent) -> Void) { self.callback = callback }
+    func start() throws {}
+    func stop() { stopped = true }
+    func recognize(id: String, chunk: Int, segment: Int, paths: [URL], words: [NarrationWord], offset: Double, language: String) {
+        requests.append((id, chunk, words))
+    }
+    func emit(_ event: NarrationTimingEvent) { callback(id, event) }
+}
+
+@MainActor
+private func runTimingServiceTests() async -> Bool {
+    var narrator: RecoveryTestWorker!, timing: TimingTestWorker!
+    let service = NarrationService(isConfigured: { true }, token: "test-token", makeWorker: {
+        narrator = RecoveryTestWorker($0); return narrator
+    }, makeTimingWorker: { timing = TimingTestWorker($0); return timing })
+    defer { service.shutdown() }
+    func settle() async { try? await Task.sleep(for: .milliseconds(30)) }
+    func request(_ method: String, _ path: String) -> NarrationHTTPResponse {
+        service.handle(NarrationHTTPRequest(method: method, path: path, headers: ["authorization": "Bearer test-token"], body: Data()))
+    }
+    func json(_ response: NarrationHTTPResponse) -> [String: Any] { (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any] ?? [:] }
+    let response = service.submit(try! JSONSerialization.data(withJSONObject: ["text": "First sentence. Second sentence.", "output": "stream", "timing": "words"]))
+    guard let id = json(response)["id"] as? String else { print("FAIL timed stream acceptance"); return false }
+    let path = "/v1/narrations/" + id
+    narrator.emit(TTSWorkerEvent(event: "ready")); await settle()
+    guard narrator.requests.count == 1, narrator.requests[0].text.contains("Second sentence.") else { print("FAIL paragraph generation"); return false }
+    let output = narrator.requests[0].path
+    let partial = output.path + ".part-0.pcm"
+    do { try Data(repeating: 0, count: 96000).write(to: URL(fileURLWithPath: partial)) }
+    catch { return false }
+    narrator.emit(TTSWorkerEvent(event: "partial", id: id, path: partial, chunk: 0, samples: 24000, sampleRate: 24000))
+    narrator.emit(TTSWorkerEvent(event: "audio", id: id, path: output.path)); await settle()
+    guard timing.requests.count == 1, request("GET", path + "/chunks/0").status == 404,
+          json(request("GET", path))["state"] as? String == "generating" else { print("FAIL audio must wait for timings"); return false }
+    timing.emit(NarrationTimingEvent(id: id, chunk: 0, words: [NarrationWordTiming(location: 0, length: 5, start: 0, end: 0.5)]))
+    await settle()
+    let status = json(request("GET", path))
+    guard status["state"] as? String == "completed", request("GET", path + "/chunks/0").status == 200,
+          let chunks = status["audio_chunks"] as? [[String: Any]], chunks[0]["word_timings"] != nil else { print("FAIL timed stream publication"); return false }
+    // A new request reuses the recognizer; cancel stops it and ignores delayed callbacks.
+    let second = service.submit(try! JSONSerialization.data(withJSONObject: ["text":"Another paragraph.", "output":"stream", "timing":"words"]))
+    guard let secondID = json(second)["id"] as? String else { return false }
+    _ = request("DELETE", "/v1/narrations/" + secondID)
+    timing.emit(NarrationTimingEvent(id: secondID, chunk: 0, words: [])); await settle()
+    guard timing.stopped, json(request("GET", "/v1/narrations/" + secondID))["state"] as? String == "cancelled" else { return false }
+    print("PASS paragraph streaming, timing gating, metadata, cancellation, and stale recognition events")
     return true
 }

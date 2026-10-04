@@ -1,9 +1,16 @@
 import Foundation
 
+struct NarrationWord: Codable, Sendable {
+    let text: String
+    let location: Int
+    let length: Int
+}
+
 struct NarrationPiece: Sendable {
     let text: String
     let sourceRange: NSRange
     var pauseAfter: Double
+    var words: [NarrationWord] = []
 }
 
 enum NarrationText {
@@ -257,8 +264,8 @@ enum NarrationText {
                     while start < end, text[start].isWhitespace { start = text.index(after: start) }
                     guard start < end else { break }
                     let streaming = input.output == "pieces"
-                    let budget = streaming ? (pieces.isEmpty ? 64 : 96) : (pieces.isEmpty ? 160 : 300)
-                    let limit = input.output == "stream" ? end : (text.index(start, offsetBy: budget, limitedBy: end) ?? end)
+                    let budget = input.timing == "words" ? 600 : streaming ? (pieces.isEmpty ? 64 : 96) : (pieces.isEmpty ? 160 : 300)
+                    let limit = input.output == "stream" && input.timing != "words" ? end : (text.index(start, offsetBy: budget, limitedBy: end) ?? end)
                     var cut = limit
                     if limit < end {
                         if streaming {
@@ -277,10 +284,29 @@ enum NarrationText {
                     while spokenEnd > start, text[text.index(before: spokenEnd)].isWhitespace { spokenEnd = text.index(before: spokenEnd) }
                     let spoken = String(text[start..<spokenEnd])
                     if !spoken.isEmpty {
+                        let spokenRange = NSRange(start..<spokenEnd, in: text)
+                        let wordRegex = try NSRegularExpression(pattern: #"[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*"#)
+                        let words = wordRegex.matches(in: text, range: spokenRange).map { match in
+                            let origin = sentence.sourceRange(match.range)
+                            return NarrationWord(text: (text as NSString).substring(with: match.range).lowercased(),
+                                                 location: origin.location, length: origin.length)
+                        }
                         pieces.append(NarrationPiece(text: spoken, sourceRange: sentence.sourceRange(NSRange(start..<spokenEnd, in: text)),
-                                                     pauseAfter: hasSentenceEnding(spoken) ? 0.20 : 0.12))
+                                                     pauseAfter: hasSentenceEnding(spoken) ? 0.20 : 0.12, words: words))
                     }
                     start = cut
+                }
+            }
+            if input.timing == "words", pieces.count > firstPiece {
+                let sentences = Array(pieces[firstPiece...])
+                pieces.removeSubrange(firstPiece...)
+                for sentence in sentences {
+                    if pieces.count > firstPiece, let previous = pieces.last,
+                       previous.text.count + sentence.text.count + 1 <= 600 {
+                        pieces[pieces.count - 1] = NarrationPiece(text: previous.text + " " + sentence.text,
+                            sourceRange: NSUnionRange(previous.sourceRange, sentence.sourceRange),
+                            pauseAfter: sentence.pauseAfter, words: previous.words + sentence.words)
+                    } else { pieces.append(sentence) }
                 }
             }
             if pieces.count > firstPiece, blockIndex + 1 < blocks.count {
