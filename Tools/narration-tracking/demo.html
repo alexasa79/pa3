@@ -1,0 +1,45 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>PA3 narration tracking prototype</title>
+<style>
+body{font:18px system-ui;max-width:1000px;margin:40px auto;padding:20px;background:#fafafa;color:#222}
+section{margin:32px 0;padding:24px;background:white;border:1px solid #ddd;border-radius:12px}
+.passage{line-height:1.9}.active{background:#ffe58a}audio{width:100%}
+small{color:#555}select{font:inherit;margin-left:10px;padding:5px}pre{white-space:pre-wrap}
+</style>
+<h1>Narration tracking prototype</h1>
+<p>Whole-paragraph Qwen generation, followed by windowed Whisper recognition. The moving highlight defaults to three words. Switch to two or five words, or a whole sentence, to compare.</p>
+<p>Timing is approximate: these are the first accepted word timestamps, not timings corrected after listening to the entire recording. Smaller highlights make timing errors easier to notice.</p>
+<p>Playback replays the recorded estimates. Details show whether recognition ran concurrently with generation. Word-match percentages measure text correspondence, not timestamp accuracy.</p>
+<main></main>
+<script src="highlight.js"></script>
+<script>
+const results=PAYLOAD;
+for(const r of results){
+  const section=document.createElement('section');
+  const heading=document.createElement('h2');heading.textContent=r.id;section.append(heading);
+  const stats=document.createElement('p');
+  stats.textContent=`${r.duration.toFixed(1)}s audio · ${(r.matched_fraction*100).toFixed(1)}% source words matched · ${r.asr_seconds.toFixed(1)}s windowed ASR · first audio ${r.chunks[0].available.toFixed(1)}s after generation started`;
+  section.append(stats);
+  const audio=document.createElement('audio');audio.controls=true;audio.src=r.id+'.wav';section.append(audio);
+  const label=document.createElement('label');label.textContent='Highlight';
+  const mode=document.createElement('select');
+  for(const [value,text] of [['2','2 words'],['3','3 words'],['5','5 words'],['sentence','Whole sentence']]){
+    const option=document.createElement('option');option.value=value;option.textContent=text;mode.append(option);
+  }
+  mode.value='3';label.append(mode);section.append(label);
+  const para=document.createElement('p');para.className='passage';para.append(document.createTextNode(r.display_prefix));
+  const spans=r.display_words.map(text=>{const span=document.createElement('span');span.textContent=text;para.append(span);return span});
+  section.append(para);
+  const update=()=>{
+    const range=audio.ended?null:highlightRange(r,audio.currentTime,mode.value);
+    spans.forEach((span,i)=>span.classList.toggle('active',!!range&&i>=range[0]&&i<range[1]));
+  };
+  audio.ontimeupdate=update;audio.onseeked=update;audio.onended=update;mode.onchange=update;
+  const details=document.createElement('details');
+  const summary=document.createElement('summary');summary.textContent='Measured boundaries and delivery latency';details.append(summary);
+  const pre=document.createElement('pre');
+  pre.textContent=JSON.stringify({boundaries:r.boundaries,simulated_start_buffer:r.simulated_start_buffer,simulation_note:r.simulation_note},null,2);
+  details.append(pre);section.append(details);document.querySelector('main').append(section);
+}
+</script>

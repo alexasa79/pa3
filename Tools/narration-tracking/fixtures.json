@@ -1,0 +1,5 @@
+[
+  {"id":"plain", "sentences":["The service receives a request and checks the local cache.","If the cache contains the result, the service returns it immediately.","Otherwise, the worker calculates the result and stores it in the cache.","The next request can then reuse the cached result."]},
+  {"id":"technical", "sentences":["The transaction coordinator writes a checkpoint before acknowledging the request.","Each checkpoint includes a sequence number and a checksum.","If the checksum does not match, the coordinator discards the checkpoint and retries the transaction.","An idempotent request can be retried safely, but an ambiguous timeout still requires reconciliation.","The coordinator compares the sequence number again before committing the transaction."]},
+  {"id":"repeated", "sentences":["Check the cache before starting the worker.","The worker reads the configuration and validates the request.","Check the cache before starting the worker.","If the configuration changed, restart the worker and validate the request again.","Check the cache before starting the worker.","The final result should match the original request."]}
+]
