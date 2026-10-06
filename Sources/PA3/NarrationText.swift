@@ -79,6 +79,16 @@ enum NarrationText {
             ["Makefile", "Dockerfile", "Gemfile", "Rakefile", "Procfile"].contains(value.components(separatedBy: ":")[0])
     }
 
+    // Recognize explicit web links, including destinations inside Markdown links.
+    private static let webLink = try! NSRegularExpression(
+        pattern: #"(?<![\p{L}\p{N}_])(?:https?://|www\.)[\p{L}\p{N}](?:[^\s<>]*[\p{L}\p{N}/])?"#,
+        options: .caseInsensitive)
+
+    private static func shouldSkipParentheses(_ value: String) -> Bool {
+        isParenthesizedCodeReference(value) ||
+            webLink.firstMatch(in: value, range: NSRange(location: 0, length: value.utf16.count)) != nil
+    }
+
     // Mask matching complete groups before paragraph/sentence splitting. Equal UTF-16 length
     // keeps every later source range aligned, even across newlines and emoji.
     private static func maskParentheses(_ text: String) -> String {
@@ -91,7 +101,7 @@ enum NarrationText {
             } else if units[index] == 41, depth > 0 {
                 depth -= 1
                 if depth == 0, index > start + 1,
-                   isParenthesizedCodeReference(String(decoding: units[(start + 1)..<index], as: UTF16.self)) {
+                   shouldSkipParentheses(String(decoding: units[(start + 1)..<index], as: UTF16.self)) {
                     for hidden in start...index { units[hidden] = 32 }
                 }
             }

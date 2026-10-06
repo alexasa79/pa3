@@ -80,6 +80,13 @@ func runNarrationTests() -> [String] {
         for output in ["playback", "pieces", "stream"] {
             for (source, expected) in [
                 ("Read (src/file.swift:42) aloud.", "Read aloud."),
+                ("Read (https://example.org/docs) aloud.", "Read aloud."),
+                ("Read (see HTTP://example.org:8080/docs?q=one#two) aloud.", "Read aloud."),
+                ("Read (www.example.org) aloud.", "Read aloud."),
+                ("Read (see [the docs](https://example.org/docs)) aloud.", "Read aloud."),
+                ("Read (https://example.org/wiki/Topic_(detail)) aloud.", "Read aloud."),
+                ("🙂 Read (see\nhttps://example.org/שלום) aloud.", "🙂 Read aloud."),
+                ("Read (the https:// protocol) aloud.", "Read (the https:// protocol) aloud."),
                 ("Read(file.c:100-200)aloud (file.ts:12:3).", "Read aloud."),
                 ("Read (an important detail) aloud.", "Read (an important detail) aloud."),
                 ("Read (an aside (nested)) aloud.", "Read (an aside (nested)) aloud."),
@@ -95,12 +102,24 @@ func runNarrationTests() -> [String] {
             let parts = try NarrationText.plan(NarrationInput(text: source, output: output))
             check(parts.map(\.text) == ["🙂 Read this.", "Then continue reading."], "omitted standalone sentences")
             check(parts.map { (source as NSString).substring(with: $0.sourceRange) } == ["🙂 Read this.", "Then continue reading."], "offsets after omitted sentences")
+            let linked = "🙂 Read (see [docs](https://example.org)) this."
+            let linkedParts = try NarrationText.plan(NarrationInput(text: linked, output: output, timing: "words"))
+            check(linkedParts.map(\.text) == ["🙂 Read this."], "links omitted with word timing")
+            check(linkedParts.flatMap(\.words).map { (linked as NSString).substring(with: NSRange(location: $0.location, length: $0.length)) } == ["Read", "this"], "word offsets survive omitted links")
+            let outside = "Visit https://example.org for details."
+            check(try NarrationText.prepare(NarrationInput(text: outside, output: output)).joined(separator: " ").contains("https://example.org"), "links outside parentheses remain spoken")
         }
         do {
             _ = try NarrationText.plan(NarrationInput(text: "(file.swift:42)."))
             failures.append("narration: reference-only text should not generate audio")
         } catch let error as NarrationText.Invalid {
             check(error.message == "No speakable text", "reference-only input reports no speakable text")
+        }
+        do {
+            _ = try NarrationText.plan(NarrationInput(text: "(https://example.org)."))
+            failures.append("narration: link-only parentheses should not generate audio")
+        } catch let error as NarrationText.Invalid {
+            check(error.message == "No speakable text", "link-only input reports no speakable text")
         }
         let input = NarrationInput(text: "SQL SQLAlchemy PA3 PA30. New York York.", pronunciations: ["SQL": "sequel", "PA3": "P A three", "New York": "York", "York": "Y"])
         let result = try NarrationText.prepare(input).joined(separator: " ")
