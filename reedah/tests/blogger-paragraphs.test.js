@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const {inlineRuns} = require('../blogger_paragraphs');
+const {inlineRuns} = require('../prose_paragraphs');
 
 test('Blogger runs keep inline links with prose and split on line breaks and blocks', () => {
   const nodes = ['text', 'link', 'text', 'br', 'br', 'text', 'table', 'text', 'div', 'text'];

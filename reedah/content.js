@@ -11,7 +11,6 @@
     return;
   }
 
-  const MIN_TEXT_LENGTH = 5;
   const MIN_HEADING_LENGTH = 3;
   const OVERLAY_OFFSET = 8;
   const SENTENCE_PAUSE_MS = 500;
@@ -23,8 +22,8 @@
   const HIGHLIGHT_MODE_LIGHT = "light";
   const HIGHLIGHT_MODE_DARK = "dark";
   const DEFAULT_OL_START = 1;
-  const CUSTOM_PARAGRAPH_SELECTOR = "div.mdx-p, [role='paragraph'], .reedah-blogger-paragraph";
-  const TEXT_CANDIDATE_SELECTOR = `p, li, blockquote, h1, h2, h3, h4, h5, h6, ${CUSTOM_PARAGRAPH_SELECTOR}`;
+  const CUSTOM_PARAGRAPH_SELECTOR = "div.mdx-p, [role='paragraph'], .reedah-prose-paragraph";
+  const TEXT_CANDIDATE_SELECTOR = `p, li, blockquote, h1, h2, h3, h4, h5, h6, figcaption, dt, dd, ${CUSTOM_PARAGRAPH_SELECTOR}`;
   const CANDIDATE_SELECTOR = `${TEXT_CANDIDATE_SELECTOR}, ${mathNarration.ROOT_SELECTOR}`;
   const HOVER_BOX_PADDING = 32;
   const LIST_OVERLAY_MAX_GAP = 32;
@@ -186,7 +185,7 @@
       overlay.remove();
     }
     state.overlays.clear();
-    window.ReedahBloggerParagraphs.clear(document);
+    window.ReedahProseParagraphs.clear(document);
   }
 
   function notifyState() {
@@ -201,9 +200,9 @@
     if (!document.body) return;
 
     state.observer = new MutationObserver(records => {
-      // Ignore Reedah's own focus/overlay classes. Editor attributes can change
-      // visibility or editability without inserting/removing any nodes.
-      if (records.some(record => record.type !== "attributes" || editorNarration.rootFor(record.target))) {
+      // Visibility, disclosure and role changes can reveal new prose without
+      // inserting nodes. Ignore our own overlay/highlight/class changes.
+      if (records.some(record => window.ReedahProseParagraphs.isRelevantMutation(record) || editorNarration.rootFor(record.target))) {
         // Cancellation must also work in background tabs where animation frames
         // are throttled. Positioning and range refresh can wait for the scan.
         validateEditorSessions(false);
@@ -216,7 +215,8 @@
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ["contenteditable", "hidden", "aria-hidden", "aria-expanded", "class"]
+      attributeOldValue: true,
+      attributeFilter: ["contenteditable", "hidden", "inert", "aria-hidden", "aria-expanded", "class", "style", "open", "role"]
     });
 
     window.addEventListener("scroll", schedulePositionUpdate, { passive: true });
@@ -266,7 +266,8 @@
     if (!state.enabled) return;
 
     validateEditorSessions();
-    window.ReedahBloggerParagraphs.prepare(document);
+    window.ReedahProseParagraphs.prepare(document, TEXT_CANDIDATE_SELECTOR, CUSTOM_PARAGRAPH_SELECTOR,
+      `${mathNarration.ROOT_SELECTOR}, ${mathNarration.METADATA_SELECTOR}`);
 
     const candidates = document.querySelectorAll(CANDIDATE_SELECTOR);
     for (const el of candidates) {
@@ -286,13 +287,19 @@
 
   function isCandidate(el) {
     if (!el || !el.isConnected) return false;
+    const isMath = el.matches(mathNarration.ROOT_SELECTOR);
 
     const exclusions = IN_EDITOR_FRAME
-      ? "nav, footer, header, aside, button, input, textarea, select, option, pre, code, script, style, .reedah-overlay, .reedah-controls"
-      : "nav, footer, header, aside, form, button, input, textarea, select, option, pre, code, script, style, .reedah-overlay, .reedah-controls";
+      ? "nav, footer, aside, button, input, textarea, select, option, pre, code, script, style, .reedah-overlay, .reedah-controls"
+      : "nav, footer, aside, form, button, input, textarea, select, option, pre, code, script, style, .reedah-overlay, .reedah-controls";
     if (el.closest(exclusions)) {
       return false;
     }
+    if (el.closest('[role="navigation"], [role="button"], [role="menu"], [role="menubar"], [role="tablist"], [role="toolbar"]') ||
+        window.ReedahProseParagraphs.excludedHeader(el)) return false;
+    // Legacy MathJax deliberately marks its visible frame aria-hidden.
+    if (isMath ? (!mathNarration.isVisibleRoot(el) || el.closest('[inert], details:not([open])')) :
+        window.ReedahProseParagraphs.isHidden(el)) return false;
     if (el.closest(mathNarration.METADATA_SELECTOR)) return false;
     const editorRoot = editorNarration.rootFor(el);
     if (editorRoot && editorNarration.isExcluded(el, editorRoot)) return false;
@@ -301,27 +308,28 @@
     // MDX renderers and accessible custom components can use divs for paragraphs.
     // If such a wrapper contains semantic blocks, narrate those children instead.
     if (el.matches(CUSTOM_PARAGRAPH_SELECTOR) && el.querySelector(TEXT_CANDIDATE_SELECTOR)) return false;
-    const isMath = el.matches(mathNarration.ROOT_SELECTOR);
+    if (el.matches('p') && el.querySelector(window.ReedahProseParagraphs.SELECTOR)) return false;
     if (isMath) {
       if (el.parentElement?.closest(mathNarration.ROOT_SELECTOR)) return false;
       const paragraph = el.parentElement?.closest(TEXT_CANDIDATE_SELECTOR);
       if (paragraph && isCandidate(paragraph)) return false;
-      if (!mathNarration.isVisibleRoot(el)) return false;
     }
-    if (isLinkOnly(el)) return false;
+    if (isLinkOnly(el) && !(el.closest(window.ReedahProseParagraphs.ROOT_SELECTOR) &&
+        window.ReedahProseParagraphs.isLinkedProse(getFullText(el)))) return false;
 
-    const text = editorRoot ? getFullText(el).trim() : getText(el);
-    const minLength = isHeading(el) ? MIN_HEADING_LENGTH : MIN_TEXT_LENGTH;
+    const text = getFullText(el).trim();
+    const readable = isHeading(el) ? text.length >= MIN_HEADING_LENGTH :
+      window.ReedahProseParagraphs.hasReadableText(text, el.matches('p, dt, dd, figcaption, [role="paragraph"]'));
     // SVG/CHTML formulas can have no text nodes at all. Their speech lives in
     // MathML or attributes, and is validated when narration starts.
-    if (text.length < minLength && !isMath && !el.querySelector(mathNarration.ROOT_SELECTOR)) return false;
+    if (!readable && !isMath && !el.querySelector(mathNarration.ROOT_SELECTOR)) return false;
 
     const style = window.getComputedStyle(el);
     if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) {
       return false;
     }
 
-    const rect = el.getBoundingClientRect();
+    const rect = getParagraphRect(el);
     if (rect.width === 0 || rect.height === 0) return false;
 
     // A quotation already includes its nested paragraphs, quotes, and lists.
@@ -329,6 +337,10 @@
     for (let quote = el.parentElement?.closest("blockquote"); quote;
       quote = quote.parentElement?.closest("blockquote")) {
       if (isCandidate(quote)) return false;
+    }
+    for (let owner = el.parentElement?.closest('figcaption, dd'); owner;
+      owner = owner.parentElement?.closest('figcaption, dd')) {
+      if (isCandidate(owner)) return false;
     }
 
     if (!isListItem(el)) {
@@ -377,6 +389,13 @@
     return list ? list.getBoundingClientRect() : null;
   }
 
+  function getParagraphRect(el) {
+    if (window.getComputedStyle(el).display !== 'contents') return el.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return range.getBoundingClientRect();
+  }
+
   function getAnchorRect(el) {
     try {
       const editorRoot = editorNarration.rootFor(el);
@@ -403,11 +422,6 @@
     }
 
     return el.getBoundingClientRect();
-  }
-
-  function getText(el) {
-    const raw = IN_EDITOR_FRAME ? (el.textContent || "") : (el.innerText || "");
-    return raw.replace(/\s+/g, " ").trim();
   }
 
   function normalizeNarrationText(value) {
@@ -897,7 +911,9 @@
         }
         if (node.nodeType !== Node.ELEMENT_NODE || node.matches(mathNarration.METADATA_SELECTOR)) continue;
         if (editorRoot && editorNarration.isExcluded(node,editorRoot)) continue;
-        if (editorRoot && node.tagName === "BR") {
+        if (!editorRoot && node !== el && !node.matches(mathNarration.ROOT_SELECTOR) && (window.ReedahProseParagraphs.isHidden(node) ||
+            node.matches('script, style, template, button, input, textarea, select'))) continue;
+        if (node.tagName === "BR") {
           if (!isListItem(el) || node.closest("li") === el) append(node," ",false);
           continue;
         }
@@ -1929,7 +1945,7 @@
     for (const [el, overlay] of state.overlays) {
       if (!isCandidate(el)) continue;
 
-      const rect = el.getBoundingClientRect();
+      const rect = getParagraphRect(el);
       const anchorRect = getAnchorRect(el) || rect;
       const anchorVisible = isAnchorVisible(el, rect);
 
@@ -2071,7 +2087,7 @@
 
     for (const [el, overlay] of state.overlays) {
       if (!isCandidate(el)) continue;
-      const rect = el.getBoundingClientRect();
+      const rect = getParagraphRect(el);
       if (rect.width === 0 || rect.height === 0) continue;
 
       const overlayRect = overlay && overlay.style.display !== "none"
@@ -2485,7 +2501,7 @@
 
   function ensureVisible(el, options = {}) {
     if (!el) return;
-    const rect = el.getBoundingClientRect();
+    const rect = getParagraphRect(el);
     if (isAnchorVisible(el, rect)) return;
 
     el.scrollIntoView({

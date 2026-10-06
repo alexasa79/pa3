@@ -1,0 +1,40 @@
+<!doctype html><meta charset="utf-8"><title>Paragraph styles regression matrix</title>
+<style>body {margin:48px; max-width:700px; font:16px Arial} .block {display:block} .contents {display:contents} .gone {display:none}</style>
+<main id="matrix">
+<section data-case="LinkedIn post" data-expected='["Opening paragraph with inline emphasis.","A second paragraph.","A third paragraph with a link."]'><p style="white-space:pre-wrap"><span data-testid="expandable-text-box" style="display:block">Opening paragraph with <strong>inline emphasis</strong>.<br><br>A second paragraph.<br><br><br>A third paragraph with a <a href="#">link</a>.</span></p></section>
+<section data-case="blank lines with single breaks" data-expected='["First line. Second line.","Another visual paragraph."]'><p>First line.<br>Second line.<br> <br>Another visual paragraph.</p></section>
+<section data-case="nested break text ownership" data-expected='["Outside introduction. Inside paragraph one. Inside paragraph two. Outside conclusion."]'><p>Outside introduction. <span>Inside paragraph one.<br><br>Inside paragraph two.</span> Outside conclusion.</p></section>
+<section data-case="plain divs" data-expected='["A plain div contains article prose.","Another paragraph uses emphasis."]'>
+<div>A plain div contains article prose.</div><div>Another paragraph uses <em>emphasis</em>.</div></section>
+<section data-case="bare runs" data-expected='["Leading text in a section.","A semantic paragraph interrupts the section.","Trailing text must not disappear."]'>Leading text in a section.<p>A semantic paragraph interrupts the section.</p>Trailing text must not disappear.</section>
+<section data-case="line breaks" data-expected='["First visual paragraph.","Second visual paragraph."]'>First visual paragraph.<br><br>Second visual paragraph.</section>
+<section data-case="styled spans" data-expected='["A span displayed as a block.","A second span displayed as a block."]'><span class="block">A span displayed as a block.</span><span class="block">A second span displayed as a block.</span></section>
+<section data-case="custom elements" data-expected='["An article rendered by a custom element."]'><reading-paragraph class="block">An article rendered by a custom element.</reading-paragraph></section>
+<section data-case="captions" data-expected='["A figure caption describes the chart."]'><figure><img alt="A chart"><figcaption>A figure caption describes the chart.</figcaption></figure></section>
+<section data-case="definitions" data-expected='["Volatility","The amount by which values fluctuate."]'><dl><dt>Volatility</dt><dd>The amount by which values fluctuate.</dd></dl></section>
+<section data-case="table prose" data-expected='["The left cell contains article prose.","The right cell contains article prose."]'><table><tbody><tr><td>The left cell contains article prose.</td><td>The right cell contains article prose.</td></tr></tbody></table></section>
+<section data-case="contents box" data-expected='["A paragraph can render without its own CSS box."]'><p class="contents">A paragraph can render without its own CSS box.</p></section>
+<section data-case="linked sentence" data-expected='["An entire meaningful sentence can be a hyperlink in an article."]'><p><a href="#">An entire meaningful sentence can be a hyperlink in an article.</a></p></section>
+<section data-case="short multilingual" data-expected='["你好。","כן.","No."]'><p>你好。</p><p>כן.</p><p>No.</p></section>
+<section data-case="article header" data-expected='["An article title inside its header","A short introduction inside the article header."]'><article><header><h2>An article title inside its header</h2><p>A short introduction inside the article header.</p></header></article></section>
+<section data-case="mixed custom wrapper" data-expected='["Custom wrapper introduction.","A nested semantic paragraph.","Custom wrapper conclusion."]'><div role="paragraph">Custom wrapper introduction.<p>A nested semantic paragraph.</p>Custom wrapper conclusion.</div></section>
+<section data-case="inline code" data-expected='["Call do_work() to begin."]'><div>Call <code>do_work()</code> to begin.</div></section>
+<section data-case="break inside semantic" data-expected='["Words before the break. Words after the break."]'><p>Words before the break.<br>Words after the break.</p></section>
+<section data-case="hidden inline" data-expected='["Visible article words."]'><p>Visible <span class="gone">secret text </span><span aria-hidden="true">duplicate text </span>article words.</p></section>
+<section data-case="grid and flex" data-expected='["A flex item with text.","A grid item with text."]'><div style="display:flex"><div>A flex item with text.</div></div><div style="display:grid"><div>A grid item with text.</div></div></section>
+<section data-case="nested captions and definitions" data-expected='["Caption prose inside a paragraph.","A definition containing a paragraph."]'><figure><figcaption><p>Caption prose inside a paragraph.</p></figcaption></figure><dl><dd><p>A definition containing a paragraph.</p></dd></dl></section>
+<section data-case="typographic layouts" data-expected='["Vertical text is still article prose.","Text arranged into columns remains readable.","Bidirectional text שלום remains readable."]'><div style="writing-mode:vertical-rl;height:180px">Vertical text is still article prose.</div><div style="columns:2">Text arranged into columns remains readable.</div><div dir="rtl">Bidirectional text שלום remains readable.</div></section>
+<section data-case="schema article" data-expected='["Structured article metadata can identify prose."]'><div itemprop="articleBody"><div>Structured article metadata can identify prose.</div></div></section>
+<section data-case="CSS-hidden container" data-expected='[]'><div id="reveal" class="gone">Article text revealed by a class change.</div></section>
+<section data-case="collapsed article" data-expected='[]'><details id="disclosure"><summary>Expand</summary><div>A paragraph revealed by opening a disclosure.</div></details></section>
+<section data-case="excluded content" data-expected='[]'>
+<nav><div>Navigation that should never be narrated.</div></nav><div role="navigation"><p>ARIA navigation that should never be narrated.</p></div>
+<aside><p>Sidebar paragraph stays excluded.</p></aside><button><span class="block">Button text stays excluded.</span></button>
+<div role="button"><p>Custom button stays excluded.</p></div><pre>Code block stays excluded.</pre>
+<div contenteditable="true"><p>Editing text stays excluded.</p></div>
+<div hidden><p>Hidden paragraph stays excluded.</p></div><div aria-hidden="true"><p>Accessibility-hidden duplicate stays excluded.</p></div>
+<div style="opacity:0"><p>Transparent duplicate stays excluded.</p></div><div inert><p>Inert content stays excluded.</p></div>
+<details><summary>Collapsed disclosure</summary><p>Collapsed details stay excluded.</p></details>
+<p><a href="#">Navigation link</a></p></section>
+</main>
+<div id="unscoped">Unscoped generic page chrome stays untouched.</div>

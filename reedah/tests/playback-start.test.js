@@ -12,7 +12,7 @@ function setup(realAudio = false) {
     ReedahHighlightRanges:'highlight_ranges', ReedahHighlightProgress:'highlight_progress',
     ReedahHighlightTheme:'highlight_theme', ReedahOrderedListNarration:'ordered_list_narration',
     ReedahPlaybackHistory:'playback_history', ReedahControlsNavigation:'controls_navigation',
-    ReedahNarrationText:'narration_text', ReedahMathNarration:'math_narration', ReedahEditorNarration:'editor_narration'
+    ReedahProseParagraphs:'prose_paragraphs', ReedahNarrationText:'narration_text', ReedahMathNarration:'math_narration', ReedahEditorNarration:'editor_narration'
   })) window[name] = require('../' + file);
   const streamContext = {currentTime:0, destination:{}, resume:async()=>{},
     createBuffer() { return {copyToChannel() {}}; },

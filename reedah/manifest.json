@@ -50,7 +50,7 @@
         "narration_text.js",
         "math_narration.js",
         "editor_narration.js",
-        "blogger_paragraphs.js",
+        "prose_paragraphs.js",
         "time_stretch.js",
         "stream_audio.js",
         "content.js"
@@ -79,7 +79,7 @@
         "narration_text.js",
         "math_narration.js",
         "editor_narration.js",
-        "blogger_paragraphs.js",
+        "prose_paragraphs.js",
         "time_stretch.js",
         "stream_audio.js",
         "content.js"

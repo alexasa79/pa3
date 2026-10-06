@@ -8,6 +8,7 @@ import {checkHighlights} from './highlight-browser.mjs';
 import {checkMathNarration, checkMathVariants, checkMathUpdates} from './math-narration-browser.mjs';
 import {checkFactorioNarration} from './factorio-narration-browser.mjs';
 import {checkConfluence} from './confluence-browser.mjs';
+import {checkParagraphStyles} from './paragraph-styles-browser.mjs';
 import {checkBloggerParagraphs} from './blogger-paragraphs-browser.mjs';
 const profile=await mkdtemp(join(tmpdir(),'reedah-audio-browser-'));
 const log=await open(join(profile,'diagnostics.log'),'w');
@@ -59,6 +60,7 @@ try {
   await checkFactorioNarration(call);
   await checkConfluence(call);
   await checkBloggerParagraphs(call);
+  await checkParagraphStyles(call);
 } finally {
   socket?.close();
   if(browser.pid){try{process.kill(-browser.pid,'SIGTERM');}catch(error){if(error.code!=='ESRCH')throw error;}}
