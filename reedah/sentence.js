@@ -189,7 +189,14 @@
     }
     return result;
   }
-  const api = { buildSentenceRanges, buildParagraphRanges };
+  // Playback passages are transport units, not sentence navigation boundaries.
+  function buildNavigationTargets(text, passages) {
+    return buildSentenceRanges(text, {minSentenceLength:0}).flatMap(range => {
+      const passageIndex = passages.findIndex(passage => passage.end > range.start && passage.start < range.end);
+      return passageIndex < 0 ? [] : [{...range, passageIndex}];
+    });
+  }
+  const api = { buildSentenceRanges, buildParagraphRanges, buildNavigationTargets };
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

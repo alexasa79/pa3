@@ -111,3 +111,12 @@ test('paragraph ranges retain several sentences and bound very long paragraphs',
   assert.equal(ranges.map(r=>long.slice(r.start,r.end)).join(''),long);
   assert.ok(ranges.every(r=>r.end-r.start<=3800));
 });
+
+test('navigation sentences remain independent of paragraph transport ranges', () => {
+  const {buildNavigationTargets} = require('../sentence');
+  const text='Yes. No. A longer third sentence.';
+  assert.deepEqual(buildNavigationTargets(text,[{start:0,end:text.length}]).map(s=>text.slice(s.start,s.end).trim()),
+    ['Yes.','No.','A longer third sentence.']);
+  const split=text.indexOf('A longer');
+  assert.deepEqual(buildNavigationTargets(text,[{start:0,end:split},{start:split,end:text.length}]).map(s=>s.passageIndex),[0,0,1]);
+});

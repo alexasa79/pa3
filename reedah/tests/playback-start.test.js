@@ -43,12 +43,12 @@ function setup(realAudio = false) {
     startHighlightWordFocusLoop = () => {};
     updateControls = () => {};
     createAudioUrl = text => text;
-    globalThis.queueTest = {state, maybeStartPlayback, skipSentence, enqueueAudio, handleSessionMessage, stopNativeNarration, rememberPlayed, trimStreamHistory};
+    globalThis.queueTest = {state, maybeStartPlayback, skipSentence, playPreviousSentence, togglePause, currentNavigationIndex, enqueueAudio, handleSessionMessage, stopNativeNarration, rememberPlayed, trimStreamHistory};
   })();`), context);
   const {state, maybeStartPlayback} = context.queueTest;
   state.playbackId = 1;
   state.activeEl = {};
-  return {state, start:()=>maybeStartPlayback(1), played, ended, timers, ...context.queueTest};
+  return {state, streamContext, start:()=>maybeStartPlayback(1), played, ended, timers, ...context.queueTest};
 }
 
 test('starts the first ready sentence while the model is still generating the paragraph', () => {
@@ -149,4 +149,110 @@ test('finished sentences return exactly one queue slot and old replay audio is r
   assert.deepEqual(sent.map(m=>m.index),[0,1,2,3,4,5]);
   assert.deepEqual(freed,[0,1,2,3]);
   assert.equal(state.playedHistory.length,2); assert.equal(state.activeSession.streams.size,2);
+});
+
+function paragraphSetup(passages = null) {
+  const api=setup(true), sent=[];
+  const text='First sentence here. Second sentence here. Third sentence here. Fourth sentence here.';
+  passages ??= [{start:0,end:text.length}];
+  const session={utteranceId:'paragraph',active:true,playbackId:1,streams:new Map(),audioQueue:api.state.audioQueue,
+    sourceText:text,sentenceRanges:passages,navigationTargets:require('../sentence').buildNavigationTargets(text,passages),
+    nativeEnded:false,port:{postMessage:message=>sent.push(message),disconnect(){}}};
+  api.state.activeSession=session;
+  api.state.currentSentenceRanges=passages;
+  const pcm=Buffer.alloc(24000*4).toString('base64');
+  function append(index, pieceIndex, words) {
+    api.handleSessionMessage(session,{type:'audio',stream:true,index,pieceIndex,sampleRate:24000,samples:24000,audioBase64:pcm,
+      location:passages[index].start,length:passages[index].end-passages[index].start,rate:1,wordTimings:words});
+  }
+  function word(sentenceIndex, start, passageIndex=0) {
+    return {location:session.navigationTargets[sentenceIndex].start-passages[passageIndex].start,length:5,start,end:start+.2};
+  }
+  return {...api,session,sent,text,append,word};
+}
+
+test('sentence buttons seek inside a paragraph without consuming or regenerating its stream',async()=>{
+  const api=paragraphSetup();const {state,session,append,word,sent}=api;
+  append(0,0,[word(0,0),word(1,.6)]);append(0,1,[word(2,1.2),word(3,1.6)]);
+  api.handleSessionMessage(session,{type:'audio_end',index:0,chunks:2});await Promise.resolve();
+  const stream=state.currentAudio;
+  api.skipSentence();await Promise.resolve();assert.equal(state.currentAudio,stream);assert.equal(stream.offset,.6);
+  assert.equal(api.currentNavigationIndex(),1);assert.equal(stream.focusRange.start,word(1,0).location);
+  api.skipSentence();await Promise.resolve();assert.equal(stream.offset,1.2);
+  api.playPreviousSentence();await Promise.resolve();assert.equal(stream.offset,.6);
+  assert.equal(state.audioQueue.length,0);assert.equal(session.streams.size,1);assert.equal(sent.length,0);
+  api.stopNativeNarration();assert.equal(stream.disposed,true);
+});
+
+test('unbuffered seeks wait for word timings and rapid clicks replace the pending destination',async()=>{
+  const api=paragraphSetup();const {state,append,word}=api;
+  append(0,0,[word(0,0)]);await Promise.resolve();
+  const stream=state.currentAudio;
+  api.skipSentence();assert.equal(state.currentAudio,null);assert.equal(state.pendingSentenceSeek.index,1);assert.equal(stream.playing,false);
+  api.skipSentence();assert.equal(state.pendingSentenceSeek.index,2);
+  api.playPreviousSentence();assert.equal(state.pendingSentenceSeek.index,1);
+  append(0,1,[word(1,1.2)]);await Promise.resolve();
+  assert.equal(state.pendingSentenceSeek,null);assert.equal(state.currentAudio,stream);assert.equal(stream.offset,1.2);
+  api.stopNativeNarration();
+});
+
+test('pausing a pending seek prevents incoming chunks from starting playback; resume resolves it',async()=>{
+  const api=paragraphSetup();const {state,append,word}=api;
+  append(0,0,[word(0,0)]);await Promise.resolve();api.skipSentence();api.togglePause();
+  append(0,1,[word(1,1.3)]);await Promise.resolve();
+  assert.equal(state.isPaused,true);assert.equal(state.currentAudio,null);assert.equal(state.pendingSentenceSeek.index,1);
+  api.togglePause();await Promise.resolve();assert.equal(state.currentAudio.offset,1.3);assert.equal(state.pendingSentenceSeek,null);
+  api.skipSentence();api.stopNativeNarration();
+  append(0,2,[word(2,2.1)]);assert.equal(state.pendingSentenceSeek,null);assert.equal(state.currentAudio,null);
+});
+
+test('sentence navigation crosses passage boundaries, returns one producer slot, and rewinds retained audio',async()=>{
+  const text='First sentence here. Second sentence here. Third sentence here. Fourth sentence here.';
+  const boundary=text.indexOf('Third');
+  const api=paragraphSetup([{start:0,end:boundary},{start:boundary,end:text.length}]);
+  const {state,session,append,word,sent}=api;
+  append(0,0,[word(0,0),word(1,.6)]);api.handleSessionMessage(session,{type:'audio_end',index:0,chunks:1});await Promise.resolve();
+  api.skipSentence();await Promise.resolve();api.skipSentence();
+  assert.equal(state.pendingSentenceSeek.index,2);assert.deepEqual(sent.filter(m=>m.type==='consumed').map(m=>m.index),[0]);
+  append(1,0,[word(2,.1,1),word(3,.6,1)]);await Promise.resolve();
+  assert.equal(state.currentAudioItem.index,1);assert.equal(state.currentAudio.offset,.1);
+  api.playPreviousSentence();await Promise.resolve();
+  assert.equal(state.currentAudioItem.index,0);assert.equal(state.currentAudio.offset,.6);
+  assert.deepEqual(Array.from(state.audioQueue,item=>item.index),[1]);
+  api.skipSentence();await Promise.resolve();assert.equal(state.currentAudioItem.index,1);
+  assert.deepEqual(sent.filter(m=>m.type==='consumed').map(m=>m.index),[0]);api.stopNativeNarration();
+});
+
+test('seeking ahead before audio arrives drains earlier passages without playing them',async()=>{
+  const text='First sentence here. Second sentence here. Third sentence here. Fourth sentence here.';
+  const second=text.indexOf('Second'),third=text.indexOf('Third');
+  const api=paragraphSetup([{start:0,end:second},{start:second,end:third},{start:third,end:text.length}]);
+  api.skipSentence();api.skipSentence();
+  api.append(0,0,[api.word(0,0)]);assert.equal(api.state.currentAudio,null);
+  api.append(1,0,[api.word(1,0,1)]);assert.equal(api.state.currentAudio,null);
+  assert.deepEqual(api.sent.filter(m=>m.type==='consumed').map(m=>m.index),[0,1]);
+  api.append(2,0,[api.word(2,0,2)]);await Promise.resolve();
+  assert.equal(api.state.currentAudioItem.index,2);assert.equal(api.state.audioQueue.length,0);api.stopNativeNarration();
+});
+
+test('a completed-passage timer cannot override a later sentence seek',async()=>{
+  const api=paragraphSetup();api.append(0,0,[api.word(0,0),api.word(1,.6)]);
+  await Promise.resolve();api.streamContext.currentTime=1.04;api.state.currentAudio.onended();
+  assert.equal(api.timers.length,1);api.playPreviousSentence();await Promise.resolve();
+  const audio=api.state.currentAudio;api.timers[0]();
+  assert.equal(api.state.currentAudio,audio);assert.equal(api.ended.length,0);api.stopNativeNarration();
+});
+
+test('Next after the final sentence cancels the stream and advances the paragraph',async()=>{
+  const api=paragraphSetup();api.append(0,0,[api.word(0,0),api.word(1,.2),api.word(2,.4),api.word(3,.6)]);
+  await Promise.resolve();api.streamContext.currentTime=.8;const stream=api.state.currentAudio;
+  api.skipSentence();assert.equal(stream.disposed,true);assert.equal(api.state.activeSession,null);
+  assert.equal(api.ended.length,1);assert.equal(api.state.pendingSentenceSeek,null);
+});
+
+test('a finished passage without target word alignment stops explicitly instead of guessing a seek time',async()=>{
+  const api=paragraphSetup();api.append(0,0,[api.word(0,0)]);await Promise.resolve();
+  const stream=api.state.currentAudio;api.skipSentence();
+  api.handleSessionMessage(api.session,{type:'audio_end',index:0,chunks:1});
+  assert.equal(stream.disposed,true);assert.equal(api.state.activeEl,null);assert.equal(api.state.pendingSentenceSeek,null);
 });

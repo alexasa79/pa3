@@ -159,3 +159,39 @@ test('timed streams reject absent or invalid source metadata instead of estimati
     assert.throws(()=>audio.append({...chunk(0),wordTimings:words})); audio.dispose();
   }
 });
+
+test('seeking within retained paragraph audio cancels old sources and preserves speed', async () => {
+  for (const speed of [0.5, 1, 1.5, 2]) {
+    const budget = new AudioBudget();
+    const {audio, ctx, nodes} = setup({budget, playbackRate:speed, sourceLength:60});
+    audio.append({...chunk(0), wordTimings:[{location:0,length:5,start:0,end:.2},{location:20,length:6,start:.6,end:.9}]});
+    audio.append({...chunk(1), wordTimings:[{location:40,length:5,start:1.2,end:1.8}]});
+    audio.finish(2); await audio.play();
+    const stale=nodes[0].onended;
+    ctx.currentTime=.1;
+    audio.seek(1.2);
+    assert.equal(audio.currentTime,1.2);
+    assert.equal(audio.currentSourceLocation,40);
+    assert.ok(nodes.every(node=>node.stopped));
+    let ended=0; audio.onended=()=>ended++;
+    await audio.play(); stale(); assert.equal(ended,0);
+    assert.ok(Math.abs(audio.sources[0].start-1.2)<1e-8);
+    audio.seek(.6); await audio.play();
+    assert.equal(audio.currentSourceLocation,20);
+    assert.equal(audio.offset,.6);
+    audio.dispose(); assert.equal(budget.used,0);
+  }
+});
+
+test('seeking while streaming keeps accepting later chunks and rejects invalid positions', async () => {
+  const {audio,ctx,nodes}=setup();audio.append(chunk(0));await audio.play();
+  audio.seek(.75);await audio.play();
+  audio.append(chunk(1));audio.finish(2);
+  assert.equal(audio.sources[0].start,.75);
+  assert.equal(audio.sources.at(-1).end,2);
+  for (const position of [-1,Infinity,NaN,2.1]) assert.throws(()=>audio.seek(position),/seek/i);
+  ctx.currentTime=5;let ended=0;audio.onended=()=>ended++;
+  for(const source of audio.sources.slice()) source.node.onended();
+  assert.equal(ended,1);audio.dispose();
+  assert.throws(()=>audio.seek(0),/disposed/i);
+});

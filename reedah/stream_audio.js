@@ -16,7 +16,7 @@
   }
   function unlock() { return context().resume(); }
 
-  // One continuous sentence. Retain its PCM for pause/resume and sentence replay.
+  // One continuous passage. Retain PCM so sentence controls can seek by word time.
   class StreamAudio {
     constructor({getContext = context, estimatedDuration = 1, sourceLength = null, playbackRate = 1, budget = sharedBudget} = {}) {
       this.getContext = getContext;
@@ -69,9 +69,15 @@
       if (!words.length) return null;
       let current = 0;
       while (current + 1 < words.length && words[current + 1].start <= this.currentTime) current++;
-      const from = Math.floor(current / 3) * 3;
+      const floor = this.focusFloor ?? 0;
+      const from = floor + Math.floor(Math.max(0, current - floor) / 3) * 3;
       const group = words.slice(from, from + 3);
       return {start:group[0].location, end:Math.max(...group.map(w => w.location + w.length))};
+    }
+    get currentSourceLocation() {
+      const time = this.currentTime;
+      const word = this.wordTimings.findLast(word => word.start <= time) ?? this.wordTimings[0];
+      return word?.location ?? 0;
     }
     appendTimings(timings, duration) {
       if (!Array.isArray(timings)) throw new Error('Missing narration word timings');
@@ -155,7 +161,7 @@
     schedule() {
       if (!this.playing || this.disposed) return;
       let cursor = this.sources.at(-1)?.end ?? this.offset;
-      let when = this.sources.length ? this.sources.at(-1).when + (this.sources.at(-1).end - this.sources.at(-1).start) / this.playbackRate : this.ctx.currentTime + 0.04;
+      let when = this.sources.length ? this.sources.at(-1).when + this.sources.at(-1).duration : this.ctx.currentTime + 0.04;
       if (this.sources.length && this.total > cursor && this.ctx.currentTime - when > 0.05) {
         console.warn("Reedah: Audio buffer underrun", {
           gapSeconds: Number((this.ctx.currentTime - when).toFixed(3)),
@@ -181,7 +187,14 @@
           this.budget.release(chunk.pcm.byteLength);
           throw error;
         }
-        const entry = {node, when, start:cursor, end:chunk.end, ended:false, bytes:chunk.pcm.byteLength};
+        // Seeking through time-stretched chunks must use integral output sample
+        // offsets; floating-point division can otherwise repeat/drop a sample.
+        const offsetSamples = Math.round(Math.max(0, cursor - chunk.start) / this.playbackRate * chunk.rate);
+        const duration = (chunk.pcm.length - offsetSamples) / chunk.rate;
+        const clockRate = this.ctx.sampleRate ?? chunk.rate;
+        when = Math.round(when * clockRate) / clockRate;
+        const endWhen = Math.round((when + duration) * clockRate) / clockRate;
+        const entry = {node, when, start:cursor, end:chunk.end, duration, ended:false, bytes:chunk.pcm.byteLength};
         this.sources.push(entry);
         node.onended = () => {
           if (generation !== this.generation) return;
@@ -193,14 +206,15 @@
             this.onwaiting?.();
           }
         };
-        node.start(when, Math.max(0, cursor - chunk.start) / this.playbackRate);
+        node.start(when, offsetSamples / chunk.rate);
+        node.stop(endWhen);
         if (this.sources.length === 1 || this.waiting) {
           this.waiting = false;
           setTimeout(() => {
             if (generation === this.generation && this.playing) this.onplaying?.();
           }, Math.max(0, when - this.ctx.currentTime) * 1000);
         }
-        when += (chunk.end - cursor) / this.playbackRate;
+        when = endWhen;
         cursor = chunk.end;
       }
     }
@@ -232,7 +246,16 @@
       }
       this.sources = [];
     }
-    rewind() { this.pause(); this.offset = 0; this.progressValue = 0; }
+    seek(seconds) {
+      if (this.disposed) throw new Error('Audio stream disposed');
+      if (!Number.isFinite(seconds) || seconds < 0 || seconds > this.total) throw new Error('Invalid audio seek position');
+      this.pause();
+      this.offset = seconds;
+      this.focusFloor = Math.max(0, this.wordTimings.findLastIndex(word => word.start <= seconds));
+      this.progressValue = 0;
+      this.waiting = false;
+    }
+    rewind() { this.seek(0); }
     dispose() {
       this.pause(); this.disposed = true; this.buffers = []; this.stretcher = null;
       this.budget.release(this.retainedBytes); this.retainedBytes = 0;

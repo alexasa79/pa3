@@ -44,6 +44,9 @@
     playbackStarted: false,
     currentSentenceRanges: [],
     currentSentenceIndex: 0,
+    pendingSentenceSeek: null,
+    navigationIndex: 0,
+    navigationEpoch: 0,
     currentSentenceLength: 0,
     currentHighlightSpans: [],
     editorHighlight: null,
@@ -864,6 +867,9 @@
   }
 
   function resetSentenceState() {
+    state.pendingSentenceSeek = null;
+    state.navigationIndex = 0;
+    state.navigationEpoch += 1;
     state.skippedSentences.clear();
     state.currentSentenceRanges = [];
     state.currentSentenceIndex = -1;
@@ -1084,6 +1090,11 @@
       } else {
         applyHighlightWordFocus(playbackHistory.pieceProgress(state.currentAudioItem, 0));
       }
+      const navigationIndex = currentNavigationIndex();
+      if (navigationIndex !== state.navigationIndex) {
+        state.navigationIndex = navigationIndex;
+        updateControls();
+      }
 
       state.highlightFrameId = requestAnimationFrame(tick);
     };
@@ -1221,6 +1232,7 @@
       utteranceId,
       sourceText: text,
       sentenceRanges,
+      navigationTargets: sentence.buildNavigationTargets(text, sentenceRanges),
       highlightTextOffset,
       audioQueue: [],
       nativeEnded: false,
@@ -1295,6 +1307,7 @@
         const item = session.streams.get(message.index);
         if (!item) throw new Error("Unknown audio stream");
         item.stream.finish(message.chunks);
+        if (session.active) resolveSentenceSeek();
         trimStreamHistory();
       } catch (error) {
         console.error("Reedah: Invalid audio stream ending.", error);
@@ -1312,7 +1325,9 @@
             pieceIndex:0, pieceCount:1, progressStart:0, progressEnd:1};
           session.streams.set(message.index, item);
           stream.append(message);
-          session.audioQueue.push(item);
+          if (session.active && state.pendingSentenceSeek &&
+              item.index < session.navigationTargets[state.pendingSentenceSeek.index].passageIndex) rememberPlayed(item);
+          else session.audioQueue.push(item);
         } else item.stream.append(message);
         if (session.active) { maybeStartPlayback(session.playbackId); updateControls(); }
       } catch (error) {
@@ -1400,6 +1415,9 @@
     state.activeEl = el;
 
     state.skippedSentences.clear();
+    state.pendingSentenceSeek = null;
+    state.navigationIndex = 0;
+    state.navigationEpoch += 1;
     state.currentSentenceRanges = session.sentenceRanges;
     state.currentSentenceIndex = -1;
     state.currentHighlightTextOffset = session.highlightTextOffset;
@@ -1495,6 +1513,8 @@
   }
 
   function stopNativeNarration(options = {}) {
+    state.pendingSentenceSeek = null;
+    state.navigationEpoch += 1;
     const shouldSendStop = options.sendStop !== false;
     const session = state.activeSession;
     if (session && session.port) {
@@ -1625,13 +1645,16 @@
 
   function maybeStartPlayback(playbackId) {
     if (state.playbackId !== playbackId) return;
+    if (state.pendingSentenceSeek) { resolveSentenceSeek(); return; }
     if (state.currentAudio) return;
     if (state.isPaused) return;
 
     if (!state.playbackStarted && state.pendingLeadIn && state.audioQueue.length > 0) {
       state.pendingLeadIn = false;
       if (PARAGRAPH_LEAD_IN_MS > 0) {
+        const epoch = state.navigationEpoch;
         setTimeout(() => {
+          if (epoch !== state.navigationEpoch) return;
           if (state.playbackId !== playbackId) return;
           if (state.isPaused) return;
           if (state.currentAudio) return;
@@ -1646,7 +1669,9 @@
       if (state.nativeEnded && state.activeEl) {
         if (state.pendingLeadOut && PARAGRAPH_LEAD_OUT_MS > 0) {
           state.pendingLeadOut = false;
+          const epoch = state.navigationEpoch;
           setTimeout(() => {
+            if (epoch !== state.navigationEpoch) return;
             if (state.playbackId !== playbackId) return;
             if (state.isPaused) return;
             handleNarrationEnded(state.activeEl);
@@ -1662,7 +1687,7 @@
     playNextAudio(playbackId, next);
   }
 
-  function playNextAudio(playbackId, next) {
+  function playNextAudio(playbackId, next, seekTime = 0) {
     if (state.playbackId !== playbackId) return;
 
     if (!next) {
@@ -1686,12 +1711,14 @@
     updateControls();
 
     const audio = next.stream ?? new Audio();
-    if (next.stream) audio.rewind();
+    if (next.stream) audio.seek(seekTime);
     const audioUrl = next.url;
     state.currentAudioItem = next;
     state.currentAudio = audio;
     state.currentAudioUrl = audioUrl;
     state.playbackStarted = true;
+    state.navigationIndex = currentNavigationIndex();
+    updateControls();
     audio.src = audioUrl;
     audio.playbackRate = next.rate;
     startHighlightWordFocusLoop(playbackId, audio);
@@ -1699,11 +1726,14 @@
     audio.onended = () => {
       if (state.playbackId !== playbackId) return;
       if (state.currentAudio !== audio) return;
+      state.navigationIndex = currentNavigationIndex();
       applyHighlightWordFocus(playbackHistory.pieceProgress(next, 1));
       rememberPlayed(next);
       cleanupCurrentAudio();
       if (playbackHistory.isSentenceEnd(next) && SENTENCE_PAUSE_MS > 0) {
+        const epoch = state.navigationEpoch;
         setTimeout(() => {
+          if (epoch !== state.navigationEpoch) return;
           if (state.playbackId !== playbackId) return;
           if (state.isPaused) return;
           if (state.currentAudio) return;
@@ -1785,10 +1815,12 @@
   }
 
   function trimStreamHistory() {
-    // Keep two previous sentences for replay, plus any skipped sentence still arriving.
+    // Keep two previous passages for replay, plus any skipped passage still arriving.
     const history = state.playedHistory;
     for (const item of history.slice(0, Math.max(0, history.length - 2))) {
       if (!item.stream || !item.stream.finished || item === state.currentAudioItem) continue;
+      const target = state.activeSession?.navigationTargets?.[state.pendingSentenceSeek?.index];
+      if (target?.passageIndex === item.index) continue;
       item.stream.dispose();
       state.activeSession?.streams.delete(item.index);
       history.splice(history.indexOf(item), 1);
@@ -2247,7 +2279,7 @@
     prevSentence.className = "reedah-controls__btn";
     prevSentence.dataset.action = "prev-sentence";
     prevSentence.textContent = "‹";
-    prevSentence.setAttribute("title", "Previous passage");
+    prevSentence.setAttribute("title", "Previous sentence");
 
     const playPause = document.createElement("button");
     playPause.type = "button";
@@ -2261,7 +2293,7 @@
     skipSentenceButton.className = "reedah-controls__btn";
     skipSentenceButton.dataset.action = "skip-sentence";
     skipSentenceButton.textContent = "›";
-    skipSentenceButton.setAttribute("title", "Next passage");
+    skipSentenceButton.setAttribute("title", "Next sentence");
 
     const skipParagraphButton = document.createElement("button");
     skipParagraphButton.type = "button";
@@ -2343,8 +2375,9 @@
       queue
     } = state.controls;
     const active = !!state.activeEl;
-    const totalSentences = state.currentSentenceRanges.length;
-    const currentSentence = state.currentSentenceIndex >= 0
+    const targets = state.activeSession?.navigationTargets;
+    const totalSentences = targets?.length ?? state.currentSentenceRanges.length;
+    const currentSentence = targets ? currentNavigationIndex() + 1 : state.currentSentenceIndex >= 0
       ? state.currentSentenceIndex + 1
       : active && totalSentences > 0
         ? 1
@@ -2359,7 +2392,10 @@
       prevParagraph.disabled = !hasPreviousParagraph;
     }
     if (prevSentence) {
-      prevSentence.disabled = !active || state.playedHistory.length === 0;
+      const previous = targets?.[Math.max(0, currentNavigationIndex() - 1)];
+      prevSentence.disabled = !active || (targets
+        ? !state.activeSession.streams.has(previous?.passageIndex)
+        : state.playedHistory.length === 0);
     }
     if (skipSentence) {
       skipSentence.disabled = !active;
@@ -2368,14 +2404,87 @@
       skipParagraph.disabled = !hasNextParagraph;
     }
     const metaText = active
-      ? `${state.currentAudio?.waiting ? "Buffering • " : ""}S ${currentSentence}/${totalSentences || 0} • Q ${queued}`
+      ? `${state.pendingSentenceSeek || state.currentAudio?.waiting ? "Buffering • " : ""}S ${currentSentence}/${totalSentences || 0} • Q ${queued}`
       : "";
     sentence.textContent = metaText;
     queue.textContent = "";
   }
 
+  function currentNavigationIndex() {
+    if (state.pendingSentenceSeek) return state.pendingSentenceSeek.index;
+    const targets = state.activeSession?.navigationTargets;
+    const item = state.currentAudioItem;
+    if (!targets?.length || !item?.stream) return state.navigationIndex;
+    const location = item.location + item.stream.currentSourceLocation;
+    return Math.max(0, targets.findLastIndex(target => target.start <= location));
+  }
+
+  function navigateSentence(direction) {
+    const session = state.activeSession;
+    const targets = session.navigationTargets;
+    const index = Math.max(0, currentNavigationIndex() + direction);
+    if (index >= targets.length) { skipParagraph(); return; }
+    const target = targets[index];
+    if (direction < 0 && !session.streams.has(target.passageIndex)) {
+      console.error("Reedah: Previous sentence audio is no longer retained.");
+      return;
+    }
+    state.navigationEpoch += 1;
+    state.pendingSentenceSeek = {index};
+    state.navigationIndex = index;
+    state.isPaused = false;
+    setOverlayActive(state.activeEl, true);
+    cleanupCurrentAudio();
+
+    // Release earlier transport slots so a forward seek can reach a passage
+    // beyond the native host's generation window. Retain its PCM for Previous.
+    for (const item of [...session.streams.values()]) {
+      if (item.index < target.passageIndex) rememberPlayed(item);
+    }
+    // Rewind can revisit completed passages; rebuild the queue without copies
+    // of the same stream or replaying transport units before the chosen target.
+    state.audioQueue.length = 0;
+    for (const item of [...session.streams.values()].sort((a,b)=>a.index-b.index)) {
+      if (item.index > target.passageIndex) state.audioQueue.push(item);
+    }
+    resolveSentenceSeek();
+    updateControls();
+  }
+
+  function resolveSentenceSeek() {
+    const pending = state.pendingSentenceSeek;
+    const session = state.activeSession;
+    if (!pending || !session || state.isPaused) return;
+    try {
+      const target = session.navigationTargets[pending.index];
+      const item = session.streams.get(target.passageIndex);
+      if (!item) {
+        if (session.nativeEnded) throw new Error('Target sentence audio was not received');
+        return;
+      }
+      const start = target.start - item.location, end = target.end - item.location;
+      const word = item.stream.wordTimings.find(word => word.location + word.length > start && word.location < end);
+      if (!word) {
+        if (item.stream.finished || (item.stream.wordTimings.at(-1)?.location ?? -1) >= end) {
+          throw new Error('No recognized word timing for the target sentence');
+        }
+        return;
+      }
+      state.pendingSentenceSeek = null;
+      const queued = state.audioQueue.indexOf(item);
+      if (queued >= 0) state.audioQueue.splice(queued, 1);
+      const history = state.playedHistory.indexOf(item);
+      if (history >= 0) state.playedHistory.splice(history, 1);
+      playNextAudio(state.playbackId, item, word.start);
+    } catch (error) {
+      console.error('Reedah: Could not seek to the sentence.', error);
+      clearActiveNarration();
+    }
+  }
+
   function playPreviousSentence() {
     if (!state.activeEl) return;
+    if (state.activeSession?.navigationTargets) { navigateSentence(-1); return; }
     if (!state.playedHistory.length) return;
 
     const previous = playbackHistory.rewindSentence(state.playedHistory, state.currentAudioItem, state.audioQueue);
@@ -2402,6 +2511,7 @@
 
   function skipSentence() {
     if (!state.activeEl) return;
+    if (state.activeSession?.navigationTargets) { navigateSentence(1); return; }
     state.pendingLeadOut = false;
 
     const skipped = playbackHistory.takeSkippedItem(state.currentAudioItem, state.audioQueue);
