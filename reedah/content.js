@@ -23,7 +23,7 @@
   const HIGHLIGHT_MODE_LIGHT = "light";
   const HIGHLIGHT_MODE_DARK = "dark";
   const DEFAULT_OL_START = 1;
-  const CUSTOM_PARAGRAPH_SELECTOR = "div.mdx-p, [role='paragraph']";
+  const CUSTOM_PARAGRAPH_SELECTOR = "div.mdx-p, [role='paragraph'], .reedah-blogger-paragraph";
   const TEXT_CANDIDATE_SELECTOR = `p, li, blockquote, h1, h2, h3, h4, h5, h6, ${CUSTOM_PARAGRAPH_SELECTOR}`;
   const CANDIDATE_SELECTOR = `${TEXT_CANDIDATE_SELECTOR}, ${mathNarration.ROOT_SELECTOR}`;
   const HOVER_BOX_PADDING = 32;
@@ -186,6 +186,7 @@
       overlay.remove();
     }
     state.overlays.clear();
+    window.ReedahBloggerParagraphs.clear(document);
   }
 
   function notifyState() {
@@ -265,6 +266,7 @@
     if (!state.enabled) return;
 
     validateEditorSessions();
+    window.ReedahBloggerParagraphs.prepare(document);
 
     const candidates = document.querySelectorAll(CANDIDATE_SELECTOR);
     for (const el of candidates) {

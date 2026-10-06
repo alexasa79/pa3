@@ -32,6 +32,10 @@ Narration skips only parenthesized single file/path references with a colon and 
 
 Each paragraph is a streaming request; very long paragraphs are divided into bounded passages. PA3 generates up to 600 spoken characters together and uses local Whisper recognition to estimate word timings. The entire paragraph has a subtle tint, with a stronger highlight moving through roughly three source words at a time. Dictionary expansions remain mapped to the original terms. Timings follow the audio clock across pause, replay, and pitch-preserving speed changes. Recognition adds startup buffering and can miss individual words; alignment failures stop narration. Generation can fall behind playback on a busy GPU; the player then shows **Buffering** and resumes when audio is available.
 
+## Blogger posts
+
+Reedah recognizes older Blogger article bodies that use bare text, line breaks, and generic divs instead of paragraph tags. Each text run between line breaks or block elements receives a paragraph control, including chart captions. Inline links keep their labels and original elements. Enabling Reedah temporarily wraps these runs in inline spans; disabling it removes the wrappers. Existing semantic paragraphs, hidden content, editors, and sidebars keep their usual handling.
+
 ## Confluence live documents
 
 Reedah supports the main live document editor on Confluence Cloud page URLs. Paragraphs, headings, lists, quotations, and table-cell paragraphs receive narration controls. Comment composers, nested inputs, code editors, collaborator cursors, placeholders, and collapsed content are excluded.

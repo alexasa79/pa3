@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8"><title>Blogger paragraph regression</title>
+<style>body { margin: 48px; max-width: 700px; font: 16px Arial; }</style>
+<!-- Structure from the reported older Blogger post; synthetic article text. -->
+<div class="post-body entry-content" id="article">
+Opening paragraph with an <a id="original-link" href="https://example.org">inline link</a>.<br><br>
+Second paragraph in the same container.<br>
+<div><br></div>
+<table><tbody><tr><td><a href="https://example.org"><img alt="Chart"></a></td></tr>
+<tr><td><div class="MsoNormal"><span>Figure one: the chart caption.</span></div></td></tr></tbody></table>
+<div><br>Third paragraph in a generic container.<br><br>
+<table><tbody><tr><td><div><span>Figure two: another caption.</span></div></td></tr></tbody></table>
+Text after the nested table.</div>
+<div><p>Existing semantic paragraph stays independent.</p>Text after a semantic paragraph.</div>
+<div><br></div><div>===</div>
+<div hidden>Hidden article text.</div>
+<aside><div>Sidebar text stays excluded.</div></aside>
+<div><a href="https://example.org">Link-only text stays excluded.</a></div>
+</div>
+<div id="outside">Generic text outside an article.</div>
+<div class="post-body entry-content" contenteditable="true"><div>Editable content stays intact.</div></div>
