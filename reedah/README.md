@@ -46,7 +46,7 @@ Known boundaries: arbitrary div-only pages without content landmarks, shadow-roo
 
 List items used as accordion or card containers give their paragraphs separate controls, including prose mixed with tables and nested lists. Ordinary list items keep their spoken numbering; a multi-paragraph numbered item announces its number only on the first paragraph.
 
-Reedah also runs in ordinary same-origin and cross-origin iframes and eligible inherited-origin frames. Enable/disable is shared across the tab, and starting narration in one frame stops narration in the others. Paragraph navigation stays within the current document. Chrome restrictions and extension site-access settings still apply.
+Reedah also runs in ordinary same-origin and cross-origin iframes and eligible inherited-origin frames. Enable/disable is shared across the tab, and starting narration in one frame stops narration in the others. One playback toolbar belongs to the top-level page; its buttons control whichever document is narrating. Embedded frames retain paragraph hover buttons but never create their own playback toolbar. Paragraph navigation stays within the current document. Chrome restrictions and extension site-access settings still apply.
 
 ## Confluence live documents
 

@@ -134,6 +134,18 @@ function broadcastFrameMessage(tabId, message) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const tabId = sender?.tab?.id;
   if (!tabId || !message) return;
+  if (message.type === "reedah-controls-state") {
+    if ((sender.frameId ?? 0) === 0) return;
+    chrome.tabs.sendMessage(tabId, message, {frameId: 0}, () => {
+      if (chrome.runtime.lastError) console.error("Reedah: Could not update page controls.", chrome.runtime.lastError);
+    });
+    return;
+  }
+  if (message.type === "reedah-controls-action") {
+    if ((sender.frameId ?? 0) !== 0) return;
+    broadcastFrameMessage(tabId, message);
+    return;
+  }
   if (message.type === "reedah-frame-ready") {
     if (tabState.has(tabId)) {
       sendResponse({enabled: tabState.get(tabId) === true});

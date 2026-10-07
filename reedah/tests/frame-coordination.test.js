@@ -45,3 +45,25 @@ test('one declarative script reaches ordinary and inherited-origin frames withou
   assert.equal(scripts[0].match_origin_as_fallback,true);
   assert.deepEqual(scripts[0].matches,['<all_urls>']);
 });
+
+test('frame control state is delivered only to the top document',()=>{
+  const {sent,receive}=setup();
+  receive({type:'reedah-controls-state',token:'child',snapshot:{active:true}},
+    {tab:{id:7},frameId:3});
+  assert.equal(sent.length,1);
+  assert.equal(sent[0][2].frameId,0);
+  assert.equal(sent[0][1].token,'child');
+  receive({type:'reedah-controls-state'},{tab:{id:7},frameId:0});
+  assert.equal(sent.length,1);
+});
+test('only the page toolbar may route playback actions to the owning frame',()=>{
+  const {sent,receive}=setup();
+  receive({type:'reedah-controls-action',token:'child',action:'playpause'},
+    {tab:{id:7},frameId:3});
+  assert.equal(sent.length,0);
+  receive({type:'reedah-controls-action',token:'child',action:'playpause'},
+    {tab:{id:7},frameId:0});
+  assert.equal(sent.length,1);
+  assert.equal(sent[0][1].token,'child');
+  assert.equal(sent[0][1].action,'playpause');
+});

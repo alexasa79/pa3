@@ -29,7 +29,7 @@ Quotations, figure captions and definitions retain their existing aggregate owne
 
 The manifest injects one shared script bundle into all matching frames, including eligible inherited-origin frames. Browser fixtures exercise top-level, same-origin, cross-origin, srcdoc and nested documents, checking exact text, Play payloads and disable cleanup. These tests run the real content scripts with a stubbed Chrome messaging API; they do not claim to test Chrome's extension installation/permission machinery.
 
-Unit tests separately verify top-document state authority, late-frame synchronization after a service-worker restart, cross-frame playback-stop routing, and the declarative injection configuration. Enabling/disabling applies to the tab; starting narration in one frame stops narration in others. Next/Previous stay within the current document. Known Office authentication and shell frames remain excluded.
+Unit tests separately verify top-document state authority, late-frame synchronization after a service-worker restart, cross-frame playback-stop routing, and the declarative injection configuration. Enabling/disabling applies to the tab; starting narration in one frame stops narration in others. The top document owns exactly one playback toolbar; all embedded frames have zero toolbars. Cross-origin browser tests check toolbar pause, paragraph navigation and ownership transfer back to the main page. Next/Previous stay within the current document. Known Office authentication and shell frames remain excluded.
 
 ## Limits and maintenance
 

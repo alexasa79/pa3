@@ -71,6 +71,9 @@
     lastMouseX: null,
     lastMouseY: null,
     controls: null,
+    controlsOwner: FRAME_TOKEN,
+    remoteControls: null,
+    lastControlsSnapshot: null,
     observer: null,
     scanScheduled: false,
     positionScheduled: false
@@ -135,13 +138,30 @@
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type === "reedah-controls-state" && window.top === window) {
+      if (state.enabled && message.token === state.controlsOwner) {
+        state.remoteControls = message.snapshot;
+        ensureControls();
+        updateControls();
+      }
+      sendResponse({});
+      return;
+    }
+    if (message?.type === "reedah-controls-action" && message.token === FRAME_TOKEN) {
+      if (state.enabled) performControlsAction(message.action);
+      sendResponse({});
+      return;
+    }
     if (message?.type === "reedah-set-enabled") {
       message.enabled ? enable() : disable();
       sendResponse({enabled: state.enabled});
       return;
     }
     if (message?.type === "reedah-stop-other-frame") {
+      state.controlsOwner = message.token;
+      state.remoteControls = null;
       if (message.token !== FRAME_TOKEN) stopNarration();
+      updateControls();
       sendResponse({stopped: message.token !== FRAME_TOKEN});
       return;
     }
@@ -163,6 +183,10 @@
     notifyState();
   }
 
+  function handleFramePageHide() {
+    if (window.top !== window && state.enabled) stopNarration();
+  }
+
   function toggle() {
     if (state.enabled) {
       disable();
@@ -180,6 +204,7 @@
     notifyState();
 
     scanParagraphs();
+    ensureControls();
     attachObservers();
   }
 
@@ -187,6 +212,9 @@
     if (!state.enabled) return;
 
     state.enabled = false;
+    state.controlsOwner = FRAME_TOKEN;
+    state.remoteControls = null;
+    state.lastControlsSnapshot = null;
     document.documentElement.classList.remove("reedah-enabled");
     notifyState();
 
@@ -249,6 +277,7 @@
     window.addEventListener("resize", schedulePositionUpdate);
     document.addEventListener("mousemove", handleMouseMove, { passive: true });
     window.addEventListener("blur", clearHover);
+    window.addEventListener("pagehide", handleFramePageHide);
   }
 
   function detachObservers() {
@@ -262,6 +291,7 @@
     window.removeEventListener("resize", schedulePositionUpdate);
     document.removeEventListener("mousemove", handleMouseMove);
     window.removeEventListener("blur", clearHover);
+    window.removeEventListener("pagehide", handleFramePageHide);
   }
 
   function scheduleScan() {
@@ -2270,6 +2300,7 @@
   }
 
   function ensureControls() {
+    if (window.top !== window) return;
     if (state.controls && state.controls.el) return;
     const controls = createControls();
     state.controls = controls;
@@ -2366,17 +2397,10 @@
 
       event.preventDefault();
       event.stopPropagation();
-      if (action === "playpause") {
-        if (!state.activeEl) return;
-        togglePause();
-      } else if (action === "prev-paragraph") {
-        previousParagraph();
-      } else if (action === "prev-sentence") {
-        playPreviousSentence();
-      } else if (action === "skip-sentence") {
-        skipSentence();
-      } else if (action === "skip-paragraph") {
-        skipParagraph();
+      if (state.controlsOwner !== FRAME_TOKEN) {
+        chrome.runtime.sendMessage({type: "reedah-controls-action", token: state.controlsOwner, action});
+      } else {
+        performControlsAction(action);
       }
     });
 
@@ -2394,18 +2418,15 @@
     };
   }
 
-  function updateControls() {
-    if (!state.controls) return;
+  function performControlsAction(action) {
+    if (action === "playpause") togglePause();
+    else if (action === "prev-paragraph") previousParagraph();
+    else if (action === "prev-sentence") playPreviousSentence();
+    else if (action === "skip-sentence") skipSentence();
+    else if (action === "skip-paragraph") skipParagraph();
+  }
 
-    const {
-      playPause,
-      prevParagraph,
-      prevSentence,
-      skipSentence,
-      skipParagraph,
-      sentence,
-      queue
-    } = state.controls;
+  function updateControls() {
     const active = !!state.activeEl;
     const targets = state.activeSession?.navigationTargets;
     const totalSentences = targets?.length ?? state.currentSentenceRanges.length;
@@ -2418,27 +2439,38 @@
     const hasPreviousParagraph = active && !!getPreviousCandidate(state.activeEl);
     const hasNextParagraph = active && !!getNextCandidate(state.activeEl);
 
-    playPause.disabled = !active;
-    playPause.textContent = state.isPaused ? "▶" : "❚❚";
-    if (prevParagraph) {
-      prevParagraph.disabled = !hasPreviousParagraph;
+    const previous = targets?.[Math.max(0, currentNavigationIndex() - 1)];
+    const snapshot = {
+      active,
+      paused: state.isPaused,
+      hasPreviousParagraph,
+      hasNextParagraph,
+      hasPreviousSentence: active && (targets
+        ? state.activeSession.streams.has(previous?.passageIndex)
+        : state.playedHistory.length > 0),
+      metaText: active
+        ? `${state.pendingSentenceSeek || state.currentAudio?.waiting ? "Buffering • " : ""}S ${currentSentence}/${totalSentences || 0} • Q ${queued}`
+        : ""
+    };
+    if (window.top !== window) {
+      if (!state.enabled) return;
+      const serialized = JSON.stringify(snapshot);
+      if (serialized !== state.lastControlsSnapshot) {
+        state.lastControlsSnapshot = serialized;
+        chrome.runtime.sendMessage({type: "reedah-controls-state", token: FRAME_TOKEN, snapshot});
+      }
+      return;
     }
-    if (prevSentence) {
-      const previous = targets?.[Math.max(0, currentNavigationIndex() - 1)];
-      prevSentence.disabled = !active || (targets
-        ? !state.activeSession.streams.has(previous?.passageIndex)
-        : state.playedHistory.length === 0);
-    }
-    if (skipSentence) {
-      skipSentence.disabled = !active;
-    }
-    if (skipParagraph) {
-      skipParagraph.disabled = !hasNextParagraph;
-    }
-    const metaText = active
-      ? `${state.pendingSentenceSeek || state.currentAudio?.waiting ? "Buffering • " : ""}S ${currentSentence}/${totalSentences || 0} • Q ${queued}`
-      : "";
-    sentence.textContent = metaText;
+    if (!state.controls) return;
+    const view = state.controlsOwner === FRAME_TOKEN ? snapshot : state.remoteControls;
+    const {playPause, prevParagraph, prevSentence, skipSentence, skipParagraph, sentence, queue} = state.controls;
+    playPause.disabled = !view?.active;
+    playPause.textContent = view?.paused ? "▶" : "❚❚";
+    prevParagraph.disabled = !view?.hasPreviousParagraph;
+    prevSentence.disabled = !view?.hasPreviousSentence;
+    skipSentence.disabled = !view?.active;
+    skipParagraph.disabled = !view?.hasNextParagraph;
+    sentence.textContent = view?.metaText || "";
     queue.textContent = "";
   }
 
