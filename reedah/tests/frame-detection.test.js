@@ -16,9 +16,9 @@ test("top-level window: should run, not editor frame", () => {
   assert.equal(isEditorFrame(win), false);
 });
 
-test("regular iframe (example.com): should not run", () => {
+test("regular iframe (example.com): should run", () => {
   const win = makeWin("example.com", false);
-  assert.equal(shouldRunInFrame(win), false);
+  assert.equal(shouldRunInFrame(win), true);
   assert.equal(isEditorFrame(win), false);
 });
 

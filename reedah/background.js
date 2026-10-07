@@ -77,7 +77,7 @@ function clearTabState(tabId) {
 }
 
 function requestTabState(tabId) {
-  chrome.tabs.sendMessage(tabId, { type: "reedah-state-request" }, (response) => {
+  chrome.tabs.sendMessage(tabId, { type: "reedah-state-request" }, {frameId: 0}, (response) => {
     if (chrome.runtime.lastError) {
       clearTabState(tabId);
       return;
@@ -116,7 +116,7 @@ chrome.commands.onCommand.addListener((command) => {
     if (!tab || !tab.id) return;
     const type =
       command === "pause-playback" ? "reedah-pause" : "reedah-toggle";
-    chrome.tabs.sendMessage(tab.id, { type }, () => {
+    chrome.tabs.sendMessage(tab.id, { type }, ...(type === "reedah-toggle" ? [{frameId: 0}] : []), () => {
       if (chrome.runtime.lastError) {
         // No content script on this page (e.g., chrome://, extensions page).
         return;
@@ -125,11 +125,40 @@ chrome.commands.onCommand.addListener((command) => {
   });
 });
 
-chrome.runtime.onMessage.addListener((message, sender) => {
-  if (!message || message.type !== "reedah-state") return;
-  const tabId = sender && sender.tab ? sender.tab.id : null;
-  if (!tabId) return;
+function broadcastFrameMessage(tabId, message) {
+  chrome.tabs.sendMessage(tabId, message, () => {
+    if (chrome.runtime.lastError) console.error("Reedah: Frame broadcast failed.", chrome.runtime.lastError);
+  });
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const tabId = sender?.tab?.id;
+  if (!tabId || !message) return;
+  if (message.type === "reedah-frame-ready") {
+    if (tabState.has(tabId)) {
+      sendResponse({enabled: tabState.get(tabId) === true});
+      return;
+    }
+    // A service worker can restart while the top document remains enabled.
+    chrome.tabs.sendMessage(tabId, {type: "reedah-state-request"}, {frameId: 0}, response => {
+      if (chrome.runtime.lastError) {
+        console.error("Reedah: Unable to synchronize a new frame.", chrome.runtime.lastError);
+        sendResponse({enabled: false});
+        return;
+      }
+      const enabled = response?.enabled === true;
+      updateTabState(tabId, enabled);
+      sendResponse({enabled});
+    });
+    return true;
+  }
+  if (message.type === "reedah-frame-play") {
+    broadcastFrameMessage(tabId, {type: "reedah-stop-other-frame", token: message.token});
+    return;
+  }
+  if (message.type !== "reedah-state" || (sender.frameId ?? 0) !== 0) return;
   updateTabState(tabId, !!message.enabled);
+  broadcastFrameMessage(tabId, {type: "reedah-set-enabled", enabled: !!message.enabled});
 });
 
 function relayServerEvent(port, event) {

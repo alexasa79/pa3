@@ -11,6 +11,8 @@ import {checkConfluence} from './confluence-browser.mjs';
 import {checkSentenceSeeking} from './sentence-seek-browser.mjs';
 import {checkParagraphStyles} from './paragraph-styles-browser.mjs';
 import {checkBloggerParagraphs} from './blogger-paragraphs-browser.mjs';
+import {checkFrames} from './frames-browser.mjs';
+import {checkNestingMatrix} from './nesting-matrix-browser.mjs';
 const profile=await mkdtemp(join(tmpdir(),'reedah-audio-browser-'));
 const log=await open(join(profile,'diagnostics.log'),'w');
 const browser=spawn(process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',[
@@ -63,6 +65,8 @@ try {
   await checkBloggerParagraphs(call);
   await checkParagraphStyles(call);
   await checkSentenceSeeking(call);
+  await checkNestingMatrix(call);
+  await checkFrames(call);
 } finally {
   socket?.close();
   if(browser.pid){try{process.kill(-browser.pid,'SIGTERM');}catch(error){if(error.code!=='ESRCH')throw error;}}

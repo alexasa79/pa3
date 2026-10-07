@@ -29,7 +29,7 @@ export async function checkParagraphs(call) {
     };
   })()`,returnByValue:true});
   assert.ok(!result.exceptionDetails,JSON.stringify(result.exceptionDetails));
-  const expected=['intro-heading','intro','above','left','diagonal','after-list','minimum-heading','example','explanation','recurrence-heading','recurrence','aria-paragraph','semantic-child','nested-item',
+  const expected=['intro-heading','intro','above','left','diagonal','after-list','minimum-heading','example','explanation','recurrence-heading','recurrence','aria-paragraph','semantic-child','nested-paragraph',
     'quoted-paragraph','after-quote','bare-quote','mixed-quote','nested-quote','multi-paragraph-quote','list-quote','item-with-quote','item-after-quote','custom-quote','wrapped-quote'];
   assert.deepEqual(result.result.value.candidates,expected);
   assert.deepEqual(result.result.value.overlays,expected);

@@ -2,7 +2,15 @@
   function shouldRunInFrame(win) {
     if (!win) win = window;
     if (win.top === win) return true;
-    return isEditorFrame(win);
+    // Ordinary embedded documents have their own DOM and controls.
+    // Keep known authentication/Office shell frames out of narration.
+    try {
+      return win.location.hostname !== 'oauth.officeapps.live.com' &&
+        win.location.hostname !== 'webshell.suite.office.com';
+    } catch (error) {
+      console.error('Reedah: Unable to inspect frame location.', error);
+      return false;
+    }
   }
 
   function isEditorFrame(win) {

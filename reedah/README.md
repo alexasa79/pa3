@@ -42,7 +42,11 @@ Reedah recognizes semantic paragraphs, headings, lists, quotations, figure capti
 
 Complete prose blocks receive a temporary marker class; mixed containers receive inline wrappers around their bare text runs. Disabling Reedah removes both. Inline links retain their original elements. Visibility/class changes, opening disclosures, and inserted or replaced content trigger rescans. Navigation, controls, editors, hidden/inert content, and closed disclosures are excluded. Article headers remain readable; site headers remain excluded. Line breaks within semantic paragraphs supply spoken spaces, and hidden inline duplicates are omitted.
 
-Known boundaries: arbitrary div-only pages without content landmarks, shadow-root content, non-Office embedded frames, canvas/image text, and CSS-generated text are not extracted. Virtualized pages expose only currently mounted content. Supporting shadow roots and frames requires coordinated discovery, observers, highlighting, and navigation; image/canvas text requires a separate extraction source. These are not covered by the prose-container rules.
+Known boundaries: arbitrary div-only pages without content landmarks, shadow-root content, canvas/image text, and CSS-generated text are not extracted. Virtualized pages expose only currently mounted content. Supporting shadow roots requires coordinated discovery, observers, highlighting, and navigation; image/canvas text requires a separate extraction source. These are not covered by the prose-container rules.
+
+List items used as accordion or card containers give their paragraphs separate controls, including prose mixed with tables and nested lists. Ordinary list items keep their spoken numbering; a multi-paragraph numbered item announces its number only on the first paragraph.
+
+Reedah also runs in ordinary same-origin and cross-origin iframes and eligible inherited-origin frames. Enable/disable is shared across the tab, and starting narration in one frame stops narration in the others. Paragraph navigation stays within the current document. Chrome restrictions and extension site-access settings still apply.
 
 ## Confluence live documents
 
@@ -88,3 +92,5 @@ Confluence regressions use a synthetic editor fixture with the observed page str
 See the [bridge documentation](native/README.md) for streaming behavior and the [PA3 narration API](../README.md#local-narration) for HTTP endpoints and limits. PA3 targets macOS 14 and later; automated tests do not replace testing on an actual older Mac or a physical sleep/wake cycle.
 
 Sentence-seek regressions cover buffered and pending targets, rapid clicks, pause/resume, cancellation, transport-window release, retained-passage rewind, stale completion timers, and missing alignment. Browser tests exercise the actual controls and compare rendered seek audio sample by sample at 0.5×, 1×, 1.5×, and 2× speed.
+
+The [paragraph coverage matrix](tests/PARAGRAPH_MATRIX.md) documents 2,850 generated cases through five nesting levels, iframe coverage, test oracles, and remaining limits.

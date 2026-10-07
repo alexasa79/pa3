@@ -58,36 +58,9 @@
       "css": [
         "content.css"
       ],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": [
-        "*://*.officeapps.live.com/*"
-      ],
+      "run_at": "document_idle",
       "all_frames": true,
-      "js": [
-        "frame_detection.js",
-        "sentence.js",
-        "ordered_list_narration.js",
-        "overlay_geometry.js",
-        "hover_bounds.js",
-        "highlight_ranges.js",
-        "highlight_progress.js",
-        "highlight_theme.js",
-        "playback_history.js",
-        "controls_navigation.js",
-        "narration_text.js",
-        "math_narration.js",
-        "editor_narration.js",
-        "prose_paragraphs.js",
-        "time_stretch.js",
-        "stream_audio.js",
-        "content.js"
-      ],
-      "css": [
-        "content.css"
-      ],
-      "run_at": "document_idle"
+      "match_origin_as_fallback": true
     }
   ]
 }

@@ -2,6 +2,7 @@
   const frameDetection = window.ReedahFrameDetection;
   if (!frameDetection) { console.error("Reedah: Frame detection unavailable."); return; }
   if (!frameDetection.shouldRunInFrame()) return;
+  const FRAME_TOKEN = Math.random().toString(36).slice(2);
   const IN_EDITOR_FRAME = frameDetection.isEditorFrame();
   const editorNarration = window.ReedahEditorNarration;
   if (!editorNarration) { console.error("Reedah: Editor narration helpers unavailable."); return; }
@@ -134,6 +135,16 @@
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type === "reedah-set-enabled") {
+      message.enabled ? enable() : disable();
+      sendResponse({enabled: state.enabled});
+      return;
+    }
+    if (message?.type === "reedah-stop-other-frame") {
+      if (message.token !== FRAME_TOKEN) stopNarration();
+      sendResponse({stopped: message.token !== FRAME_TOKEN});
+      return;
+    }
     if (message && message.type === "reedah-toggle") {
       toggle();
     }
@@ -193,9 +204,20 @@
 
   function notifyState() {
     try {
+      if (window.top !== window) {
+        chrome.runtime.sendMessage({type: "reedah-frame-ready"}, response => {
+          if (chrome.runtime.lastError) {
+            console.error("Reedah: Frame state synchronization failed.", chrome.runtime.lastError);
+            return;
+          }
+          if (response?.enabled && !state.enabled) enable();
+          if (response?.enabled === false && state.enabled) disable();
+        });
+        return;
+      }
       chrome.runtime.sendMessage({ type: "reedah-state", enabled: state.enabled });
     } catch (error) {
-      // Ignore send errors (e.g. no background yet).
+      console.error("Reedah: Extension state synchronization failed.", error);
     }
   }
 
@@ -291,6 +313,8 @@
   function isCandidate(el) {
     if (!el || !el.isConnected) return false;
     const isMath = el.matches(mathNarration.ROOT_SELECTOR);
+    if (window.ReedahProseParagraphs.isStructuralListItem(el) ||
+        window.ReedahProseParagraphs.isStructuralParagraph(el, mathNarration.ROOT_SELECTOR)) return false;
 
     const exclusions = IN_EDITOR_FRAME
       ? "nav, footer, aside, button, input, textarea, select, option, pre, code, script, style, .reedah-overlay, .reedah-controls"
@@ -475,7 +499,14 @@
   }
 
   function getOrderedListNarrationPrefix(el) {
-    if (!isListItem(el)) return "";
+    if (!isListItem(el)) {
+      const item = el.closest('li');
+      if (!item || !window.ReedahProseParagraphs.isStructuralListItem(item)) return "";
+      const first = [...item.querySelectorAll(CANDIDATE_SELECTOR)].find(candidate =>
+        candidate.closest('li') === item && isCandidate(candidate));
+      if (first !== el) return "";
+      el = item;
+    }
     if (!el.parentElement || el.parentElement.tagName !== "OL") return "";
 
     const list = el.parentElement;
@@ -1139,6 +1170,7 @@
   }
 
   function startNarration(el) {
+    chrome.runtime.sendMessage({type: "reedah-frame-play", token: FRAME_TOKEN});
     stopNarration();
 
     if (editorNarration.rootFor(el) && !editorNarration.supportsHighlights(window)) {
