@@ -4,8 +4,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 const test = require('node:test');
 
-function setup(realAudio = false) {
-  const played = [], ended = [], timers = [];
+function setup(realAudio = false, completionRace = false) {
+  const played = [], ended = [], timers = [], prefetched = [];
   const window = {ReedahFrameDetection:{shouldRunInFrame:()=>true, isEditorFrame:()=>false}};
   for (const [name, file] of Object.entries({
     ReedahSentence:'sentence', ReedahOverlayGeometry:'overlay_geometry', ReedahHoverBounds:'hover_bounds',
@@ -27,7 +27,7 @@ function setup(realAudio = false) {
     setTimeout(callback) { timers.push(callback); },
     Audio: class { play() { return Promise.resolve(); } pause() {} },
     URL:{revokeObjectURL() {}},
-    played, ended
+    played, ended, prefetched
   });
   // Exercise the actual content-script queue; replace only DOM/audio output.
   const source = fs.readFileSync(path.join(__dirname, '../content.js'), 'utf8');
@@ -37,7 +37,15 @@ function setup(realAudio = false) {
       state.currentAudio = {};
       state.playbackStarted = true;
     };
-    handleNarrationEnded = () => ended.push(true);
+    handleNarrationEnded = () => {
+      ended.push(true);
+      if (${completionRace}) {
+        state.activeSession = {el:'next'};
+        state.activeEl = 'next';
+        state.playbackId += 1;
+      }
+    };
+    startPrefetch = el => prefetched.push({el, activeEl:state.activeEl});
     updateHighlightForIndex = () => {};
     applyHighlightWordFocus = () => {};
     startHighlightWordFocusLoop = () => {};
@@ -48,7 +56,7 @@ function setup(realAudio = false) {
   const {state, maybeStartPlayback} = context.queueTest;
   state.playbackId = 1;
   state.activeEl = {};
-  return {state, streamContext, start:()=>maybeStartPlayback(1), played, ended, timers, ...context.queueTest};
+  return {state, streamContext, start:()=>maybeStartPlayback(1), played, ended, timers, prefetched, ...context.queueTest};
 }
 
 test('starts the first ready sentence while the model is still generating the paragraph', () => {
@@ -255,4 +263,32 @@ test('a finished passage without target word alignment stops explicitly instead 
   const stream=api.state.currentAudio;api.skipSentence();
   api.handleSessionMessage(api.session,{type:'audio_end',index:0,chunks:1});
   assert.equal(stream.disposed,true);assert.equal(api.state.activeEl,null);assert.equal(api.state.pendingSentenceSeek,null);
+});
+
+
+test('late native completion prepares the next paragraph before advancing the active session', () => {
+  const {state, handleSessionMessage, ended, prefetched} = setup(false, true);
+  const el = state.activeEl;
+  const session = {active:true, playbackId:1, el};
+  state.activeSession = session;
+  handleSessionMessage(session, {type:'end'});
+  assert.equal(ended.length, 1);
+  assert.equal(state.activeEl, 'next');
+  assert.equal(prefetched.length, 1);
+  assert.equal(prefetched[0].el, el);
+  assert.equal(prefetched[0].activeEl, el, 'prefetch must not run against the old paragraph after advancement');
+});
+
+test('native completion during playback prepares the next paragraph without advancing early', () => {
+  const {state, start, handleSessionMessage, ended, prefetched} = setup();
+  const session = {active:true, playbackId:1, el:state.activeEl};
+  state.activeSession = session;
+  state.audioQueue.push({index:0});
+  start();
+  handleSessionMessage(session, {type:'end'});
+  assert.equal(ended.length, 0);
+  assert.equal(prefetched.length, 1);
+  state.currentAudio = null;
+  start();
+  assert.equal(ended.length, 1);
 });

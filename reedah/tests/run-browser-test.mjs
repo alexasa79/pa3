@@ -9,6 +9,7 @@ import {checkMathNarration, checkMathVariants, checkMathUpdates} from './math-na
 import {checkFactorioNarration} from './factorio-narration-browser.mjs';
 import {checkConfluence} from './confluence-browser.mjs';
 import {checkSentenceSeeking} from './sentence-seek-browser.mjs';
+import {checkParagraphCompletion} from './paragraph-completion-browser.mjs';
 import {checkParagraphStyles} from './paragraph-styles-browser.mjs';
 import {checkBloggerParagraphs} from './blogger-paragraphs-browser.mjs';
 import {checkFrames} from './frames-browser.mjs';
@@ -65,6 +66,7 @@ try {
   await checkBloggerParagraphs(call);
   await checkParagraphStyles(call);
   await checkSentenceSeeking(call);
+  await checkParagraphCompletion(call);
   await checkNestingMatrix(call);
   await checkFrames(call);
   if (process.env.REEDAH_PARAGRAPH_AUDIT === '1') {

@@ -1420,8 +1420,10 @@
       session.nativeEnded = true;
       if (session.active && session.playbackId === state.playbackId) {
         state.nativeEnded = true;
-        maybeStartPlayback(session.playbackId);
+        // Playback may already have drained. Prepare the successor before
+        // maybeStartPlayback advances and replaces this active session.
         startPrefetch(session.el);
+        maybeStartPlayback(session.playbackId);
       }
       return;
     }
