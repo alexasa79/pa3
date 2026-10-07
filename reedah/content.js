@@ -344,7 +344,9 @@
     if (!el || !el.isConnected) return false;
     const isMath = el.matches(mathNarration.ROOT_SELECTOR);
     if (window.ReedahProseParagraphs.isStructuralListItem(el) ||
-        window.ReedahProseParagraphs.isStructuralParagraph(el, mathNarration.ROOT_SELECTOR)) return false;
+        window.ReedahProseParagraphs.isStructuralParagraph(el, mathNarration.ROOT_SELECTOR) ||
+        window.ReedahProseParagraphs.isStructuralQuote(el, TEXT_CANDIDATE_SELECTOR,
+          `${mathNarration.ROOT_SELECTOR}, ${mathNarration.METADATA_SELECTOR}`)) return false;
 
     const exclusions = IN_EDITOR_FRAME
       ? "nav, footer, aside, button, input, textarea, select, option, pre, code, script, style, .reedah-overlay, .reedah-controls"
@@ -389,8 +391,8 @@
     const rect = getParagraphRect(el);
     if (rect.width === 0 || rect.height === 0) return false;
 
-    // A quotation already includes its nested paragraphs, quotes, and lists.
-    // Give its text one owner so advancing cannot read those descendants again.
+    // Only a bare inline quotation owns its descendants. Structural quotations
+    // yield to their paragraphs and the prepared runs around nested blocks.
     for (let quote = el.parentElement?.closest("blockquote"); quote;
       quote = quote.parentElement?.closest("blockquote")) {
       if (isCandidate(quote)) return false;

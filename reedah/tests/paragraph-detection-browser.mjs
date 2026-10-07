@@ -30,21 +30,39 @@ export async function checkParagraphs(call) {
   })()`,returnByValue:true});
   assert.ok(!result.exceptionDetails,JSON.stringify(result.exceptionDetails));
   const expected=['intro-heading','intro','above','left','diagonal','after-list','minimum-heading','example','explanation','recurrence-heading','recurrence','aria-paragraph','semantic-child','nested-paragraph',
-    'quoted-paragraph','after-quote','bare-quote','mixed-quote','nested-quote','multi-paragraph-quote','list-quote','item-with-quote','item-after-quote','custom-quote','wrapped-quote'];
+    'quote-child','after-quote','bare-quote',
+    '', 'mixed-quote-child', '',
+    '', 'inner-quote-child','outer-quote-child',
+    'first-quote-paragraph','second-quote-paragraph',
+    'list-quote-intro','quoted-item','quoted-nested-item',
+    '', 'quote-inside-item-child','item-after-quote','custom-quote-child','wrapped-quote-child'];
   assert.deepEqual(result.result.value.candidates,expected);
   assert.deepEqual(result.result.value.overlays,expected);
   assert.deepEqual(result.result.value.next,[...expected.slice(1),null]);
   assert.deepEqual(result.result.value.previous,[null,...expected.slice(0,-1)]);
   assert.equal(result.result.value.text,'A square of size k needs three neighboring squares:');
   assert.equal(result.result.value.inlineCode,'Store the result in dp[i][j].');
-  const narration=Object.fromEntries(result.result.value.narration);
-  assert.equal(narration['quoted-paragraph'],'A quoted paragraph should be narrated exactly once.');
-  assert.equal(narration['mixed-quote'],'Opening quotation text. The quotation continues in a paragraph. Closing quotation text.');
-  assert.equal(narration['nested-quote'],'Outer quotation text. Inner quotation text. More outer quotation text.');
-  assert.equal(narration['multi-paragraph-quote'],'First paragraph of the quotation. Second paragraph of the quotation.');
-  assert.equal(narration['list-quote'],'Quoted list introduction. First quoted item. Nested quoted item.');
-  assert.equal(narration['item-with-quote'],"A list item introduces a quote. The list item's quotation.");
-  assert.equal(narration['item-after-quote'],'An independently narrated nested item.');
+  assert.deepEqual(result.result.value.narration.slice(14).map(([,text])=>text),[
+    'A quoted paragraph should be narrated exactly once.',
+    'Reading continues after the quotation.',
+    'A quotation can contain inline text without a paragraph element.',
+    'Opening quotation text.',
+    'The quotation continues in a paragraph.',
+    'Closing quotation text.',
+    'Outer quotation text.',
+    'Inner quotation text.',
+    'More outer quotation text.',
+    'First paragraph of the quotation.',
+    'Second paragraph of the quotation.',
+    'Quoted list introduction.',
+    'First quoted item.',
+    'Nested quoted item.',
+    'A list item introduces a quote.',
+    "The list item's quotation.",
+    'An independently narrated nested item.',
+    'A custom paragraph inside a quotation.',
+    'A quotation inside a custom wrapper.'
+  ]);
   const spoken=result.result.value.narration.map(([,text])=>text).join(' ');
   for(const phrase of ['A quoted paragraph should be narrated exactly once.','Inner quotation text.','First paragraph of the quotation.','Second paragraph of the quotation.','Nested quoted item.',"The list item's quotation.",'A custom paragraph inside a quotation.','A quotation inside a custom wrapper.']) {
     assert.equal(spoken.split(phrase).length-1,1,`Narrated once: ${phrase}`);

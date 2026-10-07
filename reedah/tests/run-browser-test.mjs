@@ -67,6 +67,10 @@ try {
   await checkSentenceSeeking(call);
   await checkNestingMatrix(call);
   await checkFrames(call);
+  if (process.env.REEDAH_PARAGRAPH_AUDIT === '1') {
+    const {auditParagraphExceptions}=await import('./paragraph-exceptions-audit.mjs');
+    await auditParagraphExceptions(call);
+  }
 } finally {
   socket?.close();
   if(browser.pid){try{process.kill(-browser.pid,'SIGTERM');}catch(error){if(error.code!=='ESRCH')throw error;}}

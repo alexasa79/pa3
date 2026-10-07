@@ -4,15 +4,15 @@ Run `make browser-test` from the repository root. All fixtures run in an isolate
 
 ## Bounded nesting matrix
 
-The generator in `nesting-matrix-browser.mjs` currently produces **2,850 cases**.
+The generator in `nesting-matrix-browser.mjs` currently produces **7,932 cases**.
 
 | Dimension | Cases and oracle |
 | --- | --- |
-| Structural paths | Every sequence of list item, table cell, generic div, and custom paragraph container at depths 1–5: 1,364 paths |
-| Pure nesting | Two independent semantic paragraphs at the end of every path: 1,364 cases |
-| Mixed nesting | The same paths, with distinct introduction and conclusion text at every level: another 1,364 cases |
+| Structural paths | Every sequence of list item, table cell, generic div, custom paragraph container, and blockquote at depths 1–5: 3,905 paths |
+| Pure nesting | Two independent semantic paragraphs at the end of every path: 3,905 cases |
+| Mixed nesting | The same paths, with distinct introduction and conclusion text at every level: another 3,905 cases |
 | Real-world / parser regressions | Amazon accordion, mixed list/table, block spans, and table/list markup inside a paragraph: 5 cases |
-| Leaf representation | Nine container families × eight leaves: 72 cases. Containers add quotations, captions, definitions, display:contents, and open disclosures. Leaves include semantic paragraphs, divs, block spans, custom paragraphs, bare text, contents/inline paragraphs, and sentence links |
+| Leaf representation | Nine container families × eight leaves: 72 cases. Containers add captions, definitions, display:contents, and open disclosures. Leaves include semantic paragraphs, divs, block spans, custom paragraphs, bare text, contents/inline paragraphs, and sentence links |
 | Exclusions | Nine container families × hidden, inert, aria-hidden, display:none, and opacity:0: 45 cases |
 
 Every row compares extracted text with independently constructed expected paragraphs in DOM order. This detects dropped text, merged paragraph boundaries, duplicated narration, and incorrect ordering. It also checks controls exist, rescanning is stable, and disabling restores the original DOM.
@@ -21,9 +21,9 @@ Separate assertions hover an Amazon-style paragraph below a long accordion headi
 
 ## Existing complementary coverage
 
-The 26-case paragraph-style fixture checks Play requests, sentence highlighting, layout stability, navigation order, cleanup, dynamic insertion/removal, visibility changes, disclosure expansion, and generic blocks that acquire semantic children. Other fixtures cover Blogger, MDX, Confluence editors, quotations, math renderers, sentence seeking, streaming audio and highlight themes.
+The 30-case paragraph-style fixture checks Play requests, sentence highlighting, layout stability, navigation order, cleanup, dynamic insertion/removal, visibility changes, disclosure expansion, and generic blocks that acquire semantic children. Other fixtures cover Blogger, MDX, Confluence editors, quotations, math renderers, sentence seeking, streaming audio and highlight themes.
 
-Quotations, figure captions and definitions retain their existing aggregate ownership: their nested prose is read once as a unit. Ordinary list items retain their numbering and nested-item behavior. List items containing separate prose blocks yield to those paragraphs. Text following a nested list remains after its children in reading order.
+Quotations yield to their paragraphs and block children, including bare text before and after those blocks. Bare inline quotations stay whole. Figure captions and definitions still retain aggregate ownership; this remains a review item, not a claim that merging their paragraphs is correct. Ordinary list items retain their numbering and nested-item behavior. List items containing separate prose blocks yield to those paragraphs. Text following a nested list remains after its children in reading order.
 
 ## Frames
 
@@ -38,3 +38,5 @@ This exhaustively covers the stated finite grammar, not every possible HTML/CSS/
 Shadow DOM, canvas/image-only text, built-in PDF viewers, restricted browser pages, and frames denied extension access are outside this coverage. Bare generic text outside recognized prose roots remains intentionally conservative to avoid reading page navigation. Visual order that differs from DOM order is not reconstructed. Very large, rapidly changing documents still need performance testing.
 
 For each new report, retain the smallest sanitized DOM/CSS reproduction, add its missing dimension to the generator when it generalizes, and assert both positive coverage and nearby negative controls. Keep exact paragraph ownership and reading order assertions; checking only that some control appears would have missed the Amazon failure.
+
+The nine-paragraph email-style quotation regression checks individual Play requests, highlighting and layout. See [remaining exceptions](PARAGRAPH_EXCEPTIONS.md) for separate informational audit results.

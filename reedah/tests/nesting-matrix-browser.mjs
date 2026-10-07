@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 
-// Exhaustive bounded grammar: all 4^1 + ... + 4^5 structural paths.
+// Exhaustive bounded grammar: all 5^1 + ... + 5^5 structural paths.
 // Each path carries two independent paragraphs, never an implementation-derived oracle.
 const wrappers = {
   list: text => '<ul><li>'+text+'</li></ul>',
   table: text => '<table><tbody><tr><td>'+text+'</td></tr></tbody></table>',
   generic: text => '<div>'+text+'</div>',
+  quote: text => '<blockquote>'+text+'</blockquote>',
   custom: text => '<div role="paragraph">'+text+'</div>'
 };
 export function nestingCases() {

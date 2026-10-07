@@ -48,7 +48,7 @@
   }
 
   function prepareBlankLines(document, mathSelector) {
-    for (const root of document.querySelectorAll('p, [role="paragraph"], div.mdx-p')) {
+    for (const root of document.querySelectorAll('p, [role="paragraph"], div.mdx-p, blockquote')) {
       if (root.closest(EXCLUDED) || root.closest(SELECTOR) || root.querySelector(SELECTOR) ||
           root.closest(mathSelector) || excludedHeader(root) || isHidden(root)) continue;
       let container = root;
@@ -87,19 +87,31 @@
       if (node.nodeType === 1 && node.matches('ul, ol')) passedNestedList = true;
       else if (passedNestedList && hasReadableText(node.textContent)) return true;
     }
-    return [...el.querySelectorAll('p, [role="paragraph"], div, section, article, table, h1, h2, h3, h4, h5, h6, span, td, dd')].some(child => {
+    return [...el.querySelectorAll('p, [role="paragraph"], div, section, article, table, h1, h2, h3, h4, h5, h6, span, td, dd, blockquote')].some(child => {
       if (child.parentElement.closest('li, blockquote') !== el) return false;
       if (isHidden(child) || child.closest(EXCLUDED)) return false;
       const display = child.ownerDocument.defaultView.getComputedStyle(child).display;
       return hasReadableText(child.textContent) &&
-        (child.matches('p, [role="paragraph"], h1, h2, h3, h4, h5, h6, table, td, dd') ||
+        (child.matches('p, [role="paragraph"], h1, h2, h3, h4, h5, h6, table, td, dd, blockquote') ||
           (display !== 'inline' && display !== 'contents'));
     });
   }
 
   function isStructuralParagraph(el, mathSelector) {
-    return el?.tagName === 'P' && [...el.querySelectorAll('p, li, table, [role="paragraph"]')]
+    return el?.tagName === 'P' && [...el.querySelectorAll('p, li, table, blockquote, [role="paragraph"]')]
       .some(child => !child.closest(mathSelector));
+  }
+
+  // A quotation is a container when it has paragraph/block children. Preserve
+  // a bare inline quotation as one target, but never flatten its nested prose.
+  function isStructuralQuote(el, semanticSelector, mathSelector) {
+    if (!el || el.tagName !== 'BLOCKQUOTE') return false;
+    return [...el.querySelectorAll('*')].some(child => {
+      if (child.closest(mathSelector) || child.closest(EXCLUDED) || isHidden(child)) return false;
+      if (child.matches(semanticSelector)) return true;
+      const display = child.ownerDocument.defaultView.getComputedStyle(child).display;
+      return ['block', 'flow-root', 'flex', 'grid', 'table', 'table-cell', 'list-item'].includes(display);
+    });
   }
 
   function isLinkedProse(text) {
@@ -162,7 +174,7 @@
     // Explicit article/main landmarks contain prose represented by many HTML
     // shapes. Scan each container once; do not treat arbitrary page chrome as prose.
     const containers = new Set();
-    for (const root of document.querySelectorAll(`${ROOT_SELECTOR}, ${customSelector}, li, p`)) {
+    for (const root of document.querySelectorAll(`${ROOT_SELECTOR}, ${customSelector}, li, p, blockquote`)) {
       containers.add(root);
       for (const el of root.querySelectorAll('*')) containers.add(el);
     }
@@ -173,8 +185,9 @@
       const owner = container.closest(semanticSelector);
       // A custom paragraph wrapping semantic blocks still owns its bare prose.
       // Structural list/paragraph containers yield to their blocks and bare runs.
-      // Ordinary list items and quotations retain their existing ownership.
+      // Bare quotations and ordinary list items keep their inline text together.
       if (owner && !isStructuralListItem(owner) && !isStructuralParagraph(owner, mathSelector) &&
+          !isStructuralQuote(owner, semanticSelector, mathSelector) &&
           !(owner.matches(customSelector) && owner.querySelector(semanticSelector))) continue;
       const display = document.defaultView.getComputedStyle(container).display;
       if (!['block', 'flow-root', 'flex', 'grid', 'table-cell', 'contents', 'inline-block', 'list-item'].includes(display)) continue;
@@ -208,7 +221,7 @@
   }
 
   const api = {SELECTOR, ROOT_SELECTOR, ARTICLE_SELECTOR, inlineRuns, blankLineRuns, hasReadableText, isLinkedProse,
-    isHidden, excludedHeader, isRelevantMutation, isStructuralListItem, isStructuralParagraph, prepare, clear};
+    isHidden, excludedHeader, isRelevantMutation, isStructuralListItem, isStructuralParagraph, isStructuralQuote, prepare, clear};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof globalThis !== 'undefined') globalThis.ReedahProseParagraphs = api;
 })();
