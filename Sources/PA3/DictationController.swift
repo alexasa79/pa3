@@ -57,6 +57,7 @@ final class DictationController: ObservableObject {
     private let vocabulary: Vocabulary
     private var committed = ""
     private var segment = ""
+    private var segmentSeparator = "\n\n"
     private var selectionAnchor = -1
     private var editAction: EditAction = .replace
     private var editSelectAll = false
@@ -213,8 +214,10 @@ final class DictationController: ObservableObject {
             restartDictation()
         case "q", "Q":
             discardAndHide()
-        case "o", "O":
+        case "o":
             startNewParagraph()
+        case "O":
+            startDictation(continuingParagraph: true)
         case "J":
             if !dictating { joinNextParagraph() }
         case "S":
@@ -268,7 +271,7 @@ final class DictationController: ObservableObject {
     func shortcutSections() -> [(title: String, bindings: [String])] {
         [
             ("General", ["?: show/hide shortcuts (pauses dictation)", "esc: close shortcuts, otherwise discard", "space: pause/resume dictation", "enter: paste result", "q / Q: discard", "ctrl+c: abort", "v: insert clipboard"]),
-            ("Dictation", ["R: restart dictation", "o / O: new paragraph", "s: spell check transcript", "D: edit dictionary"]),
+            ("Dictation", ["R: restart dictation", "o: new paragraph", "O: continue current paragraph", "s: spell check transcript", "D: edit dictionary"]),
             ("Navigation · while paused", ["arrows: navigate words", "shift+arrows: expand selection", "J: join next paragraph", "S: split paragraph after current word"]),
             ("Editing · while paused", ["c: edit selection", "C: change all matching text", "a: append after", "i / I: insert before", "x / X: delete selection", "t: cycle capitalization", "u: undo last change", ".: repeat change", ">: repeat change on all matches", "A: add selected word to dictionary"]),
             ("Inside the text editor", ["enter: apply edit", "esc: cancel edit", "arrows: move cursor", "home/end: jump", "alt+backspace: delete word", "backspace: delete character", "delete: delete ahead", "cmd+a: select all"]),
@@ -331,7 +334,7 @@ final class DictationController: ObservableObject {
     private func combineText() -> String {
         let c = committed.trimmingCharacters(in: .whitespacesAndNewlines)
         let s = segment.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !c.isEmpty && !s.isEmpty { return c + "\n\n" + s }
+        if !c.isEmpty && !s.isEmpty { return c + segmentSeparator + s }
         if !c.isEmpty { return c }
         return s
     }
@@ -409,9 +412,10 @@ final class DictationController: ObservableObject {
         Logger.info("contextSeconds=\(value)")
     }
 
-    func startDictation() {
+    func startDictation(continuingParagraph: Bool = false) {
         Logger.info("startDictation requested")
         guard canStartDictation else { return }
+        segmentSeparator = continuingParagraph ? " " : "\n\n"
         guard prepareModels?() ?? true else {
             serviceMessage = "Downloading speech models. Start dictation when the download finishes."
             debugMessage = serviceMessage
@@ -608,7 +612,7 @@ final class DictationController: ObservableObject {
             return
         }
         let c = committed.trimmingCharacters(in: .whitespacesAndNewlines)
-        committed = c.isEmpty ? seg : c + "\n\n" + seg
+        committed = c.isEmpty ? seg : c + segmentSeparator + seg
         segment = ""
     }
 
