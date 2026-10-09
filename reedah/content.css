@@ -9,9 +9,9 @@
   width: 18px;
   height: 18px;
   border-radius: 999px;
-  border: 1px solid #0a0a0a;
-  background: #1976D2;
-  color: #ffffff;
+  border: 1px solid #292b29;
+  background: #ddd7ca;
+  color: #292b29;
   font-family: "Avenir Next", "Avenir", "Helvetica Neue", "Segoe UI", sans-serif;
   font-size: 10px;
   line-height: 1;
@@ -28,13 +28,15 @@
 }
 
 .reedah-overlay.reedah-overlay-active {
-  background: #b00020;
-  border-color: #7a0016;
+  color: #faeedd;
+  background: #292b29;
+  border-color: #ddd7ca;
 }
 
 .reedah-overlay.reedah-overlay-paused {
-  background: #f9a825;
-  border-color: #c17900;
+  color: #292b29;
+  background: #faeedd;
+  border-color: #65645b;
 }
 
 .reedah-highlight {
@@ -49,14 +51,14 @@
 }
 
 .reedah-highlight.reedah-highlight-on-light {
-  --reedah-highlight-base: rgba(219, 234, 254, 0.93);
-  --reedah-word-focus-rgb: 59, 130, 246;
+  --reedah-highlight-base: rgba(221, 215, 202, 0.93);
+  --reedah-word-focus-rgb: 101, 100, 91;
   --reedah-word-focus-opacity: 0.26;
 }
 
 .reedah-highlight.reedah-highlight-on-dark {
-  --reedah-highlight-base: rgba(18, 35, 68, 0.91);
-  --reedah-word-focus-rgb: 96, 165, 250;
+  --reedah-highlight-base: rgba(55, 57, 52, 0.91);
+  --reedah-word-focus-rgb: 221, 215, 202;
   --reedah-word-focus-opacity: 0.3;
 }
 
@@ -84,10 +86,10 @@
 
 /* Custom Highlights paint the live editor's existing text ranges. No spans,
    inline styles, selection changes, or editable-content mutations are needed. */
-::highlight(reedah-editor-sentence-light) { background-color: rgba(219, 234, 254, 0.93); }
-::highlight(reedah-editor-sentence-dark) { background-color: rgba(18, 35, 68, 0.91); }
-::highlight(reedah-editor-focus-light) { background-color: rgb(178, 207, 252); }
-::highlight(reedah-editor-focus-dark) { background-color: rgb(42, 74, 123); }
+::highlight(reedah-editor-sentence-light) { background-color: rgba(221, 215, 202, 0.93); }
+::highlight(reedah-editor-sentence-dark) { background-color: rgba(55, 57, 52, 0.91); }
+::highlight(reedah-editor-focus-light) { background-color: rgb(190, 185, 173); }
+::highlight(reedah-editor-focus-dark) { background-color: rgb(105, 104, 97); }
 
 .reedah-overlay__icon {
   width: 14px;
@@ -131,7 +133,7 @@
 }
 
 .reedah-overlay:focus-visible {
-  outline: 2px solid #ffffff;
+  outline: 2px solid #ddd7ca;
   outline-offset: 2px;
 }
 
@@ -145,12 +147,12 @@
   gap: 8px;
   padding: 3px 4px;
   border-radius: 999px;
-  background: rgba(12, 14, 18, 0.94);
-  color: #f5f7fa;
+  background: rgba(41, 43, 41, 0.94);
+  color: #faeedd;
   font-family: "Avenir Next", "Avenir", "Helvetica Neue", "Segoe UI", sans-serif;
   font-size: 9px;
   line-height: 1.3;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(250, 238, 221, 0.08);
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
 }
 
@@ -159,9 +161,9 @@
   cursor: grab;
   padding: 1px 4px;
   border-radius: 999px;
-  color: rgba(245, 247, 250, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.06);
+  color: rgba(250, 238, 221, 0.8);
+  border: 1px solid rgba(250, 238, 221, 0.12);
+  background: rgba(250, 238, 221, 0.06);
   font-size: 10px;
 }
 
@@ -180,9 +182,9 @@
   min-width: 18px;
   padding: 2px 4px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(250, 238, 221, 0.08);
   text-align: center;
-  color: #f5f7fa;
+  color: #faeedd;
   font-size: 9px;
   font-weight: 600;
 }
@@ -194,7 +196,7 @@
 
 .reedah-controls__btn:hover:not(:disabled),
 .reedah-controls__btn:focus-visible:not(:disabled) {
-  background: rgba(59, 130, 246, 0.4);
+  background: rgba(101, 100, 91, 0.4);
 }
 
 .reedah-controls__meta {

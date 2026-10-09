@@ -15,7 +15,7 @@ struct ModelDownloadView: View {
                     .font(.system(size: 27, weight: .medium))
                     .foregroundStyle(.tint)
                     .frame(width: 58, height: 58)
-                    .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+                    .background(Color(nsColor: PaperTheme.ink).opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
                 VStack(alignment: .leading, spacing: 7) {
                     Text(manager.ready ? "PA3 is ready" : "Preparing PA3")
                         .font(.system(size: 25, weight: .semibold))
@@ -33,7 +33,7 @@ struct ModelDownloadView: View {
                                 manager.currentID == model.id ? "arrow.down.circle.fill" : "circle.dashed")
                             .font(.system(size: 20))
                             .foregroundStyle(manager.installed.contains(model.id) ? Color.green :
-                                             manager.currentID == model.id ? Color.accentColor : Color.secondary.opacity(0.5))
+                                             manager.currentID == model.id ? Color(nsColor: PaperTheme.ink) : Color.secondary.opacity(0.5))
                         VStack(alignment: .leading, spacing: 3) {
                             Text(model.name).font(.system(size: 13, weight: .medium))
                             Text(model.detail).font(.system(size: 11)).foregroundStyle(.secondary)
@@ -46,7 +46,7 @@ struct ModelDownloadView: View {
                     if index < manager.models.count - 1 { Divider().padding(.leading, 46) }
                 }
             }
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+            .background(Color(nsColor: PaperTheme.cream), in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(.primary.opacity(0.07)))
 
             VStack(alignment: .leading, spacing: 9) {
@@ -86,6 +86,7 @@ struct ModelDownloadView: View {
         }
         .padding(28)
         .frame(width: 500)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: PaperTheme.canvas))
+        .tint(Color(nsColor: PaperTheme.ink))
     }
 }

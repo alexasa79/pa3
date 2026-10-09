@@ -78,7 +78,8 @@ struct DictionariesView: View {
         }
         .padding(20)
         .frame(minWidth: 680, minHeight: 420)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: PaperTheme.canvas))
+        .tint(Color(nsColor: PaperTheme.ink))
         .onChange(of: editor.tab) { _, _ in editor.message = "" }
     }
 }

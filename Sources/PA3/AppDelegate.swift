@@ -344,7 +344,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentView = NSHostingView(rootView:
             HStack(spacing: 12) {
-                Image(systemName: "speaker.wave.2.fill").foregroundStyle(.blue)
+                Image(systemName: "speaker.wave.2.fill").foregroundStyle(Color(nsColor: PaperTheme.ink))
                 Text(message).font(.system(size: 13, weight: .medium)).fixedSize(horizontal: false, vertical: true)
             }.padding(18).frame(width: 460).background(.regularMaterial))
         if let screen = NSScreen.main {

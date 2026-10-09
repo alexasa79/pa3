@@ -26,8 +26,8 @@ enum TranscriptLayout {
         var previous: TranscriptToken?
         var paragraphStart = 0
         func background(for token: TranscriptToken) -> NSColor? {
-            if token.selected { return NSColor.systemYellow.withAlphaComponent(0.8) }
-            if token.pending { return NSColor.gray.withAlphaComponent(0.25) }
+            if token.selected { return PaperTheme.selection }
+            if token.pending { return PaperTheme.muted.withAlphaComponent(0.20) }
             return nil
         }
         func finishParagraph() {
@@ -60,7 +60,7 @@ enum TranscriptLayout {
             let range = NSRange(location: result.length, length: token.text.utf16.count)
             result.append(NSAttributedString(string: token.text))
             ranges[token.id] = range
-            result.addAttribute(.foregroundColor, value: token.selected ? NSColor.black : NSColor.textColor, range: range)
+            result.addAttribute(.foregroundColor, value: PaperTheme.ink, range: range)
             if let color = background(for: token) {
                 result.addAttribute(.backgroundColor, value: color, range: range)
             }
@@ -89,7 +89,7 @@ struct TranscriptTextView: NSViewRepresentable {
         view.isEditable = false
         view.isSelectable = false
         view.isRichText = true
-        view.backgroundColor = .textBackgroundColor
+        view.backgroundColor = PaperTheme.canvas
         view.textContainerInset = NSSize(width: 18, height: 18)
         view.isVerticallyResizable = true
         view.isHorizontallyResizable = false

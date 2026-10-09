@@ -12,7 +12,9 @@ struct DictationView: View {
             Divider()
             mainContent
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(Color(nsColor: PaperTheme.canvas))
+        .foregroundStyle(Color(nsColor: PaperTheme.ink))
+        .tint(Color(nsColor: PaperTheme.ink))
         .overlay(KeyCatcher { event in
             controller.handleKey(event)
         }.frame(width: 0, height: 0))
@@ -28,7 +30,7 @@ struct DictationView: View {
     private var header: some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(controller.dictating ? Color.green : Color.orange)
+                .fill(Color(nsColor: controller.dictating ? PaperTheme.ink : PaperTheme.muted))
                 .frame(width: 10, height: 10)
             Text("pa dictation")
                 .font(.system(.body, design: .monospaced).weight(.semibold))
@@ -42,16 +44,16 @@ struct DictationView: View {
             if !controller.vocabularyNotice.isEmpty {
                 Text(controller.vocabularyNotice)
                     .font(.system(size: 13, design: .monospaced).weight(.semibold))
-                    .foregroundStyle(Color.green)
+                    .foregroundStyle(Color(nsColor: PaperTheme.ink))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(Color.green.opacity(0.12))
+                    .background(Color(nsColor: PaperTheme.cream))
                     .clipShape(RoundedRectangle(cornerRadius: 5))
             }
         }
         .padding(.horizontal, 16)
         .frame(height: 48)
-        .background(controller.dictating ? Color.green.opacity(0.12) : Color.orange.opacity(0.12))
+        .background(Color(nsColor: PaperTheme.paper))
     }
 
     private var mainContent: some View {
@@ -127,7 +129,7 @@ struct DictationView: View {
         }
         .frame(width: 380)
         .frame(maxHeight: .infinity)
-        .background(.regularMaterial)
+        .background(Color(nsColor: PaperTheme.cream))
         .overlay(alignment: .leading) {
             Rectangle()
                 .fill(Color(nsColor: .separatorColor))
@@ -186,7 +188,7 @@ struct DictationView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: PaperTheme.cream))
     }
 
     /// Duration limit for the audio clip sent to Whisper.
