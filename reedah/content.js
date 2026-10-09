@@ -1473,7 +1473,8 @@
 
   function activateSession(session, playbackId, el) {
     session.active = true;
-    session.port.postMessage({type:"window", window:2});
+    // Completed prefetches need no producer window; their port may be closed.
+    if (!session.nativeEnded) session.port.postMessage({type:"window", window:2});
     session.playbackId = playbackId;
     state.activeSession = session;
     state.currentNativePort = session.port;
@@ -1870,7 +1871,12 @@
     playbackHistory.addPlayedItem(state.playedHistory, item);
     if (item.stream && !item.consumed) {
       item.consumed = true;
-      try { state.activeSession?.port?.postMessage({type:"consumed", index:item.index}); }
+      // Flow control is only needed while generation is in progress. The worker
+      // can disconnect after its end event while buffered audio is still playing.
+      try {
+        if (!state.activeSession?.nativeEnded)
+          state.activeSession?.port?.postMessage({type:"consumed", index:item.index});
+      }
       catch (error) {
         console.error("Reedah: Could not release narration queue slot.", error);
         clearActiveNarration();

@@ -51,7 +51,7 @@ function setup(realAudio = false, completionRace = false) {
     startHighlightWordFocusLoop = () => {};
     updateControls = () => {};
     createAudioUrl = text => text;
-    globalThis.queueTest = {state, maybeStartPlayback, skipSentence, playPreviousSentence, togglePause, currentNavigationIndex, enqueueAudio, handleSessionMessage, stopNativeNarration, rememberPlayed, trimStreamHistory};
+    globalThis.queueTest = {state, maybeStartPlayback, skipSentence, playPreviousSentence, togglePause, currentNavigationIndex, enqueueAudio, handleSessionMessage, stopNativeNarration, rememberPlayed, trimStreamHistory, activateSession, handleSessionDisconnect};
   })();`), context);
   const {state, maybeStartPlayback} = context.queueTest;
   state.playbackId = 1;
@@ -291,4 +291,41 @@ test('native completion during playback prepares the next paragraph without adva
   state.currentAudio = null;
   start();
   assert.equal(ended.length, 1);
+});
+
+
+test('completed generation can disconnect before playback ends and still advance', async () => {
+  const api = paragraphSetup();
+  api.append(0, 0, [api.word(0, 0)]);
+  await Promise.resolve();
+  api.handleSessionMessage(api.session, {type:'audio_end', index:0, chunks:1});
+  api.handleSessionMessage(api.session, {type:'end'});
+  api.session.port.postMessage = () => { throw new Error('Attempting to use a disconnected port object'); };
+  api.handleSessionDisconnect(api.session);
+  const stream = api.state.currentAudio;
+  api.streamContext.currentTime = 2;
+  for (const source of [...stream.sources]) source.node.onended();
+  for (const timer of api.timers) timer();
+  assert.equal(api.state.activeEl !== null, true, 'completion must not clear the paragraph as an error');
+  assert.equal(api.ended.length, 1, 'advance after the last buffered audio ends');
+  assert.equal(api.state.playedHistory.length, 1);
+});
+
+test('fully generated prefetch activates without sending to its closed producer', () => {
+  const api = paragraphSetup();
+  const el = api.state.activeEl;
+  api.session.nativeEnded = true;
+  api.session.port.postMessage = () => { throw new Error('Attempting to use a disconnected port object'); };
+  api.activateSession(api.session, 2, el);
+  assert.equal(api.state.activeSession, api.session);
+  assert.equal(api.state.nativeEnded, true);
+});
+
+
+test('disconnect before generation completes still stops with an error', () => {
+  const api = paragraphSetup();
+  api.handleSessionDisconnect(api.session);
+  assert.equal(api.state.activeSession, null);
+  assert.equal(api.state.activeEl, null);
+  assert.equal(api.ended.length, 0);
 });
