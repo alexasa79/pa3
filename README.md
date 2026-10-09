@@ -84,6 +84,10 @@ Select text in another app and press **Ctrl+Option+Command+O**. PA3 reads it thr
 
 PA3 needs Accessibility permission in System Settings → Privacy & Security → Accessibility. Some apps do not expose selected text. In that case PA3 shows a brief notice instead of copying text or reading the whole document. Selection reads are bounded and limited to 100,000 characters. Stop dictation before using narration.
 
+To read a screen rectangle, including in apps such as Kindle that do not expose selected text, press **Ctrl+Option+Command+R** or choose **Read screen rectangle / Stop** from the menu bar. Release the shortcut keys, drag a rectangle around the text, and release the mouse to narrate it. Press **Escape** to cancel the picker; either narration shortcut or **Stop narration** cancels pending recognition and stops speech. Stop dictation before starting screen narration. The selected-text shortcut remains separate: an unavailable selection shows a notice and never opens the rectangle picker.
+
+On first use, allow PA3 in **System Settings → Privacy & Security → Screen Recording** (called **Screen & System Audio Recording** on newer macOS versions). Reopen PA3 if macOS requests it, then retry the shortcut. OCR runs locally with Apple Vision; the temporary screenshot is deleted after recognition. Select one column at a time for predictable reading order. Small, blurry, or protected screen content may not be readable. No text found, permission failures, and capture failures show a notice instead of starting speech.
+
 Narration plays in the background without a reader window or changing the original app's selection. If the speech model returns silence, PA3 retries once. A failed selection narration shows a brief notice.
 
 ## Local narration

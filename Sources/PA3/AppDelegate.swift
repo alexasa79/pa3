@@ -16,6 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var downloadWindow: NSWindow?
     private var hotKey: GlobalHotKey?
     private var narrationHotKey: GlobalHotKey?
+    private var screenHotKey: GlobalHotKey?
+    private let screenCapture = ScreenTextCapture()
     private var selectionRequest: UUID?
     private var narrationNotice: NSPanel?
     private var previousApp: NSRunningApplication?
@@ -47,7 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         narration.prepareModels = { [weak self] in self?.downloads.ensure(["qwen", "audio"]) ?? false }
         narration.modelDownloadHealth = { [weak self] in self?.downloads.health ?? [:] }
         narration.isDictationBusy = { [weak controller] in controller?.narrationIsBlocked ?? false }
-        controller.onDictationWillStart = { [weak self] in self?.narration.stopAll() }
+        controller.onDictationWillStart = { [weak self] in self?.cancelNarration() }
         narration.onSelectionFailure = { [weak self] _ in
             self?.showNarrationNotice("Could not finish narration. Select the text and try again.")
         }
@@ -64,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        cancelNarration()
         downloads.cancel()
         narration.shutdown()
         if let workspaceObserver {
@@ -72,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller?.shutdown()
         hotKey?.unregister()
         narrationHotKey?.unregister()
+        screenHotKey?.unregister()
         Logger.close()
     }
 
@@ -89,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Start dictation", action: #selector(startFromMenu), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Read selection / Stop   ⌃⌥⌘O", action: #selector(readSelection), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Read screen rectangle / Stop   ⌃⌥⌘R", action: #selector(readScreenRectangle), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Stop narration", action: #selector(stopNarrationFromMenu), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Dictionaries…", action: #selector(showDictionaries), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Speech models…", action: #selector(showModelDownloads), keyEquivalent: ""))
@@ -228,13 +233,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         narrationHotKey?.register()
         Logger.info("narration hotkey registered Ctrl+Option+Command+O")
+        screenHotKey = GlobalHotKey(keyCode: UInt32(kVK_ANSI_R), modifiers: modifiers) { [weak self] in
+            DispatchQueue.main.async { self?.readScreenRectangle() }
+        }
+        screenHotKey?.register()
+        Logger.info("screen narration hotkey registered Ctrl+Option+Command+R")
     }
 
     @objc private func readSelection() {
         if selectionRequest != nil || narration.hasNarration {
-            selectionRequest = nil
-            narration.stopAll()
-            showNarrationNotice("Narration stopped")
+            stopNarrationFromMenu()
             return
         }
         guard controller?.narrationIsBlocked != true else {
@@ -276,6 +284,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func readScreenRectangle() {
+        if selectionRequest != nil || narration.hasNarration {
+            stopNarrationFromMenu()
+            return
+        }
+        guard controller?.narrationIsBlocked != true else {
+            showNarrationNotice("Stop dictation before reading screen text.")
+            return
+        }
+        beginScreenCapture()
+    }
+
+    private func beginScreenCapture() {
+        let request = UUID()
+        selectionRequest = request
+        // Hide our notice before the system freezes the screen for selection.
+        narrationNotice?.orderOut(nil)
+        narrationNotice = nil
+        Logger.info("Screen rectangle requested; drag to select, Escape to cancel")
+        // Allow the menu to dismiss and shortcut modifiers to be released.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self, self.selectionRequest == request else { return }
+            self.screenCapture.start(recognizing: { [weak self] in
+                self?.showNarrationNotice("Recognizing screen text…")
+            }, completion: { [weak self] result in
+                guard let self, self.selectionRequest == request else { return }
+                self.selectionRequest = nil
+                guard let text = result.text else {
+                    self.showNarrationNotice(result.message)
+                    return
+                }
+                let response = self.narration.narrateSelection(result)
+                if response.status == 202 {
+                    Logger.info("Screen narration accepted chars=\(text.count)")
+                    self.showNarrationNotice("Narrating screen text · ⌃⌥⌘O to stop")
+                } else {
+                    let error = (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any]
+                    self.showNarrationNotice(error?["error"] as? String ?? "Could not start narration.")
+                }
+            })
+        }
+    }
+
+    private func cancelNarration() {
+        selectionRequest = nil
+        screenCapture.cancel()
+        narration.stopAll()
+    }
+
     private func showNarrationNotice(_ message: String) {
         Logger.info("Narration notice: \(message)")
         narrationNotice?.orderOut(nil)
@@ -307,8 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func stopNarrationFromMenu() {
-        selectionRequest = nil
-        narration.stopAll()
+        cancelNarration()
         showNarrationNotice("Narration stopped")
     }
 

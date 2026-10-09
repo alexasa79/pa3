@@ -2,6 +2,18 @@ import AppKit
 import AVFoundation
 import SwiftUI
 
+if CommandLine.arguments.contains("--screen-text-test") {
+    let testApp = NSApplication.shared
+    testApp.setActivationPolicy(.accessory)
+    Task { @MainActor in
+        let failures = await runScreenTextTests()
+        failures.forEach { print("FAIL: " + $0) }
+        print(failures.isEmpty ? "screen-text-test: ok" : "screen-text-test: failed")
+        exit(failures.isEmpty ? 0 : 2)
+    }
+    testApp.run()
+}
+
 if CommandLine.arguments.contains("--narration-timing-live-test") {
     let testApp = NSApplication.shared
     testApp.setActivationPolicy(.accessory)
