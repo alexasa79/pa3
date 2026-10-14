@@ -21,7 +21,6 @@ struct TranscriptToken: Identifiable {
 final class DictationController: ObservableObject {
     @Published var text = ""
     @Published private(set) var detectedLanguage: String?
-    @Published var status = ""
     @Published var dictating = false
     @Published private(set) var showingShortcuts = false
     @Published var spellChecking = false
@@ -61,7 +60,7 @@ final class DictationController: ObservableObject {
     private var selectionAnchor = -1
     private var editAction: EditAction = .replace
     private var editSelectAll = false
-    private var runningStop = false
+    @Published private var runningStop = false
     private var resumeAfterShortcuts = false
     private var transcriptColumnLimit = 100
     private var wordFrames: [Int: CGRect] = [:]
@@ -110,7 +109,6 @@ final class DictationController: ObservableObject {
                 guard let self else { return }
                 self.serviceMessage = message
                 self.debugMessage = message
-                self.updateStatusFor(self.combineText())
             }
         }
         updateDisplay()
@@ -380,19 +378,25 @@ final class DictationController: ObservableObject {
             }
         }
         lastUpdate = Date()
-        updateStatusFor(combined)
     }
 
-    private func updateStatusFor(_ value: String) {
-        var label = dictating ? "DICTATING" : "PAUSED"
-        if dictating, !serviceMessage.isEmpty {
-            label = serviceMessage
+    // Batch recognition comes and goes while the microphone remains active.
+    // Present the session state, rather than each batch's service message.
+    var status: String {
+        if runningStop { return "Finishing transcription…" }
+        if spellChecking { return "Checking spelling…" }
+        return dictating ? "Dictation active" : "Dictation paused"
+    }
+
+    var statusDetail: String {
+        switch debugMessage {
+        case "", "Ready", "Dictation active", "Dictation stopped", "Transcribing...",
+             "Whisper ready", "Starting microphone...", "Stopping dictation...",
+             "Preparing spell check...":
+            return ""
+        default:
+            return debugMessage
         }
-        if spellChecking {
-            label = "SPELL CHECKING"
-        }
-        let count = value.count
-        status = count > 0 ? "\(label) | \(count) chars" : label
     }
 
     func handleTranscription(_ update: TranscriptionUpdate) {
@@ -552,7 +556,6 @@ final class DictationController: ObservableObject {
         let input = committed.trimmingCharacters(in: .whitespacesAndNewlines)
         if input.isEmpty { return }
         spellChecking = true
-        updateStatusFor(input)
         let transcriber = transcriber
         DispatchQueue.global(qos: .userInitiated).async {
             if wasDictating {
@@ -572,7 +575,6 @@ final class DictationController: ObservableObject {
                     }
                 case .failure(let error):
                     Logger.warn("transcript spell check failed: \(error)")
-                    self.updateStatusFor(self.combineText())
                 }
             }
         }

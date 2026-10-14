@@ -6,11 +6,11 @@ struct DictationView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
             controls
             Divider()
             mainContent
+            Divider()
+            statusBar
         }
         .background(Color(nsColor: PaperTheme.canvas))
         .foregroundStyle(Color(nsColor: PaperTheme.ink))
@@ -27,32 +27,45 @@ struct DictationView: View {
 
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(Color(nsColor: controller.dictating ? PaperTheme.ink : PaperTheme.muted))
-                .frame(width: 10, height: 10)
-            Text("pa dictation")
-                .font(.system(.body, design: .monospaced).weight(.semibold))
-            Text(controller.status)
-                .font(.system(.body, design: .monospaced))
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(controller.debugMessage)
-                .font(.system(size: 14, design: .monospaced))
-                .foregroundStyle(.secondary)
+    private var statusBar: some View {
+        HStack(spacing: 12) {
+            Label(controller.status, systemImage: controller.dictating ? "record.circle.fill" : "pause.circle")
+                .fontWeight(.medium)
+                .accessibilityElement(children: .combine)
+            if !controller.statusDetail.isEmpty {
+                Text(controller.statusDetail)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(controller.statusDetail)
+            }
             if !controller.vocabularyNotice.isEmpty {
                 Text(controller.vocabularyNotice)
-                    .font(.system(size: 13, design: .monospaced).weight(.semibold))
-                    .foregroundStyle(Color(nsColor: PaperTheme.ink))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color(nsColor: PaperTheme.cream))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .fontWeight(.semibold)
             }
+            Spacer(minLength: 12)
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    controller.toggleShortcuts()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("?")
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .frame(width: 20, height: 20)
+                        .background(Color(nsColor: PaperTheme.cream))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    Text("Keyboard shortcuts")
+                }
+            }
+            .buttonStyle(.plain)
+            .help(controller.showingShortcuts ? "Press ? to hide keyboard shortcuts" : "Press ? to show keyboard shortcuts")
+            .accessibilityLabel("Keyboard shortcuts, question mark")
+            .accessibilityValue(controller.showingShortcuts ? "Shown" : "Hidden")
         }
+        .font(.system(size: 12))
         .padding(.horizontal, 16)
-        .frame(height: 48)
+        .frame(height: 34)
         .background(Color(nsColor: PaperTheme.paper))
     }
 
@@ -140,16 +153,6 @@ struct DictationView: View {
 
     private var controls: some View {
         HStack(spacing: 10) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.16)) {
-                    controller.toggleShortcuts()
-                }
-            } label: {
-                Label("Shortcuts", systemImage: "keyboard")
-            }
-            .help(controller.showingShortcuts ? "Hide keyboard shortcuts" : "Show keyboard shortcuts")
-            .accessibilityValue(controller.showingShortcuts ? "Shown" : "Hidden")
-
             Button {
                 controller.startDictation()
             } label: {

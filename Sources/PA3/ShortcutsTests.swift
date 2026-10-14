@@ -7,6 +7,24 @@ func runShortcutsTests() -> [String] {
         if !condition { failures.append("shortcuts: " + name) }
     }
     let controller = DictationController(transcriber: TranscriberService())
+    check(controller.status == "Dictation paused", "new window has a single paused status")
+    controller.dictating = true // Exercise display state without opening a microphone.
+    for message in ["Dictation active", "Transcribing...", "Whisper ready"] {
+        controller.serviceMessage = message
+        controller.debugMessage = message
+        check(controller.status == "Dictation active" && controller.statusDetail.isEmpty,
+              "recognition batches do not change status or add a duplicate label")
+        controller.handleTranscription(TranscriptionUpdate(text: "Words from the latest batch.", language: "english"))
+        check(controller.status == "Dictation active" && controller.statusDetail.isEmpty,
+              "new transcript text does not change status or display a character count")
+    }
+    controller.debugMessage = "Whisper failed to start"
+    check(controller.statusDetail == "Whisper failed to start", "service failures remain visible")
+    controller.dictating = false
+    controller.spellChecking = true
+    check(controller.status == "Checking spelling…", "spell checking has a clear status")
+    controller.spellChecking = false
+    controller.beginNewSession()
     var startRequests = 0
     controller.prepareModels = { startRequests += 1; return false }
     var hidden = false
@@ -26,6 +44,7 @@ func runShortcutsTests() -> [String] {
     controller.dictating = true // No microphone is opened by this test.
     press("?")
     check(controller.showingShortcuts && !controller.dictating, "question mark opens help and pauses")
+    check(controller.status == "Finishing transcription…", "stopping reports pending transcription immediately")
     controller.startDictation()
     press(" ", code: 49)
     press("R")
@@ -38,6 +57,8 @@ func runShortcutsTests() -> [String] {
         RunLoop.current.run(until: Date().addingTimeInterval(0.01))
     }
     check(controller.debugMessage == "Dictation stopped" && controller.text == "Keep these words.", "pause finishes and preserves pending text")
+    check(controller.status == "Dictation paused" && controller.statusDetail.isEmpty,
+          "completed stop shows a single steady paused status")
     press("?")
     check(!controller.showingShortcuts && startRequests == 1, "closing resumes previously active dictation")
     press(" ", code: 49)
