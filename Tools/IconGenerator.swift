@@ -20,7 +20,7 @@ let sizes: [(String, CGFloat)] = [
     ("icon_512x512@2x.png", 1024)
 ]
 
-let ink = color(0x292B29), skin = color(0xFAEEDD), paper = color(0xDDD7CA)
+let ink = color(0x191D1B), skin = color(0xFFF4E2), paper = color(0xC6BBA7)
 
 for (name, size) in sizes {
     let image = drawAppIcon(size: size)
@@ -28,8 +28,10 @@ for (name, size) in sizes {
 }
 
 try writePNG(drawMenuIcon(size: 36), to: resources.appendingPathComponent("MenuBarIcon.png"))
+try writePNG(drawAppIcon(size: 128), to: resources.appendingPathComponent("DictationPaused.png"))
+try writePNG(drawAppIcon(size: 128, background: color(0xC65A4A)), to: resources.appendingPathComponent("DictationActive.png"))
 
-func drawAppIcon(size: CGFloat) -> NSImage {
+func drawAppIcon(size: CGFloat, background: NSColor = paper) -> NSImage {
   // Explicit pixels avoid Retina backing-scale doubling the iconset sizes.
   let bitmap = NSBitmapImageRep(
     bitmapDataPlanes: nil, pixelsWide: Int(size), pixelsHigh: Int(size),
@@ -42,7 +44,7 @@ func drawAppIcon(size: CGFloat) -> NSImage {
   transform.translateX(by: size * 62 / 1024, yBy: size * 62 / 1024)
   transform.scale(by: size * 900 / (1024 * 460))
   transform.concat()
-  portrait()
+  portrait(background: background)
   let image = NSImage(size: NSSize(width: size, height: size))
   image.addRepresentation(bitmap)
   return image
@@ -77,9 +79,9 @@ func wave(x: CGFloat, y: CGFloat, size: CGFloat) {
   }
   line(pts, size * 0.073, ink)
 }
-func portrait() {
+func portrait(background: NSColor) {
   NSGraphicsContext.saveGraphicsState()
-  paper.setFill()
+  background.setFill()
   NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: 460, height: 460), xRadius: 90, yRadius: 90)
     .fill()
   oval(NSRect(x: 66, y: 160, width: 56, height: 90), skin)

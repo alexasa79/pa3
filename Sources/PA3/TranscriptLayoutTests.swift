@@ -123,6 +123,26 @@ func runTranscriptLayoutTests() -> [String] {
     }
 
     if CommandLine.arguments.contains("--transcript-layout-test") {
+        if let active = DictationStatusIcon.image(active: true),
+           let paused = DictationStatusIcon.image(active: false),
+           let activeData = active.tiffRepresentation, let pausedData = paused.tiffRepresentation,
+           let activeBitmap = NSBitmapImageRep(data: activeData),
+           let pausedBitmap = NSBitmapImageRep(data: pausedData) {
+            check(active.size == paused.size && active.size == NSSize(width: 128, height: 128),
+                  "both dictation icon resources have the same dimensions")
+            let x = activeBitmap.pixelsWide / 8, y = activeBitmap.pixelsHigh / 2
+            let activeColor = activeBitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
+            let pausedColor = pausedBitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
+            check(activeColor != nil && pausedColor != nil && activeColor != pausedColor,
+                  "active and paused icons have distinct background colors")
+            check((activeColor?.redComponent ?? 0) > (activeColor?.greenComponent ?? 1) * 1.5,
+                  "active icon background is red")
+            check(activeBitmap.colorAt(x: activeBitmap.pixelsWide / 2, y: y) ==
+                  pausedBitmap.colorAt(x: pausedBitmap.pixelsWide / 2, y: y),
+                  "changing dictation state preserves the portrait")
+        } else {
+            check(false, "both dictation icon resources load successfully")
+        }
         let previewWords = (Array(repeating: "The active transcript should have a clear gap between wrapped lines.", count: 3).joined(separator: " ")
             + "\n" + Array(repeating: "שלום עולם זה טקסט בעברית עם מילים רבות", count: 3).joined(separator: " ")).components(separatedBy: "\n")
         var previewTokens: [TranscriptToken] = []
@@ -183,6 +203,14 @@ func runTranscriptLayoutTests() -> [String] {
             host.cacheDisplay(in: host.bounds, to: bitmap)
             try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/pa3-rtl-window.png"))
         }
+        controller.dictating = true // Preview without opening a microphone.
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        host.layoutSubtreeIfNeeded()
+        if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/pa3-dictation-active-preview.png"))
+        }
+        controller.dictating = false
         controller.toggleShortcuts()
         RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         host.layoutSubtreeIfNeeded()

@@ -6,6 +6,8 @@ struct DictationView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            header
+            Divider()
             controls
             Divider()
             mainContent
@@ -27,11 +29,26 @@ struct DictationView: View {
 
     }
 
+    private var header: some View {
+        HStack(spacing: 10) {
+            if let icon = DictationStatusIcon.image(active: controller.dictating) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 44, height: 44)
+                    .accessibilityHidden(true)
+            }
+            Text(controller.status)
+                .font(.system(size: 14, weight: .semibold))
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 60)
+        .background(Color(nsColor: PaperTheme.paper))
+    }
+
     private var statusBar: some View {
         HStack(spacing: 12) {
-            Label(controller.status, systemImage: controller.dictating ? "record.circle.fill" : "pause.circle")
-                .fontWeight(.medium)
-                .accessibilityElement(children: .combine)
             if !controller.statusDetail.isEmpty {
                 Text(controller.statusDetail)
                     .foregroundStyle(.secondary)
@@ -253,6 +270,23 @@ struct DictationView: View {
     }
 
 
+}
+
+@MainActor
+enum DictationStatusIcon {
+    private static let active = load("DictationActive")
+    private static let paused = load("DictationPaused")
+
+    static func image(active isActive: Bool) -> NSImage? {
+        isActive ? active : paused
+    }
+
+    private static func load(_ name: String) -> NSImage? {
+        let url = appResourceDirectory().appendingPathComponent("\(name).png")
+        let image = NSImage(contentsOf: url)
+        if image == nil { Logger.error("Missing dictation status icon: \(url.path)") }
+        return image
+    }
 }
 
 private struct ShortcutRow {

@@ -117,6 +117,8 @@ app: build icons speech-tools-check codesign-identity
 	cp Info.plist "$(CONTENTS)/Info.plist"
 	cp "$(ASSETS)/AppIcon.icns" "$(RESOURCES)/AppIcon.icns"
 	cp "$(ASSETS)/MenuBarIcon.png" "$(RESOURCES)/MenuBarIcon.png"
+	cp "$(ASSETS)/DictationActive.png" "$(RESOURCES)/DictationActive.png"
+	cp "$(ASSETS)/DictationPaused.png" "$(RESOURCES)/DictationPaused.png"
 	mkdir -p "$(RESOURCES)/narration"
 	cp Resources/Narration/timing.py "$(RESOURCES)/narration/"
 	cp -R Resources/Voices "$(RESOURCES)/tts-voices"
