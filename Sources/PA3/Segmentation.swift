@@ -22,13 +22,12 @@ struct SegmentationConfig {
     var searchWindow = 0.5
     /// Shortest pause that counts as a gap between sentences.
     var minQuiet = 0.15
-    /// Silence kept at the end of the buffer. Anything beyond it is dropped as it arrives.
-    var maxTrailingSilence = 1.0
     /// Time between the starts of two rounds. A round that runs longer than this delays the next one.
     var minRequestInterval = 1.0
-    /// Duration limit, with headroom below Whisper's 30-second window.
+    /// Trimming target; a short margin allows a verified boundary beyond it.
     static let contextSecondsRange = 5...28
     var maxBuffer = Double(SegmentationConfig.contextSecondsRange.upperBound)
+    var requestLimit: Double { min(29.5, maxBuffer + 1.5) }
     /// Frame size for energy measurement.
     var frameSeconds = 0.01
     /// Speech threshold is the noise floor times this factor, clamped to the range below.
@@ -40,13 +39,13 @@ struct SegmentationConfig {
 }
 
 struct SegmentCut: Equatable {
-    /// Where to trim the buffer, in seconds from its start. Always inside a pause.
+    /// Proposed trim point in seconds from the buffer start; no-pause fallbacks require validation.
     let time: Double
     let committed: [String]
     let pending: [String]
     let reason: String
-    /// True when the words were assigned by timestamp. Those are unreliable near pauses, so the caller
-    /// should transcribe the audio before the cut on its own and use that text instead of `committed`.
+    /// True for a duration-limit proposal whose initial word division uses timestamps.
+    /// All proposals require contextual verification before committing text.
     var timeBased = false
 }
 
@@ -186,7 +185,7 @@ func chooseCut(tokens: [TimedToken], quiet: [QuietRun], duration: Double, config
     // One frame of headroom puts the retained clip strictly below the limit.
     let minimumCut = duration - config.maxBuffer + config.frameSeconds
     guard minimumCut > 0, minimumCut < duration else { return nil }
-    if let cut = sentenceCut(tokens: tokens, quiet: quiet, minimumCut: minimumCut, duration: duration, config: config) {
+    if let cut = sentenceCuts(tokens: tokens, quiet: quiet, minimumCut: minimumCut, duration: duration, config: config).first {
         return cut
     }
 
@@ -202,8 +201,8 @@ func chooseCut(tokens: [TimedToken], quiet: [QuietRun], duration: Double, config
     return cutAtTime(minimumCut, tokens: tokens, reason: "window cap, no pause")
 }
 
-private func sentenceCut(tokens: [TimedToken], quiet: [QuietRun], minimumCut: Double, duration: Double, config: SegmentationConfig) -> SegmentCut? {
-    var best: SegmentCut?
+func sentenceCuts(tokens: [TimedToken], quiet: [QuietRun], minimumCut: Double, duration: Double, config: SegmentationConfig) -> [SegmentCut] {
+    var cuts: [SegmentCut] = []
     for index in trustedSentenceEnds(tokens) {
         // Associate each sentence with the pause nearest the next word's start.
         // Do not select a different, later pause merely to meet the duration limit.
@@ -217,15 +216,14 @@ private func sentenceCut(tokens: [TimedToken], quiet: [QuietRun], minimumCut: Do
         let finish = min(high, run.end)
         let time = max(minimumCut, (start + finish) / 2)
         guard time >= start, time < finish, time < duration else { continue }
-        if let best, best.time <= time { continue }
-        best = SegmentCut(
+        cuts.append(SegmentCut(
             time: time,
             committed: tokens[...index].map(\.text),
             pending: tokens[(index + 1)...].map(\.text),
             reason: "sentence"
-        )
+        ))
     }
-    return best
+    return cuts.sorted { $0.time < $1.time }
 }
 
 /// Splits by word start: a word that began before the cut was spoken before it, however far Whisper stretched its end.
@@ -235,28 +233,120 @@ private func cutAtTime(_ time: Double, tokens: [TimedToken], reason: String) -> 
     return SegmentCut(time: time, committed: committed, pending: pending, reason: reason, timeBased: true)
 }
 
-/// Checks a proposed cut against a transcription of the audio before it.
-/// Time based cuts accept whatever lies before the pause. Sentence cuts must find the expected sentence there,
-/// possibly followed by more complete sentences when the pause chosen was a later one.
-/// Returns nil when the audio before the cut does not hold the expected words.
-func confirmCut(_ cut: SegmentCut, headTokens: [String], allTokens: [String]) -> SegmentCut? {
-    if cut.timeBased {
-        return SegmentCut(time: cut.time, committed: headTokens, pending: cut.pending, reason: cut.reason, timeBased: true)
+/// Match the opening of the actual retained recording to the full-window text.
+/// Word times only constrain the search; the retained words decide which side owns
+/// a word. This prevents committing a quiet "The" that is still in retained audio.
+func confirmRetainedCut(_ cut: SegmentCut, tokens: [TimedToken], retainedWords: [String], headIsQuiet: Bool) -> SegmentCut? {
+    let retained = normalizedWords(retainedWords.joined(separator: " "))
+    guard retained.count >= 3 else { return nil }
+    let anchor = Array(retained.prefix(3))
+    let matches = tokens.indices.filter { index in
+        guard abs(tokens[index].start - cut.time) <= 1.0,
+              tokens.count - index >= 3 else { return false }
+        return normalizedWords(tokens[index..<(index + 3)].map(\.text).joined(separator: " ")) == anchor
     }
-    let expected = normalizedWords(cut.committed.joined(separator: " "))
-    let head = normalizedWords(headTokens.joined(separator: " "))
-    guard head.count >= expected.count, !expected.isEmpty else { return nil }
-    var mismatches = 0
-    for (a, b) in zip(head, expected) where a != b {
-        mismatches += 1
+    guard matches.count == 1, let index = matches.first,
+          !headIsQuiet || index == 0 else { return nil }
+    // A retained match may move the split; it must still own the sentence stop.
+    if cut.reason == "sentence", index == 0 || !endsSentence(tokens[index - 1].text) { return nil }
+    return SegmentCut(time: cut.time, committed: tokens[..<index].map(\.text),
+                      pending: tokens[index...].map(\.text), reason: cut.reason + " (retained verified)", timeBased: cut.timeBased)
+}
+
+/// A long pause can separate complete speech from a barely started next utterance.
+/// Verify the spoken head against the full-window prefix; invented standalone text
+/// (such as Thank you from a quiet scrap) cannot pass this comparison.
+func confirmPauseHead(_ cut: SegmentCut, tokens: [TimedToken], headWords: [String]) -> SegmentCut? {
+    let head = normalizedWords(headWords.joined(separator: " "))
+    let full = normalizedWords(tokens.map(\.text).joined(separator: " "))
+    guard !head.isEmpty, head.count <= full.count,
+          head == Array(full.prefix(head.count)) else { return nil }
+    return SegmentCut(time: cut.time, committed: tokens.prefix(head.count).map(\.text),
+                      pending: tokens.dropFirst(head.count).map(\.text), reason: "long pause (prefix verified)")
+}
+
+/// Temporal activity gate: a transient cannot establish a spoken utterance.
+/// Carry partial frames across capture callbacks and preserve the onset position
+/// so callers can retain pre-roll instead of clipping the first word.
+struct SpeechActivityGate {
+    private var partial: [Float] = []
+    private var cursor = 0
+    private var recentVoiced: [Int] = []
+    private var consecutive = 0
+    private var active = false
+    private(set) var speechEnd: Int?
+    private(set) var utteranceStart: Int?
+    private(set) var firstSpeechStart: Int?
+    private(set) var receivedSamples = 0
+
+    mutating func append(_ samples: [Float], sampleRate: Int, threshold: Float) {
+        receivedSamples += samples.count
+        partial.append(contentsOf: samples)
+        let frameSize = max(1, sampleRate / 100)
+        var used = 0
+        while partial.count - used >= frameSize {
+            let end = cursor + frameSize
+            if active, let speechEnd, cursor - speechEnd >= sampleRate {
+                active = false
+                recentVoiced.removeAll(keepingCapacity: true)
+                consecutive = 0
+            }
+            var sum: Float = 0
+            for index in used..<(used + frameSize) { sum += partial[index] * partial[index] }
+            let voiced = (sum / Float(frameSize)).squareRoot() >= threshold
+            recentVoiced.removeAll { $0 < end - sampleRate / 5 }
+            if voiced {
+                recentVoiced.append(cursor)
+                consecutive += 1
+            } else {
+                consecutive = 0
+            }
+            if !active, recentVoiced.count >= 8, consecutive >= 3 {
+                active = true
+                utteranceStart = recentVoiced.first
+                if firstSpeechStart == nil { firstSpeechStart = utteranceStart }
+            }
+            if active, voiced { speechEnd = end }
+            cursor = end
+            used += frameSize
+        }
+        if used > 0 { partial.removeFirst(used) }
     }
-    guard mismatches <= max(1, expected.count / 10) else { return nil }
-    if head.count == expected.count {
-        return cut
+
+    func readyForRecognition(sampleRate: Int) -> Bool {
+        guard let speechEnd, let utteranceStart else { return false }
+        // Allow a genuinely short word after it ends, while giving ongoing speech
+        // enough context before its first recognition.
+        return receivedSamples - utteranceStart >= Int(0.8 * Double(sampleRate))
+            || receivedSamples - speechEnd >= sampleRate / 2
     }
-    // The pause was after more sentences than expected. Everything before it is spoken and complete, so commit it all.
-    let pending = Array(allTokens.dropFirst(min(allTokens.count, headTokens.count)))
-    return SegmentCut(time: cut.time, committed: headTokens, pending: pending, reason: cut.reason + " (extended)")
+}
+
+/// A hard-bounded recognition window. Trim trailing quiet audio only in the request;
+/// the worker retains the original timeline until it actually consumes the samples.
+struct RecognitionWindow {
+    let samples: [Float]
+    let speechEnd: Int
+    let speechStart: Int
+    let threshold: Float
+    let inspectedSamples: Int
+}
+
+func recognitionWindow(samples: [Float], sampleRate: Int, config: SegmentationConfig, padding: Double) -> RecognitionWindow {
+    let limit = max(1, Int((config.requestLimit - padding) * Double(sampleRate)))
+    let inspected = Array(samples.prefix(limit))
+    let energies = frameEnergies(samples: inspected, sampleRate: sampleRate, frameSeconds: config.frameSeconds)
+    let threshold = speechThreshold(energies: energies, config: config)
+    var activity = SpeechActivityGate()
+    // The adaptive quiet-cut threshold must not discard activity already admitted
+    // by the streaming gate, especially continuous quiet speech.
+    activity.append(inspected, sampleRate: sampleRate, threshold: config.minThreshold)
+    guard let end = activity.speechEnd else {
+        return RecognitionWindow(samples: [], speechEnd: 0, speechStart: 0, threshold: threshold, inspectedSamples: inspected.count)
+    }
+    let requestEnd = min(inspected.count, end + sampleRate / 5)
+    return RecognitionWindow(samples: Array(inspected.prefix(requestEnd)), speechEnd: end, speechStart: activity.firstSpeechStart ?? 0,
+                             threshold: threshold, inspectedSamples: inspected.count)
 }
 
 /// Converts a stream of mono samples at whatever rate the microphone delivers to a fixed output rate.
@@ -303,4 +393,11 @@ final class Resampler: @unchecked Sendable {
         }
         return output
     }
+}
+
+/// Restore only a case-only change at an already recognized continuation.
+/// The contextual spelling also preserves names, acronyms and the pronoun I.
+func continuationOpening(_ word: String, contextual: String?) -> String {
+    guard let contextual, word.lowercased() == contextual.lowercased() else { return word }
+    return contextual
 }

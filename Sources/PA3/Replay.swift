@@ -16,6 +16,8 @@ enum Replay {
         var referenceDiff: String
         var oneShotDiff: String
         var seconds: Double
+        var requestCount: Int
+        var longestRequest: Double
     }
 
     /// Audio duration limit during replay. Set with `--context-seconds N`.
@@ -104,12 +106,18 @@ enum Replay {
             let lock = NSLock()
             var cuts: [(time: Double, cut: SegmentCut)] = []
             var latest = ""
+            var requests: [Double] = []
         }
         let collector = Collector()
         transcriber.setContextSeconds(contextSeconds)
         transcriber.cutHandler = { time, cut in
             collector.lock.lock()
             collector.cuts.append((time, cut))
+            collector.lock.unlock()
+        }
+        transcriber.recognitionHandler = { duration in
+            collector.lock.lock()
+            collector.requests.append(duration)
             collector.lock.unlock()
         }
         let started = Date()
@@ -119,6 +127,7 @@ enum Replay {
             collector.lock.unlock()
         }
         transcriber.cutHandler = nil
+        transcriber.recognitionHandler = nil
         let elapsed = Date().timeIntervalSince(started)
         let final = transcriber.currentText()
         let text = joinText(final.stable, final.pending).text
@@ -128,6 +137,7 @@ enum Replay {
         let threshold = speechThreshold(energies: energies, config: config)
         var cutProblems: [String] = []
         for (time, cut) in collector.cuts {
+            if cut.reason.hasPrefix("continuous speech") { continue }
             let center = Int(time / config.frameSeconds)
             let span = Int(0.05 / config.frameSeconds)
             let window = energies[max(0, center - span)..<min(energies.count, center + span + 1)]
@@ -136,8 +146,17 @@ enum Replay {
             }
         }
 
+        let longestRequest = collector.requests.max() ?? 0
+        if collector.requests.contains(where: { $0 < 1.0 - 0.0001 }) {
+            cutProblems.append("live recognition request below one-second minimum")
+        }
+        var replayConfig = config
+        replayConfig.maxBuffer = Double(contextSeconds)
+        if longestRequest > replayConfig.requestLimit + 0.0001 {
+            cutProblems.append("request exceeded safety ceiling: \(longestRequest)s > \(replayConfig.requestLimit)s")
+        }
         var outcome = Outcome(name: wav.lastPathComponent, text: text, cuts: collector.cuts, cutProblems: cutProblems,
-                              referenceWER: nil, oneShotWER: nil, referenceDiff: "", oneShotDiff: "", seconds: elapsed)
+                              referenceWER: nil, oneShotWER: nil, referenceDiff: "", oneShotDiff: "", seconds: elapsed, requestCount: collector.requests.count, longestRequest: longestRequest)
         let hypothesis = normalizedWords(text)
         if let reference {
             let diff = wordDiff(reference: normalizedWords(reference), hypothesis: hypothesis)
@@ -145,7 +164,9 @@ enum Replay {
             outcome.referenceDiff = diff.summary
         }
         let duration = Double(audio.samples.count) / Double(audio.sampleRate)
-        if duration <= 30 {
+        var activity = SpeechActivityGate()
+        activity.append(audio.samples, sampleRate: audio.sampleRate, threshold: config.minThreshold)
+        if duration <= 30, activity.speechEnd != nil, reference == nil {
             let oneShot = transcriber.debugTranscribeWAV(WAVEncoder.encode(samples: audio.samples, sampleRate: audio.sampleRate))
             let diff = wordDiff(reference: normalizedWords(oneShot), hypothesis: hypothesis)
             outcome.oneShotWER = diff.rate
@@ -165,7 +186,7 @@ enum Replay {
         var line = "\(outcome.name): cuts=\(outcome.cuts.count)"
         if let wer = outcome.referenceWER { line += String(format: " wer(ref)=%.3f", wer) }
         if let wer = outcome.oneShotWER { line += String(format: " wer(one-shot)=%.3f", wer) }
-        line += String(format: " time=%.1fs", outcome.seconds)
+        line += String(format: " time=%.1fs requests=%d max-request=%.3fs", outcome.seconds, outcome.requestCount, outcome.longestRequest)
         line += outcome.cutProblems.isEmpty ? "" : " cut-problems=\(outcome.cutProblems.count)"
         print(line)
         guard verbose else { return }

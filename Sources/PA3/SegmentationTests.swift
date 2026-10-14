@@ -12,6 +12,26 @@ func runSegmentationTests() -> [String] {
     let config = SegmentationConfig.default
     let rate = 16_000
 
+    // A continuation retains contextual casing without lowercasing proper nouns.
+    do {
+        check("restore lowercase continuation", continuationOpening("Turning", contextual: "turning") == "turning")
+        for word in ["I", "Whisper", "PA3", "Chakri", "Москва"] {
+            check("preserve contextual spelling \(word)", continuationOpening(word.lowercased(), contextual: word) == word)
+        }
+        check("changed recognition is not rewritten", continuationOpening("Inside", contextual: "in") == "Inside")
+        check("sentence opening has no casing override", continuationOpening("Turning", contextual: nil) == "Turning")
+        let tokens = [TimedToken(text: "sentence.", start: 0, end: 0.8),
+                      TimedToken(text: "in", start: 1, end: 1.2),
+                      TimedToken(text: "the", start: 1.2, end: 1.4),
+                      TimedToken(text: "middle", start: 1.4, end: 1.6),
+                      TimedToken(text: "of", start: 1.6, end: 1.8)]
+        let candidate = SegmentCut(time: 1.1, committed: [], pending: [], reason: "sentence")
+        check("sentence verification rejects shifted mid-sentence ownership",
+              confirmRetainedCut(candidate, tokens: tokens, retainedWords: ["the", "middle", "of"], headIsQuiet: false) == nil)
+        check("sentence verification accepts actual sentence ownership",
+              confirmRetainedCut(candidate, tokens: tokens, retainedWords: ["In", "the", "middle"], headIsQuiet: false)?.committed == ["sentence."])
+    }
+
     // timedTokens
     do {
         let transcription = WhisperTranscription(task: nil, language: nil, duration: nil, text: "", segments: [
@@ -32,6 +52,8 @@ func runSegmentationTests() -> [String] {
             TimedToken(text: "Again", start: 1.4, end: 1.9)
         ]
         check("timedTokens joins pieces and keeps the last end time", approxEqual(tokens, expected), "got \(tokens)")
+        let overlap = timedTokens(transcription, offset: -5.9)
+        check("local overlap timestamps map back to the full buffer", abs(overlap[0].start - 6.0) < 0.0001 && abs(overlap[1].end - 6.9) < 0.0001)
     }
 
     // quietRuns on a synthetic signal: tone, gap, tone, with light noise everywhere.
@@ -76,6 +98,19 @@ func runSegmentationTests() -> [String] {
         check("sentence cut commits the sentence", cut?.committed == ["Hello", "world."], "got \(String(describing: cut))")
         check("sentence cut keeps the rest pending", cut?.pending == ["How", "are"], "got \(String(describing: cut))")
         check("sentence cut reason", cut?.reason == "sentence")
+    }
+
+    // Interior pauses do not outrank complete sentences; keep later candidates
+    // available when the first sentence's acoustic verification fails.
+    do {
+        let tokens = [TimedToken(text: "word", start: 0.1, end: 0.4),
+                      TimedToken(text: "continues.", start: 2, end: 2.5),
+                      TimedToken(text: "Next", start: 3, end: 3.5),
+                      TimedToken(text: "sentence.", start: 4, end: 4.5),
+                      TimedToken(text: "More", start: 5, end: 5.3)]
+        let quiet = [QuietRun(start: 0.5, end: 1.8), QuietRun(start: 2.6, end: 2.9), QuietRun(start: 4.6, end: 4.9)]
+        let candidates = sentenceCuts(tokens: tokens, quiet: quiet, minimumCut: 0.5, duration: 6, config: config)
+        check("all sentence boundaries precede pause fallback", candidates.map(\.committed) == [["word", "continues."], ["word", "continues.", "Next", "sentence."]])
     }
 
     // chooseCut: two pauses near the sentence end, the right one ends where the next word starts
@@ -170,7 +205,6 @@ func runSegmentationTests() -> [String] {
         let cut = chooseCut(tokens: tokens, quiet: quiet, duration: 28.03, config: config)
         check("first sentence is enough to get below limit", cut?.committed == ["First."] && cut?.pending == ["Second?", "Third?"], "got \(String(describing: cut))")
         check("cut is in first sentence pause", cut != nil && cut!.time > 8.1 && cut!.time < 8.5)
-        check("confirmed first sentence preserves the remaining sentences", cut != nil && confirmCut(cut!, headTokens: ["First."], allTokens: tokens.map(\.text)) == cut)
         let oversized = chooseCut(tokens: tokens, quiet: quiet, duration: 40.0, config: config)
         check("skip an early boundary if it removes too little", oversized?.committed == ["First.", "Second?"] && oversized?.pending == ["Third?"], "got \(String(describing: oversized))")
         var shorter = config
@@ -204,18 +238,80 @@ func runSegmentationTests() -> [String] {
         check("resampler passes matching rate through after a rate change", passthrough == [0.5, 0.25], "got \(passthrough)")
     }
 
-    // confirmCut
+    // Actual retained audio decides the word division, even when timestamps disagree.
     do {
-        let sentence = SegmentCut(time: 1.3, committed: ["How", "does", "it", "work?"], pending: ["What", "does"], reason: "sentence")
-        check("confirmCut accepts a matching head", confirmCut(sentence, headTokens: ["How", "does", "it", "work?"], allTokens: []) == sentence)
-        check("confirmCut tolerates one changed word", confirmCut(sentence, headTokens: ["How", "does", "it", "walk?"], allTokens: [])?.committed == sentence.committed)
-        check("confirmCut rejects a short head", confirmCut(sentence, headTokens: ["How", "does"], allTokens: []) == nil)
-        check("confirmCut rejects different words", confirmCut(sentence, headTokens: ["Walk", "me", "through", "it."], allTokens: []) == nil)
-        let all = ["How", "does", "it", "work?", "What", "does", "it", "do?", "Et", "cetera."]
-        let extended = confirmCut(sentence, headTokens: ["How", "does", "it", "work?", "What", "does", "it", "do?"], allTokens: all)
-        check("confirmCut extends over later sentences", extended?.committed == Array(all.prefix(8)) && extended?.pending == ["Et", "cetera."], "got \(String(describing: extended))")
-        let timed = SegmentCut(time: 2.0, committed: ["the", "new"], pending: ["and"], reason: "window cap", timeBased: true)
-        check("confirmCut takes the head for time based cuts", confirmCut(timed, headTokens: ["the", "new", "card."], allTokens: [])?.committed == ["the", "new", "card."])
+        let tokens = [TimedToken(text: "schedule.", start: 0.5, end: 1.1),
+                      TimedToken(text: "The", start: 1.6, end: 2.3),
+                      TimedToken(text: "slowdown", start: 2.5, end: 2.9),
+                      TimedToken(text: "is", start: 3.0, end: 3.2),
+                      TimedToken(text: "gone", start: 3.3, end: 3.6)]
+        let boundary = SegmentCut(time: 2, committed: [], pending: [], reason: "sentence")
+        let retained = confirmRetainedCut(boundary, tokens: tokens, retainedWords: ["The", "slowdown", "is", "gone"], headIsQuiet: false)
+        check("The stays with actual retained audio", retained?.committed == ["schedule."] && retained?.pending == ["The", "slowdown", "is", "gone"])
+        check("reject invented retained words", confirmRetainedCut(boundary, tokens: tokens, retainedWords: ["Thank", "you", "everyone"], headIsQuiet: false) == nil)
+        check("reject too short retained recognition", confirmRetainedCut(boundary, tokens: tokens, retainedWords: ["The", "slowdown"], headIsQuiet: false) == nil)
+        check("quiet head cannot commit speech", confirmRetainedCut(boundary, tokens: tokens, retainedWords: ["The", "slowdown", "is"], headIsQuiet: true) == nil)
+        let repeated = [TimedToken(text: "very", start: 0.5, end: 0.9),
+                        TimedToken(text: "very", start: 2.2, end: 2.5),
+                        TimedToken(text: "good", start: 2.6, end: 2.9),
+                        TimedToken(text: "indeed", start: 3, end: 3.3)]
+        let repetitionBoundary = SegmentCut(time: 2, committed: [], pending: [], reason: "alternate pause", timeBased: true)
+        let repetition = confirmRetainedCut(repetitionBoundary, tokens: repeated, retainedWords: ["very", "good", "indeed"], headIsQuiet: false)
+        check("preserve genuine repetition across boundary", repetition?.committed == ["very"] && repetition?.pending == ["very", "good", "indeed"])
+        let ambiguous = (0..<6).map { TimedToken(text: "yes", start: 1.5 + Double($0) * 0.1, end: 2.2) }
+        check("reject ambiguous repeated anchor", confirmRetainedCut(boundary, tokens: ambiguous, retainedWords: ["yes", "yes", "yes"], headIsQuiet: false) == nil)
+        let thanks = [TimedToken(text: "Thank", start: 0.5, end: 0.7), TimedToken(text: "you.", start: 0.8, end: 1.1)] + Array(tokens.dropFirst(1))
+        let spoken = confirmRetainedCut(boundary, tokens: thanks, retainedWords: ["The", "slowdown", "is"], headIsQuiet: false)
+        check("preserve genuinely spoken Thank you", spoken?.committed == ["Thank", "you."])
+    }
+
+    // A long pause before an incomplete next word must not stall a capped window.
+    do {
+        let tokens = [TimedToken(text: "Call", start: 0.1, end: 0.4), TimedToken(text: "the", start: 0.5, end: 0.7), TimedToken(text: "bank.", start: 0.8, end: 1.2)]
+        let boundary = SegmentCut(time: 2, committed: [], pending: [], reason: "long pause")
+        check("verify complete head before long pause", confirmPauseHead(boundary, tokens: tokens, headWords: ["Call", "the", "bank."])?.committed == tokens.map(\.text))
+        check("reject invented standalone head text", confirmPauseHead(boundary, tokens: tokens, headWords: ["Thank", "you."]) == nil)
+        check("reject head text beyond the known prefix", confirmPauseHead(boundary, tokens: tokens, headWords: ["Call", "the", "bank", "again"]) == nil)
+    }
+
+    // Startup impulses do not open the gate; brief real words and chunk boundaries do.
+    do {
+        var transient = synthesize(rate: rate, parts: [(0.45, false), (0.01, true), (1.5, false)])
+        var activity = SpeechActivityGate()
+        activity.append(transient, sampleRate: rate, threshold: config.minThreshold)
+        check("one loud frame is not speech", activity.speechEnd == nil)
+        check("startup impulse produces no recognition window", recognitionWindow(samples: transient, sampleRate: rate, config: config, padding: 0.1).samples.isEmpty)
+        transient = synthesize(rate: rate, parts: [(0.45, false), (0.12, true), (1.5, false)])
+        var chunked = SpeechActivityGate()
+        for start in stride(from: 0, to: transient.count, by: 171) {
+            chunked.append(Array(transient[start..<min(transient.count, start + 171)]), sampleRate: rate, threshold: config.minThreshold)
+        }
+        check("short utterance survives arbitrary capture chunks", chunked.speechEnd != nil)
+        check("pre-roll can preserve the first phoneme", abs(Double(chunked.firstSpeechStart ?? 0) / Double(rate) - 0.45) < 0.02)
+        check("a completed short word becomes ready", chunked.readyForRecognition(sampleRate: rate))
+        var beginning = SpeechActivityGate()
+        beginning.append(synthesize(rate: rate, parts: [(0.12, true)]), sampleRate: rate, threshold: config.minThreshold)
+        check("partial opening speech waits for context", !beginning.readyForRecognition(sampleRate: rate))
+        let quietContinuous = synthesize(rate: rate, parts: [(2, true)]).map { $0 * 0.02 }
+        check("quiet continuous activity is not discarded by a higher adaptive cut threshold", !recognitionWindow(samples: quietContinuous, sampleRate: rate, config: config, padding: 0.1).samples.isEmpty)
+        check("trimming target has bounded margin", config.requestLimit == 29.5)
+    }
+
+    // Request caps include padding; long trailing silence is excluded without changing source offsets.
+    do {
+        let samples = synthesize(rate: rate, parts: [(2, true), (65, false)])
+        let window = recognitionWindow(samples: samples, sampleRate: rate, config: config, padding: 0.1)
+        check("trim quiet tail from request", window.samples.count <= Int(2.21 * Double(rate)))
+        check("speech end remains in source coordinates", abs(Double(window.speechEnd) / Double(rate) - 2) < 0.02)
+        let speech = synthesize(rate: rate, parts: [(65, true)])
+        for seconds in [5, 10, 28] {
+            var capped = config
+            capped.maxBuffer = Double(seconds)
+            let bounded = recognitionWindow(samples: speech, sampleRate: rate, config: capped, padding: 0.1)
+            check("safety ceiling includes padding for \(seconds)s target", Double(bounded.samples.count) / Double(rate) + 0.1 <= capped.requestLimit + 0.0001)
+        }
+        let silence = recognitionWindow(samples: synthesize(rate: rate, parts: [(65, false)]), sampleRate: rate, config: config, padding: 0.1)
+        check("silence produces no recognition input", silence.samples.isEmpty && silence.speechEnd == 0)
     }
 
     return failures
