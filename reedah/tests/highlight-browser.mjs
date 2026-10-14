@@ -1,6 +1,29 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 export async function checkHighlights(call) {
+  const superscripts=await call('Runtime.evaluate',{expression:`(() => {
+    const p=document.createElement('p');
+    p.innerHTML='Rust is a good fit<sup><a href="#note">6</a></sup>. Next sentence <sup>two <em>words</em></sup> stays. Ordinary 6 stays; x<sup>2</sup>.';
+    document.body.appendChild(p);
+    const original=p.innerHTML, text=candidateTest.getFullText(p);
+    const start=text.indexOf('Next'),end=text.indexOf(' Ordinary');
+    candidateTest.highlightSentence(p,{start,end});
+    candidateTest.applyHighlightWordFocus(0,{start:0,end:4});
+    const result={text,
+      highlighted:[...p.querySelectorAll('.reedah-highlight')].map(s=>s.textContent).join(''),
+      focused:[...p.querySelectorAll('.reedah-highlight-word-focus')].map(s=>s.textContent).join('').trim(),
+      referenceUnchanged:p.querySelector('sup').innerHTML==='<a href="#note">6</a>'};
+    candidateTest.clearHighlight();
+    result.restored=p.innerHTML===original;
+    p.remove();
+    return result;
+  })()`,returnByValue:true});
+  assert.ok(!superscripts.exceptionDetails,JSON.stringify(superscripts.exceptionDetails));
+  assert.deepEqual(superscripts.result.value,{
+    text:'Rust is a good fit. Next sentence two words stays. Ordinary 6 stays; x.',
+    highlighted:'Next sentence two words stays.',focused:'Next',referenceUnchanged:true,restored:true
+  });
+  console.log('PASS: single-token superscripts omitted, longer prose retained, subsequent highlights aligned and DOM restored.');
   const css=await readFile(new URL('../content.css',import.meta.url),'utf8');
   const result=await call('Runtime.evaluate',{expression:`(() => {
     const style=document.createElement('style');style.textContent=${JSON.stringify(css)}+' .reedah-highlight-word { transition: none; }';document.head.appendChild(style);

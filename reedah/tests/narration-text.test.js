@@ -1,6 +1,16 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { normalizeNarrationText, maskParentheses, isParenthesizedCodeReference } = require("../narration_text");
+const { normalizeNarrationText, maskParentheses, isParenthesizedCodeReference, shouldSkipSuperscript } = require("../narration_text");
+
+test("superscripts omit one token regardless of its length or punctuation", () => {
+  for (const value of ["6", "123", "[6]", "*", "word", "longreference", "²", " 6\n", "\u00a06\u00a0"])
+    assert.equal(shouldSkipSuperscript(value), true, JSON.stringify(value));
+});
+
+test("superscripts preserve multiple words, including Unicode whitespace", () => {
+  for (const value of ["two words", " two\nwords ", "two\twords", "two\u00a0words", "", "   "])
+    assert.equal(shouldSkipSuperscript(value), false, JSON.stringify(value));
+});
 
 function joinChunks(chunks) {
   let text = "";

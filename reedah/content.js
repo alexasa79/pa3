@@ -980,6 +980,9 @@
         }
         if (node.nodeType !== Node.ELEMENT_NODE || node.matches(mathNarration.METADATA_SELECTOR)) continue;
         if (editorRoot && editorNarration.isExcluded(node,editorRoot)) continue;
+        // Omit short superscript references before building narration/highlight
+        // offsets. Longer superscript prose remains part of the paragraph.
+        if (node.tagName === "SUP" && narrationText.shouldSkipSuperscript(node.textContent)) continue;
         if (!editorRoot && node !== el && !node.matches(mathNarration.ROOT_SELECTOR) && (window.ReedahProseParagraphs.isHidden(node) ||
             node.matches('script, style, template, button, input, textarea, select'))) continue;
         if (node.tagName === "BR") {

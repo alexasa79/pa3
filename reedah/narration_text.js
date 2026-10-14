@@ -32,8 +32,13 @@
     return value.replace(/[\r\n]/g, " ");
   }
 
+  function shouldSkipSuperscript(value) {
+    return typeof value === "string" && /^\S+$/.test(value.trim());
+  }
+
   const api = {
     normalizeNarrationText,
+    shouldSkipSuperscript,
     maskParentheses,
     isParenthesizedCodeReference
   };
