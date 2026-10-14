@@ -148,7 +148,10 @@ func runTranscriptLayoutTests() -> [String] {
 
     if CommandLine.arguments.contains("--transcript-layout-test") {
         if let active = DictationStatusIcon.image(active: true),
+           let starting = DictationStatusIcon.image(active: true, starting: true),
            let paused = DictationStatusIcon.image(active: false),
+           let startingData = starting.tiffRepresentation,
+           let startingBitmap = NSBitmapImageRep(data: startingData),
            let activeData = active.tiffRepresentation, let pausedData = paused.tiffRepresentation,
            let activeBitmap = NSBitmapImageRep(data: activeData),
            let pausedBitmap = NSBitmapImageRep(data: pausedData) {
@@ -156,6 +159,7 @@ func runTranscriptLayoutTests() -> [String] {
                   "both dictation icon resources have the same dimensions")
             let x = activeBitmap.pixelsWide / 8, y = activeBitmap.pixelsHigh / 2
             let activeColor = activeBitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)
+            let startingColor = startingBitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)
             let pausedColor = pausedBitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)
             check(activeColor != nil && pausedColor != nil && activeColor != pausedColor,
                   "active and paused icons have distinct background colors")
@@ -164,6 +168,15 @@ func runTranscriptLayoutTests() -> [String] {
             check((activeColor?.redComponent ?? 0) > 0.95 && (activeColor?.greenComponent ?? 1) < 0.4,
                   "active icon uses bright recording red")
             let corner = activeBitmap.pixelsWide / 8
+            check((startingColor?.redComponent ?? 0) > 0.95 &&
+                  (startingColor?.greenComponent ?? 0) > 0.7 &&
+                  (startingColor?.blueComponent ?? 1) < 0.1,
+                  "starting icon background is yellow")
+            check((startingBitmap.colorAt(x: corner, y: corner)?.alphaComponent ?? 1) < 0.05,
+                  "starting icon is circular")
+            check(startingBitmap.colorAt(x: startingBitmap.pixelsWide / 2, y: y) ==
+                  activeBitmap.colorAt(x: activeBitmap.pixelsWide / 2, y: y),
+                  "startup preserves the dictation portrait")
             check((activeBitmap.colorAt(x: corner, y: corner)?.alphaComponent ?? 1) < 0.05 &&
                   (pausedBitmap.colorAt(x: corner, y: corner)?.alphaComponent ?? 0) > 0.95,
                   "active icon is circular while the paused icon retains its square background")

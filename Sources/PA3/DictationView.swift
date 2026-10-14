@@ -31,7 +31,7 @@ struct DictationView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            DictationStatusIcon(active: controller.dictating)
+            DictationStatusIcon(active: controller.dictating, starting: controller.startingWhisper)
                 .accessibilityHidden(true)
             Text(controller.status)
                 .font(.system(size: 17, weight: .semibold))
@@ -303,18 +303,22 @@ struct DictationView: View {
 @MainActor
 struct DictationStatusIcon: View {
     let active: Bool
+    var starting = false
     var size: CGFloat = 44
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private static let portrait = loadPortrait()
 
     var body: some View {
-        let backgroundSize = size * 900 / 1024 * (active ? 1.13 : 1)
+        let round = active || starting
+        let backgroundSize = size * 900 / 1024 * (round ? 1.13 : 1)
         ZStack {
-            RoundedRectangle(cornerRadius: backgroundSize * (active ? 0.5 : 90.0 / 460), style: .circular)
-                .fill(active ? Color(red: 1, green: 59.0 / 255, blue: 48.0 / 255)
+            RoundedRectangle(cornerRadius: backgroundSize * (round ? 0.5 : 90.0 / 460), style: .circular)
+                .fill(starting ? Color(red: 1, green: 204.0 / 255, blue: 0)
+                            : active ? Color(red: 1, green: 59.0 / 255, blue: 48.0 / 255)
                             : Color(red: 198.0 / 255, green: 187.0 / 255, blue: 167.0 / 255))
                 .frame(width: backgroundSize, height: backgroundSize)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: active)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: starting)
             if let portrait = Self.portrait {
                 Image(nsImage: portrait)
                     .resizable()
@@ -325,10 +329,10 @@ struct DictationStatusIcon: View {
         .frame(width: size, height: size)
     }
 
-    // Render the same view for pixel-level checks of both settled states.
-    static func image(active: Bool) -> NSImage? {
+    // Render the same view for pixel-level checks of the settled states.
+    static func image(active: Bool, starting: Bool = false) -> NSImage? {
         guard portrait != nil else { return nil }
-        return ImageRenderer(content: Self(active: active, size: 128)
+        return ImageRenderer(content: Self(active: active, starting: starting, size: 128)
             .transaction { $0.disablesAnimations = true }).nsImage
     }
 

@@ -11,10 +11,20 @@ func runShortcutsTests() -> [String] {
           "empty session starts with zero statistics")
     check(controller.status == "Dictation paused", "new window has a single paused status")
     controller.dictating = true // Exercise display state without opening a microphone.
+    for message in ["Starting Whisper...", "Starting Whisper... 179s", "Waiting for Whisper..."] {
+        controller.serviceMessage = message
+        controller.debugMessage = message
+        check(controller.startingWhisper && controller.status == "Starting Whisper…" && controller.statusDetail.isEmpty,
+              "Whisper startup appears in the header without a duplicate footer message")
+        controller.dictating = false
+        check(!controller.startingWhisper && controller.status == "Dictation paused",
+              "startup messages cannot make paused dictation appear active")
+        controller.dictating = true
+    }
     for message in ["Dictation active", "Transcribing...", "Whisper ready"] {
         controller.serviceMessage = message
         controller.debugMessage = message
-        check(controller.status == "Dictation active" && controller.statusDetail.isEmpty,
+        check(!controller.startingWhisper && controller.status == "Dictation active" && controller.statusDetail.isEmpty,
               "recognition batches do not change status or add a duplicate label")
         controller.handleTranscription(TranscriptionUpdate(text: "Words from the latest batch.", language: "english"))
         check(controller.status == "Dictation active" && controller.statusDetail.isEmpty,

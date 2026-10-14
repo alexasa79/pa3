@@ -414,13 +414,21 @@ final class DictationController: ObservableObject {
 
     // Batch recognition comes and goes while the microphone remains active.
     // Present the session state, rather than each batch's service message.
+    var startingWhisper: Bool {
+        dictating && (serviceMessage.hasPrefix("Starting Whisper...") || serviceMessage == "Waiting for Whisper...")
+    }
+
     var status: String {
         if runningStop { return "Finishing transcription…" }
         if spellChecking { return "Checking spelling…" }
+        if startingWhisper { return "Starting Whisper…" }
         return dictating ? "Dictation active" : "Dictation paused"
     }
 
     var statusDetail: String {
+        if debugMessage.hasPrefix("Starting Whisper...") || debugMessage == "Waiting for Whisper..." {
+            return ""
+        }
         switch debugMessage {
         case "", "Ready", "Dictation active", "Dictation stopped", "Transcribing...",
              "Whisper ready", "Starting microphone...", "Stopping dictation...",
@@ -474,14 +482,13 @@ final class DictationController: ObservableObject {
         segment = ""
         dictating = true
         duckOutput()
-        serviceMessage = ""
-        debugMessage = "Starting microphone..."
+        serviceMessage = "Starting Whisper..."
+        debugMessage = serviceMessage
         clearSelection()
         transcriber.startTranscribeUpdates { [weak self] value in
             Task { @MainActor in self?.handleTranscription(value) }
         }
         updateDisplay()
-        debugMessage = "Dictation active"
     }
 
     func stopDictation() {
