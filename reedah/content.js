@@ -2053,15 +2053,19 @@
     if (!state.enabled) return;
 
     for (const [el, overlay] of state.overlays) {
-      if (!isCandidate(el)) continue;
+      // Only active/hovered paragraphs can show an overlay. Avoid walking text,
+      // reading styles and measuring anchors for every other paragraph on scroll.
+      const shouldShow = el === state.activeEl || el === state.hoveredEl;
+      if (!shouldShow || !isCandidate(el)) {
+        if (overlay.style.display !== "none") overlay.style.display = "none";
+        continue;
+      }
 
       const rect = getParagraphRect(el);
       const anchorRect = getAnchorRect(el) || rect;
       const anchorVisible = isAnchorVisible(el, rect);
 
-      const shouldShow = el === state.activeEl || el === state.hoveredEl;
-
-      if (!anchorVisible || !shouldShow) {
+      if (!anchorVisible) {
         overlay.style.display = "none";
         continue;
       }
@@ -2196,7 +2200,6 @@
     let bestDistance = Infinity;
 
     for (const [el, overlay] of state.overlays) {
-      if (!isCandidate(el)) continue;
       const rect = getParagraphRect(el);
       if (rect.width === 0 || rect.height === 0) continue;
 
@@ -2210,6 +2213,8 @@
       });
 
       if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) continue;
+      // Validate contents only after the cheap geometric hit test succeeds.
+      if (!isCandidate(el)) continue;
 
       const distance = distanceToRect(x, y, rect);
       if (distance < bestDistance) {

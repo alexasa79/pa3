@@ -12,6 +12,7 @@ import {checkSentenceSeeking} from './sentence-seek-browser.mjs';
 import {checkParagraphCompletion} from './paragraph-completion-browser.mjs';
 import {checkParagraphStyles} from './paragraph-styles-browser.mjs';
 import {checkBloggerParagraphs} from './blogger-paragraphs-browser.mjs';
+import {checkOverlayPerformance} from './overlay-performance-browser.mjs';
 import {checkFrames} from './frames-browser.mjs';
 import {checkNestingMatrix} from './nesting-matrix-browser.mjs';
 const profile=await mkdtemp(join(tmpdir(),'reedah-audio-browser-'));
@@ -46,6 +47,7 @@ try {
     });
   }
   await call('Page.enable');
+  await checkOverlayPerformance(call);
   await call('Page.navigate',{url:new URL('./stream-audio-browser.html',import.meta.url).href});
   let result='PENDING';
   for(let i=0;i<200;i++) {
