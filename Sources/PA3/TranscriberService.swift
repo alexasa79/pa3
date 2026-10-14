@@ -134,6 +134,7 @@ final class TranscriberService {
     }
     private var generation = 0
     private var statusHandler: (@Sendable (String) -> Void)?
+    private var recordingDurationHandler: (@Sendable (Double) -> Void)?
 
     private var audioEngine: AVAudioEngine?
     private var captureSession: AVCaptureSession?
@@ -179,6 +180,12 @@ final class TranscriberService {
     func setStatusHandler(_ handler: (@Sendable (String) -> Void)?) {
         statusLock.lock()
         statusHandler = handler
+        statusLock.unlock()
+    }
+
+    func setRecordingDurationHandler(_ handler: (@Sendable (Double) -> Void)?) {
+        statusLock.lock()
+        recordingDurationHandler = handler
         statusLock.unlock()
     }
 
@@ -570,7 +577,7 @@ final class TranscriberService {
         let paddingSamples = max(0, Int(round(Double(sampleRate) * silencePadding)))
         let padded = [Float](repeating: 0, count: paddingSamples) + samples
 
-        guard let transcription = recognize(samples: padded, sampleRate: sampleRate) else {
+        guard let transcription = recognize(samples: padded, sampleRate: sampleRate, reportDuration: true) else {
             return (0, threshold, false)
         }
         var tokens = timedTokens(transcription, offset: silencePadding)
@@ -685,7 +692,7 @@ final class TranscriberService {
 
     var recognitionHandler: (@Sendable (Double) -> Void)?
 
-    private func recognize(samples: [Float], sampleRate: Int) -> WhisperTranscription? {
+    private func recognize(samples: [Float], sampleRate: Int, reportDuration: Bool = false) -> WhisperTranscription? {
         // Even a complete short word gets at least one second of acoustic context.
         let padded = samples + [Float](repeating: 0, count: max(0, sampleRate - samples.count))
         let duration = Double(padded.count) / Double(sampleRate)
@@ -694,6 +701,14 @@ final class TranscriberService {
             return nil
         }
         recognitionHandler?(duration)
+        // Boundary verification decodes short excerpts of the same audio. Those
+        // requests must not replace the duration of the main transcription window.
+        if reportDuration {
+            statusLock.lock()
+            let durationHandler = recordingDurationHandler
+            statusLock.unlock()
+            durationHandler?(duration)
+        }
         Logger.info("bounded recognition duration=\(String(format: "%.3f", duration))")
         return requestTranscription(wav: WAVEncoder.encode(samples: padded, sampleRate: sampleRate))
     }

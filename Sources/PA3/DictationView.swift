@@ -56,6 +56,11 @@ struct DictationView: View {
                 Text("·")
                 Text("\(iterations.formatted()) \(iterations == 1 ? "iteration" : "iterations")")
                     .help("Successful transcription updates in this session, including unchanged results. Resets with a new session or restart.")
+                if let duration = controller.recordingDuration {
+                    Text("·")
+                    Text("Duration: \(duration.formatted(.number.precision(.fractionLength(1)))) s")
+                        .help("Audio duration of the current or most recent transcription window, including silence padding. Excludes sentence-boundary checks. Resets with a new session.")
+                }
             }
             .monospacedDigit()
             .foregroundStyle(.secondary)

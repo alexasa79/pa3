@@ -22,6 +22,7 @@ final class DictationController: ObservableObject {
     @Published var text = ""
     @Published private(set) var detectedLanguage: String?
     @Published private(set) var transcriptionIterations = 0
+    @Published private(set) var recordingDuration: Double?
     @Published var dictating = false
     @Published var alwaysOnTop = true {
         didSet { preferences.set(alwaysOnTop, forKey: Self.alwaysOnTopKey) }
@@ -126,6 +127,11 @@ final class DictationController: ObservableObject {
             contextSeconds = Self.contextSecondsRange.clamped(preferences.integer(forKey: Self.contextSecondsKey))
         }
         transcriber.setContextSeconds(contextSeconds)
+        transcriber.setRecordingDurationHandler { [weak self] duration in
+            Task { @MainActor in
+                self?.recordingDuration = duration
+            }
+        }
         transcriber.setStatusHandler { [weak self] message in
             Task { @MainActor in
                 guard let self else { return }
@@ -148,6 +154,7 @@ final class DictationController: ObservableObject {
 
     func beginNewSession() {
         transcriptionIterations = 0
+        recordingDuration = nil
         resumeAfterShortcuts = false
         showingShortcuts = false
         detectedLanguage = nil
