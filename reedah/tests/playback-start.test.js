@@ -128,10 +128,10 @@ test('skip omits queued and late pieces of the same sentence', () => {
 
 test('content keeps all PCM blocks in one sentence player and skip suppresses late blocks', async () => {
   const {state, handleSessionMessage, skipSentence, stopNativeNarration} = setup(true);
-  const session = {utteranceId:'stream', active:true, playbackId:1, streams:new Map(), audioQueue:state.audioQueue};
+  const session = {utteranceId:'stream', sourceText:'word next ' + 'x'.repeat(90), active:true, playbackId:1, streams:new Map(), audioQueue:state.audioQueue};
   state.activeSession=session;
   const pcm = Buffer.alloc(24000 * 4).toString('base64');
-  const message = {type:'audio',stream:true,index:0,pieceIndex:0,sampleRate:24000,samples:24000,audioBase64:pcm,length:100,rate:1,wordTimings:[{location:0,length:4,start:0,end:0.8}]};
+  const message = {type:'audio',stream:true,index:0,pieceIndex:0,sampleRate:24000,samples:24000,audioBase64:pcm,location:0,length:100,rate:1,wordTimings:[{location:0,length:4,start:0,end:0.8}]};
   handleSessionMessage(session, message); await Promise.resolve();
   const first=state.currentAudio;
   handleSessionMessage(session, {...message,pieceIndex:1,wordTimings:[{location:5,length:4,start:1,end:1.8}]});

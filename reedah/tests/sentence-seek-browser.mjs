@@ -38,10 +38,14 @@ export async function checkSentenceSeeking(call) {
     ctx.currentTime=1.2;
     await new Promise(resolve=>requestAnimationFrame(resolve));
     const clockStatus=api.state.controls.sentence.textContent;
+    // All three sentences have timings now. The focus must still contain only
+    // the word from the sentence selected by the audio clock.
+    const focus=first.focusRange;
+    const expectedFocus={start:targets[2].start,end:targets[2].start+5};
     prev();await Promise.resolve();const previousOffset=first.offset;
     const starts=requests.filter(m=>m.type==='start'),consumed=requests.filter(m=>m.type==='consumed');
     api.disable();
-    return {initial,pending,resumed,rewound,clockStatus,previousOffset,startCount:starts.length,
+    return {initial,pending,resumed,rewound,clockStatus,focus,expectedFocus,previousOffset,startCount:starts.length,
       passageCount:starts[0].sentenceRanges.length,consumed:consumed.length,disposed:first.disposed};
   })()`,returnByValue:true,awaitPromise:true});
   assert.ok(!result.exceptionDetails,JSON.stringify(result.exceptionDetails));
@@ -51,6 +55,7 @@ export async function checkSentenceSeeking(call) {
   assert.equal(data.resumed.sameStream,true);assert.equal(data.resumed.offset,1.1);assert.match(data.resumed.status,/S 2\/3/);
   assert.deepEqual(data.rewound,{paused:false,offset:0});
   assert.match(data.clockStatus,/S 3\/3/);assert.equal(data.previousOffset,1.1);
+  assert.deepEqual(data.focus,data.expectedFocus,'Streaming playback focus stays inside the current sentence');
   assert.equal(data.startCount,1);assert.equal(data.passageCount,1);assert.equal(data.consumed,0);assert.equal(data.disposed,true);
   console.log('PASS: actual sentence controls, buffering/rapid clicks, pause-and-seek, audio-clock sentence counts and no paragraph regeneration.');
 }

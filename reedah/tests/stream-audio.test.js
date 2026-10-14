@@ -160,6 +160,54 @@ test('timed streams reject absent or invalid source metadata instead of estimati
   }
 });
 
+test('focus groups restart at sentence boundaries and hold through pauses', () => {
+  const {buildSentenceRanges} = require('../sentence');
+  for (const text of ['One two. Three four five six seven. Eight nine!',
+    '“One two!” Three four five six seven? Eight nine.',
+    'Mr. Smith paid 3.14 dollars. Then he left. Goodbye!']) {
+    const sentenceRanges = buildSentenceRanges(text, {minSentenceLength:0});
+    const {audio} = setup({sourceLength:text.length, sentenceRanges});
+    const words = [...text.matchAll(/\S+/gu)].map((match, index) => ({
+      location:match.index, length:match[0].length, start:index * .3, end:index * .3 + .1
+    }));
+    audio.appendTimings(words, words.length * .3);
+    for (let i = 0; i < words.length; i++) {
+      const sentence = sentenceRanges.find(range => words[i].location >= range.start && words[i].location < range.end);
+      const first = words.findIndex(word => word.location >= sentence.start);
+      const groupStart = first + Math.floor((i - first) / 3) * 3;
+      const group = words.slice(groupStart, groupStart + 3).filter(word => word.location < sentence.end);
+      const expected = {start:group[0].location, end:group.at(-1).location + group.at(-1).length};
+      audio.offset = words[i].start;
+      assert.deepEqual(audio.focusRange, expected);
+      // Keep the same sentence during silence, even if the next word is ready.
+      audio.offset = words[i].end + .1;
+      assert.deepEqual(audio.focusRange, expected);
+    }
+    audio.dispose();
+  }
+});
+
+test('sentence focus remains bounded across streamed arrivals, seek and rewind', () => {
+  const {buildSentenceRanges} = require('../sentence');
+  const text = 'One two. Three four five six. Seven eight.';
+  const {audio} = setup({sourceLength:text.length,
+    sentenceRanges:buildSentenceRanges(text, {minSentenceLength:0})});
+  const words = [...text.matchAll(/\S+/gu)].map((match, i) => ({
+    location:match.index, length:match[0].length, start:i * .1, end:(i + 1) * .1
+  }));
+  audio.append({...chunk(0), wordTimings:words.slice(0, 2)});
+  assert.deepEqual(audio.focusRange, {start:0, end:8});
+  audio.append({...chunk(1), wordTimings:words.slice(2)});
+  assert.deepEqual(audio.focusRange, {start:0, end:8});
+  audio.seek(words[3].start);
+  assert.deepEqual(audio.focusRange, {start:15, end:29});
+  audio.offset = words[6].start;
+  assert.deepEqual(audio.focusRange, {start:30, end:42});
+  audio.rewind();
+  assert.deepEqual(audio.focusRange, {start:0, end:8});
+  audio.dispose();
+});
+
 test('seeking within retained paragraph audio cancels old sources and preserves speed', async () => {
   for (const speed of [0.5, 1, 1.5, 2]) {
     const budget = new AudioBudget();

@@ -18,11 +18,12 @@
 
   // One continuous passage. Retain PCM so sentence controls can seek by word time.
   class StreamAudio {
-    constructor({getContext = context, estimatedDuration = 1, sourceLength = null, playbackRate = 1, budget = sharedBudget} = {}) {
+    constructor({getContext = context, estimatedDuration = 1, sourceLength = null, sentenceRanges = [], playbackRate = 1, budget = sharedBudget} = {}) {
       this.getContext = getContext;
       this.estimatedDuration = Math.max(1, estimatedDuration);
       this.wordTimings = [];
       this.sourceLength = sourceLength;
+      this.sentenceRanges = sentenceRanges;
       this.buffers = [];
       this.sources = [];
       this.offset = 0;
@@ -69,10 +70,17 @@
       if (!words.length) return null;
       let current = 0;
       while (current + 1 < words.length && words[current + 1].start <= this.currentTime) current++;
-      const floor = this.focusFloor ?? 0;
+      // Timings are approximate, but source sentence boundaries are known.
+      // Restart each three-word group at the sentence (or seek) boundary, and
+      // hold the last group through a pause until the next timed word begins.
+      const sentence = this.sentenceRanges.find(range =>
+        words[current].location >= range.start && words[current].location < range.end);
+      const sentenceFloor = sentence ? words.findIndex(word => word.location >= sentence.start) : 0;
+      const floor = Math.max(this.focusFloor ?? 0, sentenceFloor);
       const from = floor + Math.floor(Math.max(0, current - floor) / 3) * 3;
-      const group = words.slice(from, from + 3);
-      return {start:group[0].location, end:Math.max(...group.map(w => w.location + w.length))};
+      const group = words.slice(from, from + 3).filter(word => !sentence || word.location < sentence.end);
+      return {start:group[0].location,
+        end:Math.min(sentence?.end ?? Infinity, Math.max(...group.map(w => w.location + w.length)))};
     }
     get currentSourceLocation() {
       const time = this.currentTime;

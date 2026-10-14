@@ -1383,7 +1383,10 @@
       try {
         let item = session.streams.get(message.index);
         if (!item) {
-          const stream = new ReedahStreamAudio.StreamAudio({sourceLength: message.length, estimatedDuration: message.length / 14, playbackRate: message.rate ?? 1});
+          const sourceText = session.sourceText.slice(message.location, message.location + message.length);
+          const sentenceRanges = sentence.buildSentenceRanges(sourceText, {minSentenceLength: 0});
+          const stream = new ReedahStreamAudio.StreamAudio({sourceLength: message.length, sentenceRanges,
+            estimatedDuration: message.length / 14, playbackRate: message.rate ?? 1});
           item = {url: `reedah-stream:${session.utteranceId}:${message.index}`, stream,
             index:message.index, location:message.location, rate:message.rate ?? 1,
             pieceIndex:0, pieceCount:1, progressStart:0, progressEnd:1};
