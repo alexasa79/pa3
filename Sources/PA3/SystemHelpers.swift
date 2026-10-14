@@ -23,69 +23,13 @@ enum PasteHelper {
     @discardableResult
     static func paste() -> Bool {
         Logger.info("paste requested accessibilityTrusted=\(AXIsProcessTrusted())")
-        if pasteWithInProcessSystemEvents() {
-            Logger.info("paste sent with in-process System Events")
-            return true
-        }
-
-        if pasteWithOsascriptProcess() {
-            Logger.info("paste sent with osascript process")
-            return true
-        }
-
-        Logger.warn("System Events paste failed; trying CGEvent fallback")
-        if sendCommandVWithCGEvent() {
-            Logger.info("paste sent with CGEvent fallback")
-            return true
-        }
-        return false
-    }
-
-    private static func pasteWithInProcessSystemEvents() -> Bool {
-        let source = "tell application \"System Events\" to keystroke \"v\" using command down"
-        var error: NSDictionary?
-        NSAppleScript(source: source)?.executeAndReturnError(&error)
-        if let error {
-            Logger.warn("in-process System Events paste failed: \(error)")
-            return false
-        }
-        return true
-    }
-
-    private static func pasteWithOsascriptProcess() -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = [
-            "-e",
-            "tell application \"System Events\" to keystroke \"v\" using command down"
-        ]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = output
-        do {
-            try process.run()
-            process.waitUntilExit()
-            if process.terminationStatus == 0 {
-                return true
-            }
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            let text = String(data: data, encoding: .utf8) ?? ""
-            Logger.warn("osascript paste failed status=\(process.terminationStatus) output=\(text)")
-            return false
-        } catch {
-            Logger.warn("failed to run osascript paste: \(error)")
-            return false
-        }
-    }
-
-    private static func sendCommandVWithCGEvent() -> Bool {
         guard AXIsProcessTrusted() else {
             Logger.warn("CGEvent paste skipped because Accessibility is not trusted")
             return false
         }
         guard let source = CGEventSource(stateID: .hidSystemState),
-              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else {
+              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false) else {
             Logger.warn("unable to create paste CGEvents")
             return false
         }
@@ -93,6 +37,7 @@ enum PasteHelper {
         keyUp.flags = .maskCommand
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
+        Logger.info("paste sent with physical Command+V CGEvents")
         return true
     }
 }

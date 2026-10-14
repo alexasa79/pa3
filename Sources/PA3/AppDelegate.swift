@@ -445,9 +445,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func dismissPA3AndRestorePreviousApp(afterRestore: (() -> Void)? = nil) {
         window?.orderOut(nil)
         NSApp.hide(nil)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            self.restorePreviousApp(afterRestore: afterRestore)
-        }
+        restorePreviousApp(afterRestore: afterRestore)
     }
 
     private func restorePreviousApp(afterRestore: (() -> Void)? = nil) {
@@ -455,26 +453,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let window = previousWindow ?? lastExternalWindow
         guard let app else {
             Logger.warn("No previous app to restore")
-            afterRestore?()
             return
         }
         Logger.info("restoring previous app pid=\(app.processIdentifier) name=\(app.localizedName ?? "?") window=\(window == nil ? "nil" : "remembered")")
-        app.activate()
-        activateProcessWithSystemEvents(pid: app.processIdentifier)
-        if let window {
-            raiseAXWindow(window)
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier {
+            app.activate()
         }
-        waitForFocus(app: app, deadline: Date().addingTimeInterval(1.0), afterRestore: afterRestore)
+        // Hiding PA3 normally restores the right window already. Avoid three
+        // synchronous Accessibility writes unless a different window is focused.
+        if let window {
+            let focused = focusedWindow(for: app.processIdentifier)
+            if focused.map({ CFEqual($0, window) }) != true {
+                raiseAXWindow(window)
+            }
+        }
+        let started = Date()
+        // Let native activation complete on the next run-loop turn.
+        DispatchQueue.main.async {
+            self.waitForFocus(app: app, started: started, usedFallback: false, afterRestore: afterRestore)
+        }
     }
 
-    private func waitForFocus(app: NSRunningApplication, deadline: Date, afterRestore: (() -> Void)?) {
-        if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier || Date() >= deadline {
-            Logger.info("focus restore complete frontmost=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?")")
+    private func waitForFocus(app: NSRunningApplication, started: Date, usedFallback: Bool,
+                              afterRestore: (() -> Void)?) {
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier {
+            Logger.info("focus restore complete frontmost=\(app.localizedName ?? "?")")
             afterRestore?()
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            self.waitForFocus(app: app, deadline: deadline, afterRestore: afterRestore)
+        let elapsed = Date().timeIntervalSince(started)
+        guard !app.isTerminated, elapsed < 1.0 else {
+            Logger.warn("focus restore failed; skipping paste to avoid sending it to another app")
+            return
+        }
+        var usedFallback = usedFallback
+        if elapsed >= 0.15 && !usedFallback {
+            // Retain System Events only for apps that resist native activation.
+            usedFallback = true
+            activateProcessWithSystemEvents(pid: app.processIdentifier)
+        }
+        let fallback = usedFallback
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
+            self.waitForFocus(app: app, started: started, usedFallback: fallback, afterRestore: afterRestore)
         }
     }
 
