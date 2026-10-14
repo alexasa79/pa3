@@ -7,6 +7,8 @@ func runShortcutsTests() -> [String] {
         if !condition { failures.append("shortcuts: " + name) }
     }
     let controller = DictationController(transcriber: TranscriberService())
+    check(controller.characterCount == 0 && controller.wordCount == 0 && controller.transcriptionIterations == 0,
+          "empty session starts with zero statistics")
     check(controller.status == "Dictation paused", "new window has a single paused status")
     controller.dictating = true // Exercise display state without opening a microphone.
     for message in ["Dictation active", "Transcribing...", "Whisper ready"] {
@@ -18,6 +20,11 @@ func runShortcutsTests() -> [String] {
         check(controller.status == "Dictation active" && controller.statusDetail.isEmpty,
               "new transcript text does not change status or display a character count")
     }
+    check(controller.transcriptionIterations == 3, "unchanged recognition results count as separate iterations")
+    controller.handleTranscription(TranscriptionUpdate(text: "Hi, שלום 👨‍👩‍👧‍👦!", language: "english"))
+    check(controller.characterCount == 10 && controller.wordCount == 2,
+          "statistics count Unicode characters and words without counting punctuation or emoji as words (\(controller.characterCount) characters, \(controller.wordCount) words in \(controller.text))")
+    check(controller.transcriptionIterations == 4, "statistics count transcription results rather than status messages")
     controller.debugMessage = "Whisper failed to start"
     check(controller.statusDetail == "Whisper failed to start", "service failures remain visible")
     controller.dictating = false
@@ -25,6 +32,8 @@ func runShortcutsTests() -> [String] {
     check(controller.status == "Checking spelling…", "spell checking has a clear status")
     controller.spellChecking = false
     controller.beginNewSession()
+    check(controller.characterCount == 0 && controller.wordCount == 0 && controller.transcriptionIterations == 0,
+          "new session resets statistics")
     var startRequests = 0
     controller.prepareModels = { startRequests += 1; return false }
     var hidden = false
@@ -59,6 +68,8 @@ func runShortcutsTests() -> [String] {
     check(controller.debugMessage == "Dictation stopped" && controller.text == "Keep these words.", "pause finishes and preserves pending text")
     check(controller.status == "Dictation paused" && controller.statusDetail.isEmpty,
           "completed stop shows a single steady paused status")
+    check(controller.transcriptionIterations == 1 && controller.wordCount == 3 && controller.characterCount == 17,
+          "pausing preserves transcript statistics without adding an iteration")
     press("?")
     check(!controller.showingShortcuts && startRequests == 1, "closing resumes previously active dictation")
     press(" ", code: 49)
@@ -132,5 +143,8 @@ func runShortcutsTests() -> [String] {
     controller.handleTranscription(TranscriptionUpdate(text: "Fresh text.", language: "english"))
     pauseAndCommit()
     check(controller.text == "Fresh text.", "O works on an empty transcript")
+    controller.restartDictation()
+    check(controller.characterCount == 0 && controller.wordCount == 0 && controller.transcriptionIterations == 0,
+          "restart resets transcript statistics")
     return failures
 }

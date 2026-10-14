@@ -21,6 +21,7 @@ struct TranscriptToken: Identifiable {
 final class DictationController: ObservableObject {
     @Published var text = ""
     @Published private(set) var detectedLanguage: String?
+    @Published private(set) var transcriptionIterations = 0
     @Published var dictating = false
     @Published private(set) var showingShortcuts = false
     @Published var spellChecking = false
@@ -125,6 +126,7 @@ final class DictationController: ObservableObject {
     }
 
     func beginNewSession() {
+        transcriptionIterations = 0
         resumeAfterShortcuts = false
         showingShortcuts = false
         detectedLanguage = nil
@@ -399,7 +401,18 @@ final class DictationController: ObservableObject {
         }
     }
 
+    var characterCount: Int { text.count }
+
+    var wordCount: Int {
+        var count = 0
+        text.enumerateSubstrings(in: text.startIndex..<text.endIndex, options: [.byWords, .substringNotRequired]) { _, _, _, _ in
+            count += 1
+        }
+        return count
+    }
+
     func handleTranscription(_ update: TranscriptionUpdate) {
+        transcriptionIterations += 1
         detectedLanguage = update.language
         serviceMessage = ""
         debugMessage = "Dictation active"
@@ -468,6 +481,7 @@ final class DictationController: ObservableObject {
 
     func restartDictation() {
         guard !showingShortcuts else { return }
+        transcriptionIterations = 0
         undoHistory.removeAll()
         let wasDictating = dictating
         if wasDictating {

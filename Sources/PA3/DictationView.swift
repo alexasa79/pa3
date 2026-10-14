@@ -48,7 +48,23 @@ struct DictationView: View {
     }
 
     private var statusBar: some View {
-        HStack(spacing: 12) {
+        let characterCount = controller.characterCount
+        let wordCount = controller.wordCount
+        let iterations = controller.transcriptionIterations
+        return HStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Text("\(characterCount.formatted()) \(characterCount == 1 ? "character" : "characters")")
+                    .help("Characters in the current transcript, including spaces and line breaks.")
+                Text("·")
+                Text("\(wordCount.formatted()) \(wordCount == 1 ? "word" : "words")")
+                    .help("Words in the current transcript; punctuation and emoji are not counted as words.")
+                Text("·")
+                Text("\(iterations.formatted()) \(iterations == 1 ? "iteration" : "iterations")")
+                    .help("Successful transcription updates in this session, including unchanged results. Resets with a new session or restart.")
+            }
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+            .fixedSize()
             if !controller.statusDetail.isEmpty {
                 Text(controller.statusDetail)
                     .foregroundStyle(.secondary)
