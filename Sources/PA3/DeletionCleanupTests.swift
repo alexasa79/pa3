@@ -97,5 +97,63 @@ func runDeletionCleanupTests() -> [String] {
     controller.editText = "odd.,"
     controller.applyCurrentEdit()
     check(controller.text.contains("odd.,"), "explicit punctuation is never cleaned")
+
+    func seedSentence(_ source: String, at word: String) -> Int {
+        controller.beginNewSession()
+        controller.handleTranscription(TranscriptionUpdate(text: source, language: nil))
+        let index = controller.words.firstIndex(of: word)!
+        controller.selectedWord = index
+        controller.selectionStart = index
+        controller.selectionEnd = index
+        return index
+    }
+    for (source, word, expected) in [
+        ("The quick brown fox sleeps. Next sentence.", "brown", "The quick. Next sentence."),
+        ("First sentence. Remove this entire sentence! Last one.", "Remove", "First sentence. Last one."),
+        ("Dr. Smith paid 3.14 dollars. Next sentence.", "paid", "Dr. Smith. Next sentence."),
+        ("Dr. Smith paid 3.14 dollars. Next sentence.", "Dr", "Next sentence."),
+        ("The value is 3.14 dollars. Next sentence.", "3.14", "The value is. Next sentence."),
+        ("She said, “Go now!” Then left.", "now", "She said, “Go!” Then left."),
+        ("First... Second sentence?! Third.", "sentence", "First... Second?! Third."),
+        ("Hello, extra words. Next.", "extra", "Hello. Next."),
+        ("Keep some trailing words\n\nNext paragraph.", "trailing", "Keep some\n\nNext paragraph."),
+        ("Remove this\n\nNext paragraph.", "Remove", "Next paragraph."),
+        ("שלום עולם יפה. עוד משפט.", "עולם", "שלום. עוד משפט."),
+        ("One two three.", "three", "One two."),
+        ("Only words", "Only", ""),
+        ("One two. Next.", ".", "One two. Next.")
+    ] {
+        let index = seedSentence(source, at: word)
+        press("X")
+        check(controller.text == expected, "X from \(word): got \(controller.text), expected \(expected)")
+        if source != expected {
+            press("u")
+            check(controller.text == source && controller.selectedWord == index && controller.selectionStart == index && controller.selectionEnd == index,
+                  "X undo restores the full sentence and selection")
+        }
+    }
+    let source = "The quick brown fox sleeps. Next sentence."
+    let index = seedSentence(source, at: "brown")
+    controller.selectionStart = 0
+    controller.selectionEnd = controller.words.count - 1
+    let selectionEnd = controller.selectionEnd
+    press("X")
+    check(controller.text == "The quick. Next sentence.", "X uses the current word and never consumes a selected later sentence")
+    press("u")
+    check(controller.text == source && controller.selectedWord == index && controller.selectionStart == 0 && controller.selectionEnd == selectionEnd,
+          "X undo restores an extended selection")
+    _ = seedSentence(source, at: "brown")
+    press("x")
+    check(controller.text == "The quick fox sleeps. Next sentence.", "lowercase x still deletes only the current word")
+    _ = seedSentence(source, at: "brown")
+    controller.dictating = true
+    press("X")
+    check(controller.text == source, "X does not edit during dictation")
+    controller.dictating = false
+    press("c")
+    press("X")
+    check(controller.editText == "X" && controller.text == source, "X remains literal inside the text editor")
+    controller.cancelCurrentEdit()
+    check(controller.keyBindings().contains(where: { $0.hasPrefix("X: delete to sentence end") }), "X is discoverable in keyboard shortcuts")
     return failures
 }

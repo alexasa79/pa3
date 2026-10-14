@@ -263,8 +263,10 @@ final class DictationController: ObservableObject {
             openVocabularyEditor()
         case "i", "I":
             if !dictating { startEditMode(.insertBefore) }
-        case "x", "X":
+        case "x":
             if !dictating { deleteSelection() }
+        case "X":
+            if !dictating { deleteToSentenceEnd() }
         default:
             break
         }
@@ -294,7 +296,7 @@ final class DictationController: ObservableObject {
             ("General", ["?: show/hide shortcuts (pauses dictation)", "esc: close shortcuts, otherwise discard", "space: pause/resume dictation", "enter: paste result", "q / Q: discard", "ctrl+c: abort", "v: insert clipboard"]),
             ("Dictation", ["R: restart dictation", "o: new paragraph", "O: continue current paragraph", "s: spell check transcript", "D: edit dictionary"]),
             ("Navigation · while paused", ["arrows: navigate words", "shift+arrows: expand selection", "J: join next paragraph", "S: split paragraph after current word"]),
-            ("Editing · while paused", ["c: edit selection", "C: change all matching text", "a: append after", "i / I: insert before", "x / X: delete selection", "t: cycle capitalization", "u: undo last change", ".: repeat change", ">: repeat change on all matches", "A: add selected word to dictionary"]),
+            ("Editing · while paused", ["c: edit selection", "C: change all matching text", "a: append after", "i / I: insert before", "x: delete selection", "X: delete to sentence end (keep ending punctuation)", "t: cycle capitalization", "u: undo last change", ".: repeat change", ">: repeat change on all matches", "A: add selected word to dictionary"]),
             ("Inside the text editor", ["enter: apply edit", "esc: cancel edit", "arrows: move cursor", "home/end: jump", "alt+backspace: delete word", "backspace: delete character", "delete: delete ahead", "cmd+a: select all"]),
             ("From any app", ["⌃⌥⌘P: open dictation", "⌃⌥⌘O: read selection / stop narration", "⌃⌥⌘R: read screen rectangle / stop narration"])
         ]
@@ -869,7 +871,32 @@ final class DictationController: ObservableObject {
         updateDisplay()
     }
 
-    private func deleteSelection() {
+    private func deleteToSentenceEnd() {
+        guard !runningStop, !words.isEmpty else { return }
+        let start = words.indices.contains(selectedWord) ? selectedWord : validSelectionStart()
+        guard let sentence = sentenceWordRange(words: words, paragraphs: wordParagraphs, containing: start) else {
+            Logger.error("Could not find the sentence containing the selected word")
+            return
+        }
+        var end = sentence.upperBound
+        if start > sentence.lowerBound {
+            var punctuationStart = end + 1
+            while punctuationStart > sentence.lowerBound &&
+                  words[punctuationStart - 1].unicodeScalars.allSatisfy({ CharacterSet.punctuationCharacters.contains($0) }) {
+                punctuationStart -= 1
+            }
+            if punctuationStart <= end {
+                let punctuation = words[punctuationStart...end].joined()
+                if punctuation.contains(where: { ".!?…。！？؟".contains($0) }) {
+                    end = punctuationStart - 1
+                }
+            }
+        }
+        guard end >= start else { return }
+        deleteSelection(range: start...end)
+    }
+
+    private func deleteSelection(range: ClosedRange<Int>? = nil) {
         let before = editSnapshot()
         defer { recordEdit(before) }
         if words.isEmpty {
@@ -879,8 +906,8 @@ final class DictationController: ObservableObject {
             updateDisplay()
             return
         }
-        let start = validSelectionStart()
-        let end = validSelectionEnd(start)
+        let start = range?.lowerBound ?? validSelectionStart()
+        let end = range?.upperBound ?? validSelectionEnd(start)
         var newWords = Array(words[..<start])
         if end + 1 < words.count {
             newWords += words[(end + 1)...]
