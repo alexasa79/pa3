@@ -31,15 +31,10 @@ struct DictationView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            if let icon = DictationStatusIcon.image(active: controller.dictating) {
-                Image(nsImage: icon)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 44, height: 44)
-                    .accessibilityHidden(true)
-            }
+            DictationStatusIcon(active: controller.dictating)
+                .accessibilityHidden(true)
             Text(controller.status)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
             Spacer()
         }
         .padding(.horizontal, 12)
@@ -301,18 +296,41 @@ struct DictationView: View {
 }
 
 @MainActor
-enum DictationStatusIcon {
-    private static let active = load("DictationActive")
-    private static let paused = load("DictationPaused")
+struct DictationStatusIcon: View {
+    let active: Bool
+    var size: CGFloat = 44
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private static let portrait = loadPortrait()
 
-    static func image(active isActive: Bool) -> NSImage? {
-        isActive ? active : paused
+    var body: some View {
+        let backgroundSize = size * 900 / 1024 * (active ? 1.13 : 1)
+        ZStack {
+            RoundedRectangle(cornerRadius: backgroundSize * (active ? 0.5 : 90.0 / 460), style: .circular)
+                .fill(active ? Color(red: 1, green: 59.0 / 255, blue: 48.0 / 255)
+                            : Color(red: 198.0 / 255, green: 187.0 / 255, blue: 167.0 / 255))
+                .frame(width: backgroundSize, height: backgroundSize)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: active)
+            if let portrait = Self.portrait {
+                Image(nsImage: portrait)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: size, height: size)
+            }
+        }
+        .frame(width: size, height: size)
     }
 
-    private static func load(_ name: String) -> NSImage? {
-        let url = appResourceDirectory().appendingPathComponent("\(name).png")
+    // Render the same view for pixel-level checks of both settled states.
+    static func image(active: Bool) -> NSImage? {
+        guard portrait != nil else { return nil }
+        return ImageRenderer(content: Self(active: active, size: 128)
+            .transaction { $0.disablesAnimations = true }).nsImage
+    }
+
+    private static func loadPortrait() -> NSImage? {
+        let url = appResourceDirectory().appendingPathComponent("DictationPortrait.png")
         let image = NSImage(contentsOf: url)
-        if image == nil { Logger.error("Missing dictation status icon: \(url.path)") }
+        if image == nil { Logger.error("Missing dictation portrait: \(url.path)") }
         return image
     }
 }

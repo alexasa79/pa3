@@ -155,12 +155,18 @@ func runTranscriptLayoutTests() -> [String] {
             check(active.size == paused.size && active.size == NSSize(width: 128, height: 128),
                   "both dictation icon resources have the same dimensions")
             let x = activeBitmap.pixelsWide / 8, y = activeBitmap.pixelsHigh / 2
-            let activeColor = activeBitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
-            let pausedColor = pausedBitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
+            let activeColor = activeBitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)
+            let pausedColor = pausedBitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)
             check(activeColor != nil && pausedColor != nil && activeColor != pausedColor,
                   "active and paused icons have distinct background colors")
             check((activeColor?.redComponent ?? 0) > (activeColor?.greenComponent ?? 1) * 1.5,
                   "active icon background is red")
+            check((activeColor?.redComponent ?? 0) > 0.95 && (activeColor?.greenComponent ?? 1) < 0.4,
+                  "active icon uses bright recording red")
+            let corner = activeBitmap.pixelsWide / 8
+            check((activeBitmap.colorAt(x: corner, y: corner)?.alphaComponent ?? 1) < 0.05 &&
+                  (pausedBitmap.colorAt(x: corner, y: corner)?.alphaComponent ?? 0) > 0.95,
+                  "active icon is circular while the paused icon retains its square background")
             check(activeBitmap.colorAt(x: activeBitmap.pixelsWide / 2, y: y) ==
                   pausedBitmap.colorAt(x: pausedBitmap.pixelsWide / 2, y: y),
                   "changing dictation state preserves the portrait")
@@ -228,6 +234,12 @@ func runTranscriptLayoutTests() -> [String] {
             try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/pa3-rtl-window.png"))
         }
         controller.dictating = true // Preview without opening a microphone.
+        RunLoop.current.run(until: Date().addingTimeInterval(0.14))
+        host.layoutSubtreeIfNeeded()
+        if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/pa3-dictation-transition-preview.png"))
+        }
         RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         host.layoutSubtreeIfNeeded()
         if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {

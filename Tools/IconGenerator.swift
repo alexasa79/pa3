@@ -28,10 +28,9 @@ for (name, size) in sizes {
 }
 
 try writePNG(drawMenuIcon(size: 36), to: resources.appendingPathComponent("MenuBarIcon.png"))
-try writePNG(drawAppIcon(size: 128), to: resources.appendingPathComponent("DictationPaused.png"))
-try writePNG(drawAppIcon(size: 128, background: color(0xC65A4A)), to: resources.appendingPathComponent("DictationActive.png"))
+try writePNG(drawAppIcon(size: 128, background: nil), to: resources.appendingPathComponent("DictationPortrait.png"))
 
-func drawAppIcon(size: CGFloat, background: NSColor = paper) -> NSImage {
+func drawAppIcon(size: CGFloat, background: NSColor? = paper) -> NSImage {
   // Explicit pixels avoid Retina backing-scale doubling the iconset sizes.
   let bitmap = NSBitmapImageRep(
     bitmapDataPlanes: nil, pixelsWide: Int(size), pixelsHigh: Int(size),
@@ -79,11 +78,12 @@ func wave(x: CGFloat, y: CGFloat, size: CGFloat) {
   }
   line(pts, size * 0.073, ink)
 }
-func portrait(background: NSColor) {
+func portrait(background: NSColor?) {
   NSGraphicsContext.saveGraphicsState()
-  background.setFill()
-  NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: 460, height: 460), xRadius: 90, yRadius: 90)
-    .fill()
+  if let background {
+    background.setFill()
+    NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: 460, height: 460), xRadius: 90, yRadius: 90).fill()
+  }
   oval(NSRect(x: 66, y: 160, width: 56, height: 90), skin)
   oval(NSRect(x: 338, y: 160, width: 56, height: 90), skin)
   oval(NSRect(x: 94, y: 88, width: 272, height: 322), skin)
