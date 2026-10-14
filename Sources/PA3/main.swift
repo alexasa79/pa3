@@ -153,7 +153,7 @@ if CommandLine.arguments.contains("--dictionary-test") {
 }
 
 if CommandLine.arguments.contains("--whisper-text-test") {
-    let failures = runWhisperTextTests() + runSegmentationTests() + runNarrationTests() + runNarrationDictionaryTests() + runSelectedTextTests() + runWordCapitalizationTests() + runDeletionCleanupTests() + runUndoTests() + runRepeatReplacementTests() + runShortcutsTests()
+    let failures = runWhisperTextTests() + runSegmentationTests() + runNarrationTests() + runNarrationDictionaryTests() + runSelectedTextTests() + runWordCapitalizationTests() + runDeletionCleanupTests() + runUndoTests() + runRepeatReplacementTests() + runShortcutsTests() + runAutoMuteTests()
     print("whisper-text-test")
     if failures.isEmpty {
         print("ok")

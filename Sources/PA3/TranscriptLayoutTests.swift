@@ -38,7 +38,31 @@ func runTranscriptLayoutTests() -> [String] {
         check(response.language == "hebrew" && decodedWhisperText(response) == "שלום עולם", "Whisper language metadata decodes alongside Hebrew")
     } catch { failures.append("transcript layout: language response failed to decode") }
 
-    let controller = DictationController(transcriber: TranscriberService())
+    let preferenceSuite = "com.local.pa3.tests.window-level.\(UUID().uuidString)"
+    let preferences = UserDefaults(suiteName: preferenceSuite)!
+    defer { preferences.removePersistentDomain(forName: preferenceSuite) }
+    let controller = DictationController(transcriber: TranscriberService(), preferences: preferences)
+    let levelWindow = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+                                styleMask: [.titled], backing: .buffered, defer: false)
+    levelWindow.bindAlwaysOnTop(to: controller)
+    check(controller.alwaysOnTop && levelWindow.level == .floating, "dictation window stays on top by default")
+    controller.alwaysOnTop = false
+    check(levelWindow.level == .normal, "turning always on top off restores normal window stacking")
+    check(preferences.object(forKey: DictationController.alwaysOnTopKey) as? Bool == false,
+          "disabling always on top saves an explicit false preference")
+    let restoredController = DictationController(transcriber: TranscriberService(),
+                                               preferences: UserDefaults(suiteName: preferenceSuite)!)
+    let restoredWindow = KeyWindow(contentRect: levelWindow.frame, styleMask: [.titled], backing: .buffered, defer: false)
+    restoredWindow.bindAlwaysOnTop(to: restoredController)
+    check(!restoredController.alwaysOnTop && restoredWindow.level == .normal,
+          "saved disabled preference restores normal stacking when creating a new controller and window")
+    controller.beginNewSession()
+    check(!controller.alwaysOnTop && levelWindow.level == .normal, "new dictation sessions preserve the window toggle")
+    controller.alwaysOnTop = true
+    check(levelWindow.level == .floating, "turning always on top back on restores floating window stacking")
+    let restoredEnabledController = DictationController(transcriber: TranscriberService(),
+                                                      preferences: UserDefaults(suiteName: preferenceSuite)!)
+    check(restoredEnabledController.alwaysOnTop, "saved enabled preference is restored on next launch")
     let source = "שלום עולם.\n\nשלום OpenAI test 123 עולם.\n\nEnglish text stays left to right."
     controller.handleTranscription(TranscriptionUpdate(text: source, language: "hebrew"))
     check(controller.detectedLanguage == "hebrew", "language reaches the controller with the text")

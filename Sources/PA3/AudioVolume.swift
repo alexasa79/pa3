@@ -359,7 +359,14 @@ final class OutputDucker {
 /// All access is on the main actor; CoreAudio listeners and timers are delivered on the main
 /// queue too, so the callbacks `assumeIsolated`.
 @MainActor
-final class OutputMuter {
+protocol AudioOutputMuting: AnyObject {
+    var isActive: Bool { get }
+    func start()
+    func stop()
+}
+
+@MainActor
+final class OutputMuter: AudioOutputMuting {
     /// Nominal sample rates below this mean the Bluetooth headset (mic) profile is active.
     private let musicSampleRateThreshold: Float64 = 32000
     /// Hard cap on how long we keep correcting after stop, in case the switch-back never arrives.

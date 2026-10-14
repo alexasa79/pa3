@@ -23,6 +23,19 @@ final class DictationController: ObservableObject {
     @Published private(set) var detectedLanguage: String?
     @Published private(set) var transcriptionIterations = 0
     @Published var dictating = false
+    @Published var alwaysOnTop = true {
+        didSet { preferences.set(alwaysOnTop, forKey: Self.alwaysOnTopKey) }
+    }
+    static let alwaysOnTopKey = "alwaysOnTop"
+    @Published var autoMuteAudio = true {
+        didSet {
+            preferences.set(autoMuteAudio, forKey: Self.autoMuteAudioKey)
+            if dictating {
+                if autoMuteAudio { duckOutput() } else { restoreOutput() }
+            }
+        }
+    }
+    static let autoMuteAudioKey = "autoMuteAudio"
     @Published private(set) var showingShortcuts = false
     @Published var spellChecking = false
     @Published var words: [String] = []
@@ -54,6 +67,7 @@ final class DictationController: ObservableObject {
     var narrationIsBlocked: Bool { dictating || runningStop || muter.isActive || transcriber.captureIsBusy }
 
     private let transcriber: TranscriberService
+    private let preferences: UserDefaults
     private let vocabulary: Vocabulary
     private var committed = ""
     private var segment = ""
@@ -86,9 +100,10 @@ final class DictationController: ObservableObject {
     /// Mutes output while dictating (and re-asserts across the Bluetooth profile switch the
     /// microphone triggers). We mute rather than lower the volume because a Bluetooth headset's
     /// volume control has no audible effect while its mic is open, but its mute control does.
-    private let muter = OutputMuter()
+    private let muter: any AudioOutputMuting
 
     private func duckOutput() {
+        guard autoMuteAudio else { return }
         muter.start()
     }
 
@@ -96,13 +111,19 @@ final class DictationController: ObservableObject {
         muter.stop()
     }
 
-    init(transcriber: TranscriberService) {
+    init(transcriber: TranscriberService, preferences: UserDefaults = .standard,
+         outputMuter: any AudioOutputMuting = OutputMuter()) {
         self.transcriber = transcriber
+        self.preferences = preferences
+        self.muter = outputMuter
+        preferences.register(defaults: [Self.alwaysOnTopKey: true, Self.autoMuteAudioKey: true])
+        alwaysOnTop = preferences.bool(forKey: Self.alwaysOnTopKey)
+        autoMuteAudio = preferences.bool(forKey: Self.autoMuteAudioKey)
         self.vocabulary = Vocabulary(path: Self.vocabularyPath())
         self.vocabularyWords = vocabulary.allWords()
         transcriber.setSystemPrompt(vocabulary.systemPrompt())
-        if UserDefaults.standard.object(forKey: Self.contextSecondsKey) != nil {
-            contextSeconds = Self.contextSecondsRange.clamped(UserDefaults.standard.integer(forKey: Self.contextSecondsKey))
+        if preferences.object(forKey: Self.contextSecondsKey) != nil {
+            contextSeconds = Self.contextSecondsRange.clamped(preferences.integer(forKey: Self.contextSecondsKey))
         }
         transcriber.setContextSeconds(contextSeconds)
         transcriber.setStatusHandler { [weak self] message in
@@ -424,7 +445,7 @@ final class DictationController: ObservableObject {
         let value = Self.contextSecondsRange.clamped(contextSeconds + delta)
         guard value != contextSeconds else { return }
         contextSeconds = value
-        UserDefaults.standard.set(value, forKey: Self.contextSecondsKey)
+        preferences.set(value, forKey: Self.contextSecondsKey)
         transcriber.setContextSeconds(value)
         Logger.info("contextSeconds=\(value)")
     }

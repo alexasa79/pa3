@@ -1,6 +1,7 @@
 import AppKit
 @preconcurrency import ApplicationServices
 import Carbon
+import Combine
 import SwiftUI
 
 @MainActor
@@ -209,6 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
         window.collectionBehavior.insert(.moveToActiveSpace)
+        window.bindAlwaysOnTop(to: controller)
         window.contentView = hosting
         window.center()
         window.delegate = self
@@ -503,6 +505,14 @@ extension AppDelegate: NSWindowDelegate {
 }
 
 final class KeyWindow: NSWindow {
+    private var alwaysOnTopSubscription: AnyCancellable?
+
+    func bindAlwaysOnTop(to controller: DictationController) {
+        alwaysOnTopSubscription = controller.$alwaysOnTop.sink { [weak self] enabled in
+            self?.level = enabled ? .floating : .normal
+        }
+    }
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 }

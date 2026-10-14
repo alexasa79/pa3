@@ -221,6 +221,18 @@ struct DictationView: View {
             contextControl
 
             Spacer()
+
+            Toggle(isOn: $controller.alwaysOnTop) {
+                Label("Always on top", systemImage: controller.alwaysOnTop ? "pin.fill" : "pin")
+            }
+            .toggleStyle(.button)
+            .help("Keep the dictation window above other windows, even when another app is active.")
+
+            Toggle(isOn: $controller.autoMuteAudio) {
+                Label("Auto-mute audio", systemImage: controller.autoMuteAudio ? "speaker.slash.fill" : "speaker.wave.2")
+            }
+            .toggleStyle(.button)
+            .help("Automatically mute other audio while dictating and restore its previous mute state when paused. Changes apply immediately.")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
