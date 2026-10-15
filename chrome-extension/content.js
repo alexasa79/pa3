@@ -167,15 +167,23 @@
     }
     if (message && message.type === "reedah-toggle") {
       toggle();
+      sendResponse({enabled: state.enabled});
+      return;
     }
     if (message && message.type === "reedah-pause") {
       togglePause();
+      sendResponse({enabled: state.enabled});
+      return;
     }
-    if (state.enabled && message?.type === "reedah-previous-sentence") {
-      playPreviousSentence();
+    if (message?.type === "reedah-previous-sentence") {
+      if (state.enabled) playPreviousSentence();
+      sendResponse({enabled: state.enabled});
+      return;
     }
-    if (state.enabled && message?.type === "reedah-next-sentence") {
-      skipSentence();
+    if (message?.type === "reedah-next-sentence") {
+      if (state.enabled) skipSentence();
+      sendResponse({enabled: state.enabled});
+      return;
     }
     if (message && message.type === "reedah-state-request") {
       sendResponse({ enabled: state.enabled });
@@ -1442,7 +1450,7 @@
 
     if (message.type === "error") {
       if (session.active && state.cancelRequested) return;
-      console.error(
+      console.info(
         "PA3 extension: Native narration error.",
         message.error || "unknown_error",
         message.details || null,

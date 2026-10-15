@@ -63,7 +63,13 @@ chrome.commands.onCommand.addListener((command) => {
     if (!tab || !tab.id) return;
     chrome.tabs.sendMessage(tab.id, { type }, ...(type === "reedah-toggle" ? [{frameId: 0}] : []), () => {
       if (chrome.runtime.lastError) {
-        console.error("PA3 extension: Could not deliver keyboard command.", chrome.runtime.lastError);
+        const error = chrome.runtime.lastError;
+        // Shortcuts can fire on pages without a content script or during navigation.
+        if (error.message === "Could not establish connection. Receiving end does not exist.") {
+          console.info("PA3 extension: Keyboard command skipped; page receiver is unavailable.", error.message);
+        } else {
+          console.error("PA3 extension: Could not deliver keyboard command.", error.message);
+        }
         return;
       }
     });

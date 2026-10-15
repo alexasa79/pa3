@@ -50,6 +50,23 @@ test('keyboard commands without an active tab do nothing',()=>{
   assert.equal(sent.length,0);
 });
 
+test('keyboard commands without a page receiver are informational',()=>{
+  const {command,errors,info}=setup([{id:7}], {
+    message:'Could not establish connection. Receiving end does not exist.'
+  });
+  command('toggle-overlay');
+  assert.equal(errors.length,0);
+  assert.equal(info.length,1);
+});
+
+test('unexpected keyboard delivery errors remain visible with their message',()=>{
+  const {command,errors,info}=setup([{id:7}], {message:'Unexpected messaging failure'});
+  command('pause-playback');
+  assert.equal(errors.length,1);
+  assert.equal(errors[0][1],'Unexpected messaging failure');
+  assert.equal(info.length,0);
+});
+
 test('manifest assigns four distinct shortcuts without an activation binding',()=>{
   const {commands}=require('../manifest.json');
   assert.deepEqual(Object.keys(commands).sort(),['next-sentence','pause-playback','previous-sentence','toggle-overlay']);

@@ -57,7 +57,7 @@ function setup(realAudio = false, completionRace = false) {
   const {state, maybeStartPlayback} = context.queueTest;
   state.playbackId = 1;
   state.activeEl = {};
-  return {state, streamContext, receive, start:()=>maybeStartPlayback(1), played, ended, timers, prefetched, ...context.queueTest};
+  return {state, streamContext, receive:(message, sender = {}, reply = () => {}) => receive(message, sender, reply), start:()=>maybeStartPlayback(1), played, ended, timers, prefetched, ...context.queueTest};
 }
 
 test('sentence shortcuts skip and replay through the existing playback queue', () => {
