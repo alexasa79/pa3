@@ -171,7 +171,7 @@
       let cursor = this.sources.at(-1)?.end ?? this.offset;
       let when = this.sources.length ? this.sources.at(-1).when + this.sources.at(-1).duration : this.ctx.currentTime + 0.04;
       if (this.sources.length && this.total > cursor && this.ctx.currentTime - when > 0.05) {
-        console.warn("Reedah: Audio buffer underrun", {
+        console.warn("PA3 extension: Audio buffer underrun", {
           gapSeconds: Number((this.ctx.currentTime - when).toFixed(3)),
           playbackRate: this.playbackRate,
           bufferedAudioSeconds: Number((this.total - cursor).toFixed(3))

@@ -92,7 +92,7 @@
     try {
       return detectHighlightModeFromColors(backgroundColors.map(resolveBrowserColor));
     } catch (error) {
-      console.error("Reedah: Could not resolve page background colors.", error);
+      console.error("PA3 extension: Could not resolve page background colors.", error);
       return null;
     }
   }

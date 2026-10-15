@@ -106,7 +106,7 @@ function closePreviewSession(session, sendStop) {
       session.currentAudio.pause();
       session.currentAudio.src = "";
     } catch (error) {
-      console.error("Reedah: Failed to stop preview audio.", error);
+      console.error("PA3 extension: Failed to stop preview audio.", error);
     }
     session.currentAudio = null;
   }
@@ -129,13 +129,13 @@ function closePreviewSession(session, sendStop) {
           utteranceId: session.utteranceId
         });
       } catch (error) {
-        console.error("Reedah: Failed to stop preview narration.", error);
+        console.error("PA3 extension: Failed to stop preview narration.", error);
       }
     }
     try {
       session.port.disconnect();
     } catch (error) {
-      console.error("Reedah: Failed to disconnect preview narration.", error);
+      console.error("PA3 extension: Failed to disconnect preview narration.", error);
     }
     session.port = null;
   }
@@ -192,7 +192,7 @@ function playNextPreviewAudio(session) {
     if (streamItem) {
       try { session.port.postMessage({type:"consumed", index:streamItem.index}); }
       catch (error) {
-        console.error("Reedah: Could not release preview queue slot.", error);
+        console.error("PA3 extension: Could not release preview queue slot.", error);
         finishPreviewSession(session);
         return;
       }
@@ -224,7 +224,7 @@ function playNextPreviewAudio(session) {
     if (error && error.name === "AbortError") {
       return;
     }
-    console.error("Reedah: Failed to start preview audio.", error);
+    console.error("PA3 extension: Failed to start preview audio.", error);
     setStatus("Failed to start preview audio.", true);
   });
 }
@@ -248,7 +248,7 @@ function startPreviewRequest({
   try {
     port = chrome.runtime.connect({ name: "reedah-native" });
   } catch (error) {
-    console.error("Reedah: Failed to open preview native port.", error);
+    console.error("PA3 extension: Failed to open preview native port.", error);
     setStatus("Failed to open native preview port.", true);
     return false;
   }
@@ -269,7 +269,7 @@ function startPreviewRequest({
   refreshPreviewUi();
   ReedahStreamAudio.unlock().catch(error => {
     if (previewSession !== session) return;
-    console.error("Reedah: Could not activate streaming preview.", error);
+    console.error("PA3 extension: Could not activate streaming preview.", error);
     finishPreviewSession(session);
     setStatus("Could not activate audio.", true);
   });
@@ -281,16 +281,16 @@ function startPreviewRequest({
 
     if (message.type === "prepared_sentence_jobs") {
       if (!Array.isArray(message.sentenceJobs)) {
-        console.error("Reedah: Invalid prepared sentence jobs payload in options preview.");
+        console.error("PA3 extension: Invalid prepared sentence jobs payload in options preview.");
         return;
       }
       for (const job of message.sentenceJobs) {
         if (!job || typeof job !== "object") {
-          console.error("Reedah: Invalid prepared sentence job in options preview.", job);
+          console.error("PA3 extension: Invalid prepared sentence job in options preview.", job);
           continue;
         }
         console.info(
-          "Reedah: Options preview sentence sent to model:",
+          "PA3 extension: Options preview sentence sent to model:",
           job.index,
           job.location,
           job.length,
@@ -316,7 +316,7 @@ function startPreviewRequest({
           playNextPreviewAudio(session);
         }
       } catch (error) {
-        console.error("Reedah: Invalid preview stream.", error);
+        console.error("PA3 extension: Invalid preview stream.", error);
         finishPreviewSession(session);
         setStatus("Streaming preview failed.", true);
       }
@@ -332,7 +332,7 @@ function startPreviewRequest({
       try {
         url = createAudioUrl(message.audioBase64, message.mimeType);
       } catch (error) {
-        console.error("Reedah: Failed to decode preview audio payload.", error);
+        console.error("PA3 extension: Failed to decode preview audio payload.", error);
         finishPreviewSession(session);
         setStatus("Failed to decode preview audio.", true);
         return;
@@ -350,7 +350,7 @@ function startPreviewRequest({
 
     if (message.type === "error") {
       const details = message.details || message.error || "native_error";
-      console.error("Reedah: Native preview error.", details);
+      console.error("PA3 extension: Native preview error.", details);
       finishPreviewSession(session);
       setStatus(`Preview failed: ${details}`, true);
     }
@@ -362,7 +362,7 @@ function startPreviewRequest({
     const lastError = chrome.runtime.lastError;
     finishPreviewSession(session);
     if (lastError) {
-      console.error("Reedah: Preview native host disconnected.", lastError.message);
+      console.error("PA3 extension: Preview native host disconnected.", lastError.message);
       setStatus(`Preview disconnected: ${lastError.message}`, true);
       return;
     }
@@ -382,7 +382,7 @@ function startPreviewRequest({
   try {
     port.postMessage(payload);
   } catch (error) {
-    console.error("Reedah: Failed to send preview request.", error);
+    console.error("PA3 extension: Failed to send preview request.", error);
     finishPreviewSession(session);
     setStatus("Failed to send preview request.", true);
     return false;
@@ -446,7 +446,7 @@ function persistSettings(successMessage) {
     () => {
       if (chrome.runtime.lastError) {
         console.error(
-          "Reedah: Failed to auto-save settings.",
+          "PA3 extension: Failed to auto-save settings.",
           chrome.runtime.lastError.message
         );
         setStatus("Failed to save settings.", true);

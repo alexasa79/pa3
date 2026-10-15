@@ -5,8 +5,8 @@ const tabState = new Map();
 const nativeRequestBuilder = globalThis.ReedahNativeRequestBuilder;
 if (!nativeRequestBuilder ||
   typeof nativeRequestBuilder.buildSentenceJobs !== "function") {
-  console.error("Reedah: Native request builder helpers unavailable.");
-  throw new Error("Reedah: native request builder helpers unavailable");
+  console.error("PA3 extension: Native request builder helpers unavailable.");
+  throw new Error("PA3 extension: native request builder helpers unavailable");
 }
 
 function updateTabState(tabId, enabled) {
@@ -63,7 +63,7 @@ chrome.commands.onCommand.addListener((command) => {
     if (!tab || !tab.id) return;
     chrome.tabs.sendMessage(tab.id, { type }, ...(type === "reedah-toggle" ? [{frameId: 0}] : []), () => {
       if (chrome.runtime.lastError) {
-        console.error("Reedah: Could not deliver keyboard command.", chrome.runtime.lastError);
+        console.error("PA3 extension: Could not deliver keyboard command.", chrome.runtime.lastError);
         return;
       }
     });
@@ -72,7 +72,7 @@ chrome.commands.onCommand.addListener((command) => {
 
 function broadcastFrameMessage(tabId, message) {
   chrome.tabs.sendMessage(tabId, message, () => {
-    if (chrome.runtime.lastError) console.error("Reedah: Frame broadcast failed.", chrome.runtime.lastError);
+    if (chrome.runtime.lastError) console.error("PA3 extension: Frame broadcast failed.", chrome.runtime.lastError);
   });
 }
 
@@ -82,7 +82,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "reedah-controls-state") {
     if ((sender.frameId ?? 0) === 0) return;
     chrome.tabs.sendMessage(tabId, message, {frameId: 0}, () => {
-      if (chrome.runtime.lastError) console.error("Reedah: Could not update page controls.", chrome.runtime.lastError);
+      if (chrome.runtime.lastError) console.error("PA3 extension: Could not update page controls.", chrome.runtime.lastError);
     });
     return;
   }
@@ -99,7 +99,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // A service worker can restart while the top document remains enabled.
     chrome.tabs.sendMessage(tabId, {type: "reedah-state-request"}, {frameId: 0}, response => {
       if (chrome.runtime.lastError) {
-        console.error("Reedah: Unable to synchronize a new frame.", chrome.runtime.lastError);
+        console.error("PA3 extension: Unable to synchronize a new frame.", chrome.runtime.lastError);
         sendResponse({enabled: false});
         return;
       }
@@ -190,7 +190,7 @@ chrome.runtime.onConnect.addListener((port) => {
       old.closeTimer = setTimeout(() => old.host.disconnect(), 25000);
       try { old.host.postMessage({ action: "stop" }); }
       catch (error) {
-        console.error("Reedah: Could not stop PA3 bridge.", error);
+        console.error("PA3 extension: Could not stop PA3 bridge.", error);
         clearTimeout(old.closeTimer);
         old.host.disconnect();
       }
@@ -217,7 +217,7 @@ chrome.runtime.onConnect.addListener((port) => {
           session.consumed.add(message.index);
         }
       } catch (error) {
-        console.error("Reedah: Playback flow control failed.", error);
+        console.error("PA3 extension: Playback flow control failed.", error);
         port.postMessage({type:"error", error:"flow_control", details:error.message});
         stopSession();
       }
@@ -251,7 +251,7 @@ chrome.runtime.onConnect.addListener((port) => {
       resolvedRate = parseRate(message.rate);
       if (message.rate != null && resolvedRate == null) {
         const details = `invalid_rate:${String(message.rate)}`;
-        console.error("Reedah: Invalid narration rate override.", details);
+        console.error("PA3 extension: Invalid narration rate override.", details);
         port.postMessage({
           type: "error",
           utteranceId,
@@ -263,7 +263,7 @@ chrome.runtime.onConnect.addListener((port) => {
     }
 
     if (resolvedRate != null && (resolvedRate < 0.5 || resolvedRate > 2)) {
-      console.error("Reedah: Invalid playback speed.");
+      console.error("PA3 extension: Invalid playback speed.");
       port.postMessage({ type: "error", utteranceId, error: "invalid_rate" });
       return;
     }
@@ -272,7 +272,7 @@ chrome.runtime.onConnect.addListener((port) => {
       sentenceJobs = nativeRequestBuilder.buildSentenceJobs(text, sentenceRanges, {preserveOffsets: true});
     } catch (error) {
       const details = error.message || String(error);
-      console.error("Reedah: Failed to build sentence jobs.", details);
+      console.error("PA3 extension: Failed to build sentence jobs.", details);
       port.postMessage({
         type: "error",
         utteranceId,
@@ -282,7 +282,7 @@ chrome.runtime.onConnect.addListener((port) => {
       return;
     }
     if (sentenceJobs.length === 0) {
-      console.error("Reedah: No sentence jobs available.");
+      console.error("PA3 extension: No sentence jobs available.");
       port.postMessage({
         type: "error",
         utteranceId,
@@ -299,7 +299,7 @@ chrome.runtime.onConnect.addListener((port) => {
 
     for (const job of sentenceJobs) {
       console.info(
-        "Reedah: Narration sentence sent to model:",
+        "PA3 extension: Narration sentence sent to model:",
         job.index,
         job.location,
         job.length,
@@ -331,7 +331,7 @@ chrome.runtime.onConnect.addListener((port) => {
             }
           }
         } catch (error) {
-          console.error("Reedah: Invalid PA3 audio transfer.", error);
+          console.error("PA3 extension: Invalid PA3 audio transfer.", error);
           port.postMessage({ type: "error", utteranceId, error: "invalid_audio", details: error.message });
           stopSession();
         }
@@ -341,13 +341,13 @@ chrome.runtime.onConnect.addListener((port) => {
         clearTimeout(current.closeTimer);
         if (session !== current || disconnected) return;
         session = null;
-        console.error("Reedah: PA3 bridge disconnected.", error?.message);
+        console.error("PA3 extension: PA3 bridge disconnected.", error?.message);
         port.postMessage({ type: "error", utteranceId, error: "bridge_unavailable",
           details: error?.message || "PA3 bridge disconnected. Install the native host and start PA3." });
       });
       host.postMessage({ action: "speak", utteranceId, sentenceJobs, window:current.window });
     } catch (error) {
-      console.error("Reedah: Could not connect to PA3 bridge.", error);
+      console.error("PA3 extension: Could not connect to PA3 bridge.", error);
       port.postMessage({ type: "error", utteranceId, error: "bridge_unavailable", details: error.message });
       stopSession();
     }

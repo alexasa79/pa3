@@ -57,7 +57,7 @@ class NativeMessenger:
 
 
 def log(message):
-    print("Reedah: " + str(message), file=sys.stderr, flush=True)
+    print("PA3 extension: " + str(message), file=sys.stderr, flush=True)
 
 
 class PA3Client:

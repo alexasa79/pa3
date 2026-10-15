@@ -1,14 +1,14 @@
 (() => {
   const frameDetection = window.ReedahFrameDetection;
-  if (!frameDetection) { console.error("Reedah: Frame detection unavailable."); return; }
+  if (!frameDetection) { console.error("PA3 extension: Frame detection unavailable."); return; }
   if (!frameDetection.shouldRunInFrame()) return;
   const FRAME_TOKEN = Math.random().toString(36).slice(2);
   const IN_EDITOR_FRAME = frameDetection.isEditorFrame();
   const editorNarration = window.ReedahEditorNarration;
-  if (!editorNarration) { console.error("Reedah: Editor narration helpers unavailable."); return; }
+  if (!editorNarration) { console.error("PA3 extension: Editor narration helpers unavailable."); return; }
   const mathNarration = window.ReedahMathNarration;
   if (!mathNarration || typeof mathNarration.readFormula !== "function") {
-    console.error("Reedah: Mathematical narration helpers unavailable.");
+    console.error("PA3 extension: Mathematical narration helpers unavailable.");
     return;
   }
 
@@ -80,33 +80,33 @@
   };
   const sentence = window.ReedahSentence;
   if (!sentence || typeof sentence.buildSentenceRanges !== "function") {
-    console.error("Reedah: Sentence helpers unavailable.");
+    console.error("PA3 extension: Sentence helpers unavailable.");
     return;
   }
   const overlayGeometry = window.ReedahOverlayGeometry;
   if (!overlayGeometry || typeof overlayGeometry.computeOverlayPosition !== "function") {
-    console.error("Reedah: Overlay geometry helpers unavailable.");
+    console.error("PA3 extension: Overlay geometry helpers unavailable.");
     return;
   }
   const hoverBounds = window.ReedahHoverBounds;
   if (!hoverBounds || typeof hoverBounds.computeHoverBounds !== "function") {
-    console.error("Reedah: Hover bounds helpers unavailable.");
+    console.error("PA3 extension: Hover bounds helpers unavailable.");
     return;
   }
   const highlightRanges = window.ReedahHighlightRanges;
   if (!highlightRanges || typeof highlightRanges.computeHighlightSlices !== "function") {
-    console.error("Reedah: Highlight range helpers unavailable.");
+    console.error("PA3 extension: Highlight range helpers unavailable.");
     return;
   }
   const highlightProgress = window.ReedahHighlightProgress;
   if (!highlightProgress ||
     typeof highlightProgress.computeWordFocusStrength !== "function") {
-    console.error("Reedah: Highlight progress helpers unavailable.");
+    console.error("PA3 extension: Highlight progress helpers unavailable.");
     return;
   }
   const highlightTheme = window.ReedahHighlightTheme;
   if (!highlightTheme || typeof highlightTheme.detectHighlightMode !== "function") {
-    console.error("Reedah: Highlight theme helpers unavailable.");
+    console.error("PA3 extension: Highlight theme helpers unavailable.");
     return;
   }
   const orderedListNarration = window.ReedahOrderedListNarration;
@@ -114,7 +114,7 @@
     typeof orderedListNarration.parseIntegerAttribute !== "function" ||
     typeof orderedListNarration.resolveOrderedListItemNumber !== "function" ||
     typeof orderedListNarration.buildOrderedListNarrationPrefix !== "function") {
-    console.error("Reedah: Ordered list narration helpers unavailable.");
+    console.error("PA3 extension: Ordered list narration helpers unavailable.");
     return;
   }
   const playbackHistory = window.ReedahPlaybackHistory;
@@ -122,18 +122,18 @@
     typeof playbackHistory.addPlayedItem !== "function" ||
     typeof playbackHistory.shouldRevokeUrl !== "function" ||
     typeof playbackHistory.takeSkippedItem !== "function") {
-    console.error("Reedah: Playback history helpers unavailable.");
+    console.error("PA3 extension: Playback history helpers unavailable.");
     return;
   }
   const controlsNavigation = window.ReedahControlsNavigation;
   if (!controlsNavigation || typeof controlsNavigation.getAdjacentItem !== "function") {
-    console.error("Reedah: Controls navigation helpers unavailable.");
+    console.error("PA3 extension: Controls navigation helpers unavailable.");
     return;
   }
   const narrationText = window.ReedahNarrationText;
   if (!narrationText ||
     typeof narrationText.normalizeNarrationText !== "function") {
-    console.error("Reedah: Narration text helpers unavailable.");
+    console.error("PA3 extension: Narration text helpers unavailable.");
     return;
   }
 
@@ -241,7 +241,7 @@
       if (window.top !== window) {
         chrome.runtime.sendMessage({type: "reedah-frame-ready"}, response => {
           if (chrome.runtime.lastError) {
-            console.error("Reedah: Frame state synchronization failed.", chrome.runtime.lastError);
+            console.error("PA3 extension: Frame state synchronization failed.", chrome.runtime.lastError);
             return;
           }
           if (response?.enabled && !state.enabled) enable();
@@ -251,7 +251,7 @@
       }
       chrome.runtime.sendMessage({ type: "reedah-state", enabled: state.enabled });
     } catch (error) {
-      console.error("Reedah: Extension state synchronization failed.", error);
+      console.error("PA3 extension: Extension state synchronization failed.", error);
     }
   }
 
@@ -517,7 +517,7 @@
   function buildNarrationPayload(el) {
     const fullText = getFullText(el);
     if (!fullText) {
-      console.error("Reedah: Empty narration text.");
+      console.error("PA3 extension: Empty narration text.");
       return null;
     }
 
@@ -557,7 +557,7 @@
 
     const targetIndex = items.indexOf(el);
     if (targetIndex === -1) {
-      console.error("Reedah: Failed to find ordered list item index.");
+      console.error("PA3 extension: Failed to find ordered list item index.");
       return null;
     }
 
@@ -565,7 +565,7 @@
     if (list.hasAttribute("start")) {
       const parsedStart = orderedListNarration.parseIntegerAttribute(list.getAttribute("start"));
       if (!Number.isSafeInteger(parsedStart)) {
-        console.error("Reedah: Invalid ordered list start value.");
+        console.error("PA3 extension: Invalid ordered list start value.");
         return null;
       }
       start = parsedStart;
@@ -582,7 +582,7 @@
 
       const parsedValue = orderedListNarration.parseIntegerAttribute(item.getAttribute("value"));
       if (!Number.isSafeInteger(parsedValue)) {
-        console.error("Reedah: Invalid ordered list item value.");
+        console.error("PA3 extension: Invalid ordered list item value.");
         return null;
       }
       itemValues.push(parsedValue);
@@ -595,14 +595,14 @@
       targetIndex
     );
     if (!Number.isSafeInteger(itemNumber)) {
-      console.error("Reedah: Failed to resolve ordered list item number.");
+      console.error("PA3 extension: Failed to resolve ordered list item number.");
       return null;
     }
 
     const markerType = list.getAttribute("type") || "1";
     const prefix = orderedListNarration.buildOrderedListNarrationPrefix(itemNumber, markerType);
     if (!prefix) {
-      console.error("Reedah: Failed to build ordered list narration prefix.");
+      console.error("PA3 extension: Failed to build ordered list narration prefix.");
       return null;
     }
     return prefix;
@@ -644,13 +644,13 @@
     if (!segments.length) return;
     const highlightMode = highlightTheme.detectHighlightMode(el);
     if (highlightMode !== HIGHLIGHT_MODE_LIGHT && highlightMode !== HIGHLIGHT_MODE_DARK) {
-      console.error("Reedah: Failed to detect highlight mode.");
+      console.error("PA3 extension: Failed to detect highlight mode.");
       return;
     }
 
     const sentenceLength = sentence.end - sentence.start;
     if (!Number.isFinite(sentenceLength) || sentenceLength <= 0) {
-      console.error("Reedah: Invalid sentence length for highlight progress.");
+      console.error("PA3 extension: Invalid sentence length for highlight progress.");
       return;
     }
 
@@ -669,7 +669,7 @@
         state.editorHighlightProgress = 0;
         state.editorHighlightRange = null;
       } catch (error) {
-        console.error("Reedah: Failed to highlight document editor text.", error);
+        console.error("PA3 extension: Failed to highlight document editor text.", error);
         stopNarration();
       }
       return;
@@ -686,7 +686,7 @@
       const sliceStart = Math.max(sentence.start, slice.segment.start) - sentence.start;
       const sliceEnd = Math.min(sentence.end, slice.segment.end) - sentence.start;
       if (sliceEnd <= sliceStart) {
-        console.error("Reedah: Failed to map highlight slice for progress.");
+        console.error("PA3 extension: Failed to map highlight slice for progress.");
         continue;
       }
 
@@ -701,7 +701,7 @@
     }
 
     if (!spans.length || !entries.length) {
-      console.error("Reedah: Failed to create sentence highlight spans.");
+      console.error("PA3 extension: Failed to create sentence highlight spans.");
       return;
     }
 
@@ -713,7 +713,7 @@
 
     const wordEntries = buildWordEntries(entries, sentenceLength);
     if (!wordEntries.length) {
-      console.error("Reedah: Failed to create word highlight spans.");
+      console.error("PA3 extension: Failed to create word highlight spans.");
       const parents = new Set();
       for (const span of spans) {
         if (!span || !span.parentNode) continue;
@@ -729,7 +729,7 @@
         try {
           parent.normalize();
         } catch (error) {
-          console.error("Reedah: Failed to normalize word highlight cleanup.", error);
+          console.error("PA3 extension: Failed to normalize word highlight cleanup.", error);
         }
       }
       return;
@@ -763,12 +763,12 @@
       const text = entry.text ?? entry.span.textContent ?? "";
       if (!text) continue;
       if (!Number.isSafeInteger(entry.startOffset) || !Number.isSafeInteger(entry.endOffset)) {
-        console.error("Reedah: Invalid sentence offsets for word highlights.");
+        console.error("PA3 extension: Invalid sentence offsets for word highlights.");
         return [];
       }
       const expectedLength = entry.endOffset - entry.startOffset;
       if (expectedLength <= 0 || text.length !== expectedLength) {
-        console.error("Reedah: Highlight slice length mismatch.");
+        console.error("PA3 extension: Highlight slice length mismatch.");
         return [];
       }
 
@@ -778,13 +778,13 @@
         const start = entry.startOffset + match.index;
         const end = start + match[0].length;
         if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start) {
-          console.error("Reedah: Invalid word range while building highlights.");
+          console.error("PA3 extension: Invalid word range while building highlights.");
           return [];
         }
 
         const previous = ranges[ranges.length - 1];
         if (previous && start < previous.end) {
-          console.error("Reedah: Overlapping word ranges detected in highlight text.");
+          console.error("PA3 extension: Overlapping word ranges detected in highlight text.");
           return [];
         }
         if (previous && start === previous.end) {
@@ -820,11 +820,11 @@
     const entryStart = entry.startOffset;
     const entryEnd = entry.endOffset;
     if (!Number.isSafeInteger(entryStart) || !Number.isSafeInteger(entryEnd) || entryEnd <= entryStart) {
-      console.error("Reedah: Invalid highlight slice offsets.");
+      console.error("PA3 extension: Invalid highlight slice offsets.");
       return;
     }
     if (text.length !== entryEnd - entryStart) {
-      console.error("Reedah: Highlight slice text mismatch.");
+      console.error("PA3 extension: Highlight slice text mismatch.");
       return;
     }
 
@@ -926,7 +926,7 @@
       try {
         parent.normalize();
       } catch (error) {
-        console.error("Reedah: Failed to normalize highlighted text nodes.", error);
+        console.error("PA3 extension: Failed to normalize highlighted text nodes.", error);
       }
     }
     state.currentHighlightSpans = [];
@@ -949,7 +949,7 @@
 
   function collectTextSegments(el, textOffset = 0) {
     if (!Number.isSafeInteger(textOffset) || textOffset < 0) {
-      console.error("Reedah: Invalid highlight text offset.");
+      console.error("PA3 extension: Invalid highlight text offset.");
       return [];
     }
     const segments = [];
@@ -1006,7 +1006,7 @@
         for (let i=node.childNodes.length-1;i>=0;i-=1) pending.push(node.childNodes[i]);
       }
     } catch (error) {
-      console.error("Reedah: Failed to read mathematical narration.", error);
+      console.error("PA3 extension: Failed to read mathematical narration.", error);
       return [];
     }
     return segments;
@@ -1028,7 +1028,7 @@
       span.appendChild(node);
       return span;
     } catch (error) {
-      console.error("Reedah: Failed to wrap formula highlight.", error);
+      console.error("PA3 extension: Failed to wrap formula highlight.", error);
       return null;
     }
   }
@@ -1038,7 +1038,7 @@
       return null;
     }
     if (highlightMode !== HIGHLIGHT_MODE_LIGHT && highlightMode !== HIGHLIGHT_MODE_DARK) {
-      console.error("Reedah: Invalid highlight mode.");
+      console.error("PA3 extension: Invalid highlight mode.");
       return null;
     }
 
@@ -1065,7 +1065,7 @@
       span.appendChild(target);
       return span;
     } catch (error) {
-      console.error("Reedah: Failed to wrap sentence highlight slice.", error);
+      console.error("PA3 extension: Failed to wrap sentence highlight slice.", error);
       return null;
     }
   }
@@ -1084,7 +1084,7 @@
         state.editorHighlightRange = range;
         state.editorHighlightProgress = progress;
       } catch (error) {
-        console.error("Reedah: Failed to update document editor highlight.", error);
+        console.error("PA3 extension: Failed to update document editor highlight.", error);
         stopNarration();
       }
       return;
@@ -1093,7 +1093,7 @@
     if (!entries.length) return;
     const sentenceLength = state.currentSentenceLength;
     if (!Number.isFinite(sentenceLength) || sentenceLength <= 0) {
-      console.error("Reedah: Invalid sentence length for word focus.");
+      console.error("PA3 extension: Invalid sentence length for word focus.");
       for (const entry of entries) {
         if (!entry || !entry.span) continue;
         clearWordFocusStyles(entry.span);
@@ -1118,7 +1118,7 @@
         range ? 0 : WORD_FOCUS_EDGE_CHARS
       );
       if (!Number.isFinite(strength)) {
-        console.error("Reedah: Invalid word focus strength.");
+        console.error("PA3 extension: Invalid word focus strength.");
         clearWordFocusStyles(entry.span);
         continue;
       }
@@ -1141,7 +1141,7 @@
   function startHighlightWordFocusLoop(playbackId, audio) {
     stopHighlightWordFocusLoop();
     if (!audio) {
-      console.error("Reedah: Missing audio element for highlight progress.");
+      console.error("PA3 extension: Missing audio element for highlight progress.");
       return;
     }
 
@@ -1215,7 +1215,7 @@
     stopNarration();
 
     if (editorNarration.rootFor(el) && !editorNarration.supportsHighlights(window)) {
-      console.error("Reedah: CSS Custom Highlights are required to narrate this document editor.");
+      console.error("PA3 extension: CSS Custom Highlights are required to narrate this document editor.");
       return;
     }
 
@@ -1226,7 +1226,7 @@
     const playbackId = ++state.playbackId;
     ReedahStreamAudio.unlock().catch(error => {
       if (state.playbackId !== playbackId) return;
-      console.error("Reedah: Could not activate streaming audio.", error);
+      console.error("PA3 extension: Could not activate streaming audio.", error);
       clearActiveNarration();
     });
     state.cancelRequested = false;
@@ -1234,14 +1234,14 @@
 
     const narration = buildNarrationPayload(el);
     if (!narration) {
-      console.error("Reedah: Failed to build narration payload.");
+      console.error("PA3 extension: Failed to build narration payload.");
       clearActiveNarration();
       return;
     }
 
     const sentenceRanges = sentence.buildParagraphRanges(narration.text);
     if (!sentenceRanges.length) {
-      console.error("Reedah: No sentences available for narration.");
+      console.error("PA3 extension: No sentences available for narration.");
       clearActiveNarration();
       return;
     }
@@ -1252,7 +1252,7 @@
       highlightTextOffset: narration.highlightTextOffset
     });
     if (!session) {
-      console.error("Reedah: Native narration failed to start.");
+      console.error("PA3 extension: Native narration failed to start.");
       clearActiveNarration();
       return;
     }
@@ -1292,7 +1292,7 @@
       ? 0
       : options.highlightTextOffset;
     if (!Number.isSafeInteger(highlightTextOffset) || highlightTextOffset < 0) {
-      console.error("Reedah: Invalid native session highlight offset.");
+      console.error("PA3 extension: Invalid native session highlight offset.");
       return null;
     }
 
@@ -1327,7 +1327,7 @@
     try {
       port.postMessage({ type: "start", text, utteranceId, sentenceRanges, window:options.prefetch ? 1 : 2 });
     } catch (error) {
-      console.error("Reedah: Failed to start native narration.", { utteranceId, textLength: text.length, sentences: sentenceRanges.length, error });
+      console.error("PA3 extension: Failed to start native narration.", { utteranceId, textLength: text.length, sentences: sentenceRanges.length, error });
       try {
         port.disconnect();
       } catch (disconnectError) {
@@ -1347,7 +1347,7 @@
     if (message.type === "started") {
       if (session.logVoice && (message.voiceName || message.voiceIdentifier)) {
         console.info(
-          "Reedah: Using PA3 voice:",
+          "PA3 extension: Using PA3 voice:",
           message.voiceName || message.voiceIdentifier
         );
       }
@@ -1356,16 +1356,16 @@
 
     if (message.type === "prepared_sentence_jobs") {
       if (!Array.isArray(message.sentenceJobs)) {
-        console.error("Reedah: Invalid prepared sentence jobs payload.");
+        console.error("PA3 extension: Invalid prepared sentence jobs payload.");
         return;
       }
       for (const job of message.sentenceJobs) {
         if (!job || typeof job !== "object") {
-          console.error("Reedah: Invalid prepared sentence job.", job);
+          console.error("PA3 extension: Invalid prepared sentence job.", job);
           continue;
         }
         console.info(
-          "Reedah: Narration sentence sent to model:",
+          "PA3 extension: Narration sentence sent to model:",
           job.index,
           job.location,
           job.length,
@@ -1383,7 +1383,7 @@
         if (session.active) resolveSentenceSeek();
         trimStreamHistory();
       } catch (error) {
-        console.error("Reedah: Invalid audio stream ending.", error);
+        console.error("PA3 extension: Invalid audio stream ending.", error);
         if (session.active) clearActiveNarration(); else discardPrefetchSession(session);
       }
       return;
@@ -1407,7 +1407,7 @@
         } else item.stream.append(message);
         if (session.active) { maybeStartPlayback(session.playbackId); updateControls(); }
       } catch (error) {
-        console.error("Reedah: Invalid streaming audio.", error);
+        console.error("PA3 extension: Invalid streaming audio.", error);
         if (session.active) clearActiveNarration(); else discardPrefetchSession(session);
       }
       return;
@@ -1443,7 +1443,7 @@
     if (message.type === "error") {
       if (session.active && state.cancelRequested) return;
       console.error(
-        "Reedah: Native narration error.",
+        "PA3 extension: Native narration error.",
         message.error || "unknown_error",
         message.details || null,
         { utteranceId: session.utteranceId, role: session.active ? "active" : "prefetch" }
@@ -1474,12 +1474,12 @@
 
     if (session.active) {
       if (state.cancelRequested) return;
-      console.error("Reedah: Native narration disconnected unexpectedly.", context);
+      console.error("PA3 extension: Native narration disconnected unexpectedly.", context);
       clearActiveNarration();
       return;
     }
 
-    console.error("Reedah: Prefetch narration disconnected unexpectedly.", context);
+    console.error("PA3 extension: Prefetch narration disconnected unexpectedly.", context);
     discardPrefetchSession(session);
   }
 
@@ -1573,12 +1573,12 @@
 
   function validateEditorSessions(refreshHighlight = true) {
     if (!editorSessionIsCurrent(state.activeSession)) {
-      console.info("Reedah: Document text changed; narration stopped. Press Play to read the updated paragraph.");
+      console.info("PA3 extension: Document text changed; narration stopped. Press Play to read the updated paragraph.");
       stopNarration();
       return;
     }
     if (!editorSessionIsCurrent(state.prefetchSession)) {
-      console.info("Reedah: Prefetched document text changed; discarded stale audio.");
+      console.info("PA3 extension: Prefetched document text changed; discarded stale audio.");
       clearPrefetch();
     }
     // ProseMirror can replace text nodes without changing their text. Rebuild
@@ -1673,7 +1673,7 @@
   function enqueueAudio(session, payload) {
     if (session.active && session.playbackId !== state.playbackId) return;
     if (!payload || typeof payload.audioBase64 !== "string") {
-      console.error("Reedah: Invalid audio payload from native host.", { utteranceId: session.utteranceId, role: session.active ? "active" : "prefetch", payload });
+      console.error("PA3 extension: Invalid audio payload from native host.", { utteranceId: session.utteranceId, role: session.active ? "active" : "prefetch", payload });
       if (session.active) {
         clearActiveNarration();
       } else {
@@ -1684,7 +1684,7 @@
 
     const url = createAudioUrl(payload.audioBase64, payload.mimeType);
     if (!url) {
-      console.error("Reedah: Failed to create audio URL.", { utteranceId: session.utteranceId, mimeType: payload.mimeType, base64Length: payload.audioBase64.length });
+      console.error("PA3 extension: Failed to create audio URL.", { utteranceId: session.utteranceId, mimeType: payload.mimeType, base64Length: payload.audioBase64.length });
       if (session.active) {
         clearActiveNarration();
       } else {
@@ -1828,7 +1828,7 @@
       if (state.currentAudio !== audio) return;
       if (state.cancelRequested) return;
       const errorCode = audio.error ? audio.error.code : null;
-      console.error("Reedah: Audio playback failed.", { errorCode, playbackId, src: audio.src, queueSize: state.audioQueue.length });
+      console.error("PA3 extension: Audio playback failed.", { errorCode, playbackId, src: audio.src, queueSize: state.audioQueue.length });
       cleanupCurrentAudio();
       clearActiveNarration();
     };
@@ -1841,7 +1841,7 @@
       const session = state.activeSession;
       if (state.currentAudio !== audio || !session || session.firstPlaybackLogged) return;
       session.firstPlaybackLogged = true;
-      console.info("Reedah: First audio playing after", ((performance.now() - session.startedAt) / 1000).toFixed(2), "seconds", {utteranceId: session.utteranceId});
+      console.info("PA3 extension: First audio playing after", ((performance.now() - session.startedAt) / 1000).toFixed(2), "seconds", {utteranceId: session.utteranceId});
     };
     audio.play().catch((error) => {
       if (state.playbackId !== playbackId) return;
@@ -1852,7 +1852,7 @@
       if (error && error.name === "AbortError") {
         return;
       }
-      console.error("Reedah: Failed to start audio playback.", { error, playbackId, src: audio.src });
+      console.error("PA3 extension: Failed to start audio playback.", { error, playbackId, src: audio.src });
       cleanupCurrentAudio();
       clearActiveNarration();
     });
@@ -1864,7 +1864,7 @@
       const blob = new Blob([bytes], { type: mimeType || "audio/wav" });
       return URL.createObjectURL(blob);
     } catch (error) {
-      console.error("Reedah: Failed to decode audio payload.", { error, mimeType, base64Length: base64 ? base64.length : 0 });
+      console.error("PA3 extension: Failed to decode audio payload.", { error, mimeType, base64Length: base64 ? base64.length : 0 });
       return null;
     }
   }
@@ -1890,7 +1890,7 @@
           state.activeSession?.port?.postMessage({type:"consumed", index:item.index});
       }
       catch (error) {
-        console.error("Reedah: Could not release narration queue slot.", error);
+        console.error("PA3 extension: Could not release narration queue slot.", error);
         clearActiveNarration();
         return;
       }
@@ -2276,7 +2276,7 @@
         if (error && error.name === "AbortError") {
           return;
         }
-        console.error("Reedah: Failed to resume audio playback.", { error, src: state.currentAudio ? state.currentAudio.src : null });
+        console.error("PA3 extension: Failed to resume audio playback.", { error, src: state.currentAudio ? state.currentAudio.src : null });
         clearActiveNarration();
       });
       updateControls();
@@ -2517,7 +2517,7 @@
     if (index >= targets.length) { skipParagraph(); return; }
     const target = targets[index];
     if (direction < 0 && !session.streams.has(target.passageIndex)) {
-      console.error("Reedah: Previous sentence audio is no longer retained.");
+      console.error("PA3 extension: Previous sentence audio is no longer retained.");
       return;
     }
     state.navigationEpoch += 1;
@@ -2568,7 +2568,7 @@
       if (history >= 0) state.playedHistory.splice(history, 1);
       playNextAudio(state.playbackId, item, word.start);
     } catch (error) {
-      console.error('Reedah: Could not seek to the sentence.', error);
+      console.error('PA3 extension: Could not seek to the sentence.', error);
       clearActiveNarration();
     }
   }
@@ -2607,7 +2607,7 @@
 
     const skipped = playbackHistory.takeSkippedItem(state.currentAudioItem, state.audioQueue);
     if (!skipped) {
-      console.error("Reedah: No sentence available to skip.");
+      console.error("PA3 extension: No sentence available to skip.");
       return;
     }
     state.skippedSentences.add(skipped.index);
@@ -2652,11 +2652,11 @@
     if (!state.activeEl) return;
     const previous = getPreviousCandidate(state.activeEl);
     if (!previous) {
-      console.error("Reedah: No previous paragraph available.");
+      console.error("PA3 extension: No previous paragraph available.");
       return;
     }
     if (!isCandidate(previous)) {
-      console.error("Reedah: Previous paragraph is not narratable.");
+      console.error("PA3 extension: Previous paragraph is not narratable.");
       return;
     }
     startNarration(previous);

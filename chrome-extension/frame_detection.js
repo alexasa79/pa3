@@ -8,7 +8,7 @@
       return win.location.hostname !== 'oauth.officeapps.live.com' &&
         win.location.hostname !== 'webshell.suite.office.com';
     } catch (error) {
-      console.error('Reedah: Unable to inspect frame location.', error);
+      console.error('PA3 extension: Unable to inspect frame location.', error);
       return false;
     }
   }

@@ -1,4 +1,4 @@
-// Reedah: Word Online DOM probe (manual diagnostic tool — not loaded by manifest)
+// PA3 extension: Word Online DOM probe (manual diagnostic tool — not loaded by manifest)
 // Run manually via the DevTools console or a temporary manifest entry to discover
 // the document DOM structure inside the Word Online editor iframe.
 
@@ -9,18 +9,18 @@
   // Skip non-editor iframes (OAuth, etc.)
   const url = window.location.href;
   if (url.includes("oauth.officeapps.live.com") || url.includes("WacOAuth")) {
-    console.log("[Reedah Probe] Skipping OAuth iframe:", url);
+    console.log("[PA3 extension probe] Skipping OAuth iframe:", url);
     return;
   }
 
-  console.log("[Reedah Probe] Running in frame:", url);
+  console.log("[PA3 extension probe] Running in frame:", url);
 
   const PROBE_DELAY_MS = 3000;
   const MAX_WAIT_MS = 30000;
   const POLL_INTERVAL_MS = 1000;
 
   function probe() {
-    console.group("%c[Reedah Probe] Word Online DOM snapshot", "color: #e67e22; font-weight: bold");
+    console.group("%c[PA3 extension probe] Word Online DOM snapshot", "color: #e67e22; font-weight: bold");
 
     // 1. Log the frame URL
     console.log("Frame URL:", url);
@@ -136,7 +136,7 @@
       waited += POLL_INTERVAL_MS;
       setTimeout(waitAndProbe, POLL_INTERVAL_MS);
     } else {
-      console.warn("[Reedah Probe] Timed out waiting for document content. Dumping current state anyway.");
+      console.warn("[PA3 extension probe] Timed out waiting for document content. Dumping current state anyway.");
       probe();
     }
   }
