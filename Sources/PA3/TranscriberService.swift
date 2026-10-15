@@ -126,6 +126,33 @@ final class TranscriberService {
     var cutHandler: (@Sendable (Double, SegmentCut) -> Void)?
     private var isStopping = false
     private var captureRequested = false
+    private var recordingActive = false
+    private var recordingActivityHandler: (@Sendable () -> Void)?
+
+    var isRecording: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return recordingActive
+    }
+
+    func setRecordingActivityHandler(_ handler: @escaping @Sendable () -> Void) {
+        stateLock.lock()
+        recordingActivityHandler = handler
+        stateLock.unlock()
+    }
+
+    private func markRecordingActive(generation expected: Int) {
+        stateLock.lock()
+        guard generation == expected, captureRequested, !isStopping, !recordingActive else {
+            stateLock.unlock()
+            return
+        }
+        recordingActive = true
+        let handler = recordingActivityHandler
+        stateLock.unlock()
+        Logger.info("Microphone recording active; first audio queued")
+        handler?()
+    }
     private var captureStopsInFlight = 0
     var captureIsBusy: Bool {
         stateLock.lock()
@@ -245,9 +272,12 @@ final class TranscriberService {
         stateLock.lock()
         isStopping = true
         captureRequested = false
+        recordingActive = false
+        let activityHandler = recordingActivityHandler
         captureStopsInFlight += 1
         generation += 1
         stateLock.unlock()
+        activityHandler?()
 
         taskLock.lock()
         currentTask?.cancel()
@@ -300,6 +330,10 @@ final class TranscriberService {
 
     private func startCaptureAndWorker(receiver: @escaping @Sendable (TranscriptionUpdate) -> Void) {
         Logger.info("startCaptureAndWorker")
+        stateLock.lock()
+        let captureGeneration = generation
+        stateLock.unlock()
+        reportStatus("Starting microphone...")
         let permission = AVCaptureDevice.authorizationStatus(for: .audio)
         if permission == .denied || permission == .restricted {
             Logger.error("Microphone permission denied or restricted")
@@ -361,6 +395,7 @@ final class TranscriberService {
                     Logger.warn("Dropping audio frame; consumer behind")
                 } else {
                     self.noteQueuedChunk(samples: samples.count)
+                    self.markRecordingActive(generation: captureGeneration)
                 }
             }
         }

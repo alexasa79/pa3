@@ -24,6 +24,7 @@ final class DictationController: ObservableObject {
     @Published private(set) var transcriptionIterations = 0
     @Published private(set) var recordingDuration: Double?
     @Published var dictating = false
+    @Published var recordingActive = false
     @Published var alwaysOnTop = true {
         didSet { preferences.set(alwaysOnTop, forKey: Self.alwaysOnTopKey) }
     }
@@ -130,6 +131,12 @@ final class DictationController: ObservableObject {
         transcriber.setRecordingDurationHandler { [weak self] duration in
             Task { @MainActor in
                 self?.recordingDuration = duration
+            }
+        }
+        transcriber.setRecordingActivityHandler { [weak self, weak transcriber] in
+            Task { @MainActor in
+                guard let self, let transcriber else { return }
+                self.recordingActive = transcriber.isRecording
             }
         }
         transcriber.setStatusHandler { [weak self] message in
@@ -414,14 +421,17 @@ final class DictationController: ObservableObject {
 
     // Batch recognition comes and goes while the microphone remains active.
     // Present the session state, rather than each batch's service message.
-    var startingWhisper: Bool {
-        dictating && (serviceMessage.hasPrefix("Starting Whisper...") || serviceMessage == "Waiting for Whisper...")
+    var startingDictation: Bool {
+        dictating && !recordingActive
     }
 
     var status: String {
         if runningStop { return "Finishing transcription…" }
         if spellChecking { return "Checking spelling…" }
-        if startingWhisper { return "Starting Whisper…" }
+        if startingDictation {
+            return serviceMessage.hasPrefix("Starting Whisper...") || serviceMessage == "Waiting for Whisper..."
+                ? "Starting Whisper…" : "Starting microphone…"
+        }
         return dictating ? "Dictation active" : "Dictation paused"
     }
 
@@ -480,6 +490,7 @@ final class DictationController: ObservableObject {
         onDictationWillStart?()
         if editMode { cancelEditMode() }
         segment = ""
+        recordingActive = false
         dictating = true
         duckOutput()
         serviceMessage = "Starting Whisper..."
@@ -496,6 +507,7 @@ final class DictationController: ObservableObject {
         if !dictating { return }
         runningStop = true
         dictating = false
+        recordingActive = false
         restoreOutput()
         serviceMessage = ""
         debugMessage = "Stopping dictation..."

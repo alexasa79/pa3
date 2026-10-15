@@ -31,7 +31,7 @@ struct DictationView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            DictationStatusIcon(active: controller.dictating, starting: controller.startingWhisper)
+            DictationStatusIcon(active: controller.dictating, starting: controller.startingDictation)
                 .accessibilityHidden(true)
             Text(controller.status)
                 .font(.system(size: 17, weight: .semibold))

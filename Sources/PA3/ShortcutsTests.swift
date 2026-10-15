@@ -14,17 +14,24 @@ func runShortcutsTests() -> [String] {
     for message in ["Starting Whisper...", "Starting Whisper... 179s", "Waiting for Whisper..."] {
         controller.serviceMessage = message
         controller.debugMessage = message
-        check(controller.startingWhisper && controller.status == "Starting Whisper…" && controller.statusDetail.isEmpty,
+        check(controller.startingDictation && controller.status == "Starting Whisper…" && controller.statusDetail.isEmpty,
               "Whisper startup appears in the header without a duplicate footer message")
         controller.dictating = false
-        check(!controller.startingWhisper && controller.status == "Dictation paused",
+        check(!controller.startingDictation && controller.status == "Dictation paused",
               "startup messages cannot make paused dictation appear active")
         controller.dictating = true
     }
+    for message in ["Whisper ready", "Starting microphone..."] {
+        controller.serviceMessage = message
+        controller.debugMessage = message
+        check(controller.startingDictation && controller.status == "Starting microphone…" && controller.statusDetail.isEmpty,
+              "model readiness keeps the indicator yellow until microphone audio arrives")
+    }
+    controller.recordingActive = true
     for message in ["Dictation active", "Transcribing...", "Whisper ready"] {
         controller.serviceMessage = message
         controller.debugMessage = message
-        check(!controller.startingWhisper && controller.status == "Dictation active" && controller.statusDetail.isEmpty,
+        check(!controller.startingDictation && controller.status == "Dictation active" && controller.statusDetail.isEmpty,
               "recognition batches do not change status or add a duplicate label")
         controller.handleTranscription(TranscriptionUpdate(text: "Words from the latest batch.", language: "english"))
         check(controller.status == "Dictation active" && controller.statusDetail.isEmpty,
