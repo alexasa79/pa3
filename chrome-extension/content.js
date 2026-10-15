@@ -171,6 +171,12 @@
     if (message && message.type === "reedah-pause") {
       togglePause();
     }
+    if (state.enabled && message?.type === "reedah-previous-sentence") {
+      playPreviousSentence();
+    }
+    if (state.enabled && message?.type === "reedah-next-sentence") {
+      skipSentence();
+    }
     if (message && message.type === "reedah-state-request") {
       sendResponse({ enabled: state.enabled });
       return true;

@@ -7,7 +7,7 @@ enum NarrationPath {
         try NSRegularExpression(pattern: #"[\(\[\{“‘]*(?:[a-z][a-z0-9+.-]*://|www\.)[^\s\"'`<>]+|[^\s\"'`<>,;!?]+"#, options: .caseInsensitive)
     }
 
-    // Keep this catalog aligned with Reedah's native_request_builder.js.
+    // Keep this catalog aligned with chrome-extension/native_request_builder.js.
     // The full list and pronunciation policy are documented in FileExtensions.md.
     private static let spelledExtensions: Set<String> = [
         // Shell and command scripts

@@ -27,7 +27,6 @@ for (name, size) in sizes {
     try writePNG(image, to: iconset.appendingPathComponent(name))
 }
 
-try writePNG(drawMenuIcon(size: 36), to: resources.appendingPathComponent("MenuBarIcon.png"))
 try writePNG(drawAppIcon(size: 128, background: nil), to: resources.appendingPathComponent("DictationPortrait.png"))
 
 func drawAppIcon(size: CGFloat, background: NSColor? = paper) -> NSImage {
@@ -134,46 +133,6 @@ func portrait(background: NSColor?) {
   let waveSize: CGFloat = 195
   wave(x: 230 - waveSize / 2, y: 301 - waveSize / 2, size: waveSize)
   NSGraphicsContext.restoreGraphicsState()
-}
-
-func drawMenuIcon(size: CGFloat) -> NSImage {
-    let image = NSImage(size: NSSize(width: size, height: size))
-    image.lockFocus()
-    defer { image.unlockFocus() }
-
-    NSColor.clear.setFill()
-    NSRect(x: 0, y: 0, width: size, height: size).fill()
-
-    NSColor.black.setStroke()
-    let midY = size * 0.50
-
-    let wave = NSBezierPath()
-    wave.lineWidth = max(2.0, size * 0.073)
-    wave.lineCapStyle = .round
-    wave.lineJoinStyle = .round
-
-    let startX = size * 0.10
-    let endX = size * 0.90
-    let amplitude = size * 0.12
-    let segments = 96
-
-    for index in 0...segments {
-        let progress = CGFloat(index) / CGFloat(segments)
-        let phase = progress * 4.0 * .pi
-        let point = NSPoint(
-            x: startX + (endX - startX) * progress,
-            y: midY + sin(phase) * amplitude
-        )
-
-        if index == 0 {
-            wave.move(to: point)
-        } else {
-            wave.line(to: point)
-        }
-    }
-    wave.stroke()
-
-    return image
 }
 
 func writePNG(_ image: NSImage, to url: URL) throws {

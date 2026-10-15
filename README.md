@@ -1,6 +1,6 @@
 # pa3
 
-Native macOS dictation and narration, with the Reedah Chrome extension for reading web pages aloud. PA3 runs Whisper and Qwen locally; Reedah requests narration through a small native messaging bridge and plays the audio in Chrome.
+Native macOS dictation and narration, with the PA3 Chrome extension for reading web pages aloud. PA3 runs Whisper and Qwen locally; the extension requests narration through a small native messaging bridge and plays the audio in Chrome.
 
 Press `Space` to pause dictation or resume into a new paragraph. Press `o` to start a new paragraph, or `O` (Shift+O) to continue dictating at the end of the current, last paragraph without a paragraph break. While already dictating, `O` leaves dictation running unchanged.
 
@@ -19,10 +19,10 @@ After replacing `foo` with `bar`, `.` replaces the current selection with `bar`,
 ## Repository layout
 
 - `Sources/`, `Native/`, and `Resources/`: the PA3 macOS app and native speech helper.
-- `reedah/`: the Chrome extension, Python native messaging bridge, and extension tests.
+- `chrome-extension/`: the Chrome extension, Python native messaging bridge, and extension tests.
 - `Tools/` and `Tests/`: app setup and validation tools.
 
-Reedah is a regular directory in this repository. Its original Git history is preserved; there is no submodule or separate checkout to update. App and extension changes can be reviewed and committed together while keeping their builds separate.
+The Chrome extension is a regular directory in this repository. Its original Git history is preserved; there is no submodule or separate checkout to update. App and extension changes can be reviewed and committed together while keeping their builds separate.
 
 ## Build and Run
 
@@ -48,17 +48,17 @@ The app stays resident after paste. Use `Ctrl+Option+Command+P` to show it again
 
 ## Testing
 
-Run `make test` from this repository's root to check both PA3 and Reedah. It requires the Homebrew speech tools, installed Qwen models, Node.js, and Python 3. The app checks include segmentation, HTTP framing, pronunciation, model-backed streaming decoder comparisons, model download integrity, interrupted transfers, cancellation, retry, and the missing-model microphone guard. The extension checks cover text extraction, highlighting, audio playback, and native bridge lifecycle.
+Run `make test` from this repository's root to check both PA3 and its Chrome extension. It requires the Homebrew speech tools, installed Qwen models, Node.js, and Python 3. The app checks include segmentation, HTTP framing, pronunciation, model-backed streaming decoder comparisons, model download integrity, interrupted transfers, cancellation, retry, and the missing-model microphone guard. The extension checks cover text extraction, highlighting, audio playback, and native bridge lifecycle.
 
 | Command | Scope |
 | --- | --- |
-| `make test` | PA3 checks plus Reedah JavaScript and Python tests. |
+| `make test` | PA3 checks plus Chrome extension JavaScript and Python tests. |
 | `make pa3-test` | PA3 checks only. |
-| `make reedah-test` | Reedah JavaScript and Python tests only; no running app or models needed. |
+| `make extension-test` | Chrome extension JavaScript and Python tests only; no running app or models needed. |
 | `make browser-test` | Audio, paragraph detection, and highlighting in isolated headless Chrome; requires Node.js 22+ and Chrome. Set `CHROME` for a custom executable. |
-| `make integration-test` | Reedah bridge → running PA3 → real Qwen audio, including flow control and independent cancellation. Run with PA3 ready and idle; this does not play sound. |
+| `make integration-test` | Chrome extension bridge → running PA3 → real Qwen audio, including flow control and independent cancellation. Run with PA3 ready and idle; this does not play sound. |
 
-See [Reedah setup](reedah/README.md) to install the extension and register its native bridge. Browser and live-model integration checks are explicit targets because they need Chrome or a running PA3 instance.
+See [Chrome extension setup](chrome-extension/README.md) to install the extension and register its native bridge. Browser and live-model integration checks are explicit targets because they need Chrome or a running PA3 instance.
 
 `make replay-test` pushes spoken clips through the real transcription worker and checks that every cut lands in silence and that the words match the reference. Clips are built with the macOS `say` command by `make fixtures` and land in `Tests/fixtures`, together with `.txt` files holding the words spoken. The test needs the Homebrew speech tools and installed Whisper model. It uses recorded audio without opening the microphone.
 
@@ -74,7 +74,7 @@ Add `--reference file.txt` to compare against known text. Without it, the replay
 
 ## Dictionaries
 
-Open **Dictionaries…** from PA3’s menu-bar menu without starting dictation. The **Transcription** tab edits the words and phrases Whisper should recognize; the dictation toolbar’s Dictionary button and `D` open this tab. The **Narration** tab stores written-text → spoken-pronunciation entries shared by selected-text narration, HTTP narration, and Reedah. Use **Add entry**, edit either field, **Preview** to listen without saving, and **Save** to persist changes. **Stop preview** stops narration. Transcription vocabulary and narration pronunciations are stored separately.
+Open **Dictionaries…** from PA3’s menu-bar menu without starting dictation. The **Transcription** tab edits the words and phrases Whisper should recognize; the dictation toolbar’s Dictionary button and `D` open this tab. The **Narration** tab stores written-text → spoken-pronunciation entries shared by selected-text narration, HTTP narration, and the extension. Use **Add entry**, edit either field, **Preview** to listen without saving, and **Save** to persist changes. **Stop preview** stops narration. Transcription vocabulary and narration pronunciations are stored separately.
 
 Narration matching ignores case, matches whole words or phrases, prefers longer phrases, and does not recursively substitute replacements. Dictionary substitutions run before filename, identifier, and comparison-symbol pronunciation. Request-specific `pronunciations` override saved entries with the same written text; previews do not alter the saved dictionary. Up to 100 entries are stored in `~/Library/Application Support/PA3/narration-dictionary.json`.
 
@@ -96,7 +96,7 @@ Narration skips parenthesized single file/path references with a colon and line 
 
 Narration reads filenames and paths explicitly, including underscores, `:line:column` references, and line ranges such as `file.c:100-200` ("file dot C, lines 100 to 200"). Standalone identifiers such as `type_name_t` read as "type underscore name underscore tee", with single-letter parts pronounced by their letter names. See the [supported file extensions and pronunciation rules](FileExtensions.md).
 
-PA3 accepts narration requests on `127.0.0.1:65462` while it is running, including when its window is hidden. Its default narrator is **VCTK p311, an American male speaker from Iowa**, identified as `vctk-p311`. Native llama.cpp runs Qwen3-TTS 1.7B Base Q8_0 on the Apple Silicon GPU, using the selected recording as its voice reference. The reference is used at its natural pitch and speed. PA3 plays narration at 1.1× using AVAudioPlayer’s pitch-preserving rate adjustment. Exported audio and streams remain at the generated speed; Reedah applies its own playback-speed setting. It is from the CSTR VCTK Corpus, by Junichi Yamagishi, Christophe Veaux, and Kirsten MacDonald (University of Edinburgh), licensed under CC BY 4.0. Source details and license are bundled in `Resources/Voices/`.
+PA3 accepts narration requests on `127.0.0.1:65462` while it is running, including when its window is hidden. Its default narrator is **VCTK p311, an American male speaker from Iowa**, identified as `vctk-p311`. Native llama.cpp runs Qwen3-TTS 1.7B Base Q8_0 on the Apple Silicon GPU, using the selected recording as its voice reference. The reference is used at its natural pitch and speed. PA3 plays narration at 1.1× using AVAudioPlayer’s pitch-preserving rate adjustment. Exported audio and streams remain at the generated speed; the extension applies its own playback-speed setting. It is from the CSTR VCTK Corpus, by Junichi Yamagishi, Christophe Veaux, and Kirsten MacDonald (University of Edinburgh), licensed under CC BY 4.0. Source details and license are bundled in `Resources/Voices/`.
 
 PA3 installs missing models automatically with a progress window. `make tts-setup` remains an alias for the same setup. The selected recording and provenance are in `Resources/Voices` and copied into the app. Narration runs offline after setup.
 
@@ -129,13 +129,13 @@ Optional JSON fields are `voice`, `language`, `instruct`, `mode`, and `pronuncia
 
 The previous named preset voices and `Auto` language are no longer supported and return 422. Languages are English, Russian, Chinese, Japanese, Korean, German, French, Portuguese, Spanish, and Italian. Hebrew is unsupported. Voice and language names are case-insensitive.
 
-Reedah can request `"output":"audio"` to generate a WAV without PA3 playing it. This mode accepts up to 4,000 characters per request. Poll the job until `completed`, then fetch `/v1/narrations/ID/audio` with the same bearer token. The response is `audio/wav`; DELETE the job after downloading to release the file. Audio expires after five minutes, and exports are limited to 32 MiB per job and 128 MiB of retained/generated audio. `pieces_generated` reports generation progress; `pieces_played` stays zero for audio-only jobs. The default `"output":"playback"` keeps normal PA3 playback. Audio-only completion means generation finished, not that a client has played the audio.
+The extension can request `"output":"audio"` to generate a WAV without PA3 playing it. This mode accepts up to 4,000 characters per request. Poll the job until `completed`, then fetch `/v1/narrations/ID/audio` with the same bearer token. The response is `audio/wav`; DELETE the job after downloading to release the file. Audio expires after five minutes, and exports are limited to 32 MiB per job and 128 MiB of retained/generated audio. `pieces_generated` reports generation progress; `pieces_played` stays zero for audio-only jobs. The default `"output":"playback"` keeps normal PA3 playback. Audio-only completion means generation finished, not that a client has played the audio.
 
 For paragraph narration with source timings, send `"output":"stream","timing":"words"`. PA3 joins sentences within each paragraph up to 600 spoken characters per generation. A private Whisper worker recognizes overlapping audio windows locally; each published PCM block includes `word_timings` with `start`/`end` in seconds from the start of the job and `location`/`length` in UTF-16 units of the original request. Dictionary and pronunciation expansions keep their original source ranges. Chunks wait for recognition before publication. Timings are estimates, and unmatched words may have no individual timing; failed alignment stops the job. Cold model loading and recognition add startup latency. Plain streaming requests without `timing` retain sentence generation.
 
 The opt-in `--narration-timing-live-test` runs paragraph generation and recognition in a separate process without an HTTP listener or playback. From the checkout, use `PA3_INSTALL_DIR="$PWD/PA3.app/Contents/Resources" .build/debug/pa3 --narration-timing-live-test` after building. It requires installed Qwen and Whisper models.
 
-Reedah's Chrome native messaging bridge uses this API and keeps the token outside the browser. Chrome handles playback, pause, navigation, and speed. The bridge requires only Python 3's standard library; Qwen runs exclusively in PA3. Follow [Reedah setup](reedah/README.md) to install it. The [bridge documentation](reedah/native/README.md) describes streaming and playback flow control.
+The extension's Chrome native messaging bridge uses this API and keeps the token outside the browser. Chrome handles playback, pause, navigation, and speed. The bridge requires only Python 3's standard library; Qwen runs exclusively in PA3. Follow [Chrome extension setup](chrome-extension/README.md) to install it. The [bridge documentation](chrome-extension/native/README.md) describes streaming and playback flow control.
 
 Jobs can be queued, loading, generating, playing, completed, cancelled, or failed. Completion means playback finished. Generation can overlap playback. History keeps the latest 100 jobs in memory; restarting clears it. The queue holds ten waiting jobs, plus one active job. Requests allow 100,000 text characters and 512 KB of JSON. Queue overflow returns 429; invalid fields return 422; missing runtime files return 503.
 
@@ -156,6 +156,6 @@ For immediate client playback, use `"output":"pieces"`. Job status includes `aud
 
 The `pieces` mode splits long sentences at clause punctuation (commas, semicolons, colons, and em dashes). The opening and following character budgets are soft targets; phrases without clause punctuation stay together. Sentence endings of up to 40 characters stay attached to the preceding clause rather than becoming a tiny final piece. Startup can take longer for long uninterrupted sentences.
 
-For true incremental audio, use `"output":"stream"`. PA3 passes each whole sentence to Qwen and decodes audio during generation without resetting sentence context. Poll `audio_chunks` in job status; each entry has `samples` and `sample_rate`. Download new entries from `/v1/narrations/ID/chunks/INDEX` as `application/octet-stream`: mono little-endian float32 PCM at 24 kHz. Blocks are contiguous and immutable, with only initial silence trimmed. Completion marks the end of the audio stream; clients must consume every published block before finishing playback and then DELETE the job. The same export size limits and five-minute retention apply. Reedah uses this mode and schedules blocks with Web Audio; the older punctuation-based `pieces` mode remains available to API clients.
+For true incremental audio, use `"output":"stream"`. PA3 passes each whole sentence to Qwen and decodes audio during generation without resetting sentence context. Poll `audio_chunks` in job status; each entry has `samples` and `sample_rate`. Download new entries from `/v1/narrations/ID/chunks/INDEX` as `application/octet-stream`: mono little-endian float32 PCM at 24 kHz. Blocks are contiguous and immutable, with only initial silence trimmed. Completion marks the end of the audio stream; clients must consume every published block before finishing playback and then DELETE the job. The same export size limits and five-minute retention apply. The extension uses this mode and schedules blocks with Web Audio; the older punctuation-based `pieces` mode remains available to API clients.
 
 The Homebrew llama.cpp 0.4.1 Qwen decoder advances state in fixed 72-frame windows (about 5.76 seconds of audio). PA3 publishes only complete windows during generation and flushes a short remainder only at sentence end. Calling the decoder on shorter intermediate blocks corrupts subsequent audio because its state includes padding. This limits safe startup latency on the current backend. `make test` includes publication boundaries and model-backed waveform comparisons against full-window decoding with identical codec frames. `make decoder-test` runs just these compatibility checks. Both need the models installed by PA3 or `make speech-setup`; use `PA3_MODEL_DIR=/path/to/models` for a custom location. The fixture also reproduces the old short-window corruption, so a passing comparison alone cannot hide a broken test.

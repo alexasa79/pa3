@@ -1,15 +1,27 @@
 {
   "manifest_version": 3,
-  "name": "Reedah",
+  "name": "PA3",
   "version": "0.1.0",
-  "description": "Overlay controls to narrate paragraph text on a page.",
+  "description": "Read web pages aloud with PA3.",
+  "icons": {
+    "16": "icons/pa3-wave.png",
+    "32": "icons/pa3-wave.png",
+    "48": "icons/pa3-wave.png",
+    "128": "icons/pa3-wave.png"
+  },
   "permissions": [
     "tabs",
     "storage",
     "nativeMessaging"
   ],
   "action": {
-    "default_title": "Reedah"
+    "default_title": "PA3",
+    "default_icon": {
+      "16": "icons/pa3-wave.png",
+      "32": "icons/pa3-wave.png",
+      "48": "icons/pa3-wave.png",
+      "128": "icons/pa3-wave.png"
+    }
   },
   "commands": {
     "toggle-overlay": {
@@ -17,14 +29,28 @@
         "default": "Alt+X",
         "mac": "Alt+X"
       },
-      "description": "Toggle Reedah overlays"
+      "description": "Toggle PA3 overlays"
     },
     "pause-playback": {
+      "suggested_key": {
+        "default": "Alt+S",
+        "mac": "Alt+S"
+      },
+      "description": "Pause or resume narration"
+    },
+    "previous-sentence": {
+      "suggested_key": {
+        "default": "Alt+A",
+        "mac": "Alt+A"
+      },
+      "description": "Previous sentence"
+    },
+    "next-sentence": {
       "suggested_key": {
         "default": "Alt+D",
         "mac": "Alt+D"
       },
-      "description": "Pause or resume narration"
+      "description": "Next sentence"
     }
   },
   "background": {

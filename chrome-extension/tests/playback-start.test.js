@@ -5,6 +5,7 @@ const vm = require('node:vm');
 const test = require('node:test');
 
 function setup(realAudio = false, completionRace = false) {
+  let receive;
   const played = [], ended = [], timers = [], prefetched = [];
   const window = {ReedahFrameDetection:{shouldRunInFrame:()=>true, isEditorFrame:()=>false}};
   for (const [name, file] of Object.entries({
@@ -23,7 +24,7 @@ function setup(realAudio = false, completionRace = false) {
       constructor(options) { super({...options, getContext:()=>streamContext}); }
     }},
     document:{readyState:'complete'},
-    chrome:{runtime:{onMessage:{addListener() {}}, sendMessage() {}}},
+    chrome:{runtime:{onMessage:{addListener(listener) { receive = listener; }}, sendMessage() {}}},
     setTimeout(callback) { timers.push(callback); },
     Audio: class { play() { return Promise.resolve(); } pause() {} },
     URL:{revokeObjectURL() {}},
@@ -56,8 +57,32 @@ function setup(realAudio = false, completionRace = false) {
   const {state, maybeStartPlayback} = context.queueTest;
   state.playbackId = 1;
   state.activeEl = {};
-  return {state, streamContext, start:()=>maybeStartPlayback(1), played, ended, timers, prefetched, ...context.queueTest};
+  return {state, streamContext, receive, start:()=>maybeStartPlayback(1), played, ended, timers, prefetched, ...context.queueTest};
 }
+
+test('sentence shortcuts skip and replay through the existing playback queue', () => {
+  const {state, start, receive} = setup(true);
+  state.enabled = true;
+  state.audioQueue.push({url:'first',index:0}, {url:'second',index:1}, {url:'third',index:2});
+  start();
+  receive({type:'reedah-next-sentence'});
+  assert.equal(state.currentAudio.src, 'second');
+  receive({type:'reedah-previous-sentence'});
+  assert.equal(state.currentAudio.src, 'first');
+});
+
+test('sentence shortcuts ignore disabled overlays and frames without active narration', () => {
+  const {state, start, receive} = setup(true);
+  state.audioQueue.push({url:'first',index:0}, {url:'second',index:1});
+  start();
+  receive({type:'reedah-next-sentence'});
+  assert.equal(state.currentAudio.src, 'first');
+  state.enabled = true;
+  state.activeEl = null;
+  receive({type:'reedah-next-sentence'});
+  receive({type:'reedah-previous-sentence'});
+  assert.equal(state.currentAudio.src, 'first');
+});
 
 test('starts the first ready sentence while the model is still generating the paragraph', () => {
   const {state, start, played} = setup();

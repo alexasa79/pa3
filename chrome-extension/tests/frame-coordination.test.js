@@ -4,19 +4,58 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
-function setup() {
+function setup(tabs = [{id:7}]) {
   const sent=[];
   const event=()=>({addListener(fn){this.handler=fn;}});
   const chrome={
-    action:{},tabs:{onActivated:event(),onUpdated:event(),onRemoved:event(),
+    action:{setIcon(){assert.fail('Playback state must not replace the PA3 icon');}},tabs:{onActivated:event(),onUpdated:event(),onRemoved:event(),
+      query(options, callback){assert.deepEqual(JSON.parse(JSON.stringify(options)), {active:true,currentWindow:true});callback(tabs);},
       sendMessage(...args){sent.push(args);args.at(-1)?.({enabled:true});}},
     commands:{onCommand:event()},runtime:{onMessage:event(),onConnect:event()}
   };
-  const context=vm.createContext({chrome,console,setTimeout,clearTimeout});
+  const context=vm.createContext({chrome,console,setTimeout,clearTimeout,
+    OffscreenCanvas:class {constructor(){assert.fail('The extension icon must use the packaged PA3 artwork');}},
+    ImageData:class {}});
   context.importScripts=(...files)=>files.forEach(file=>vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context));
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../background.js'),'utf8'),context);
-  return {sent,receive:chrome.runtime.onMessage.handler};
+  return {sent,receive:chrome.runtime.onMessage.handler,command:chrome.commands.onCommand.handler};
 }
+
+test('keyboard commands reach the active tab and playback commands reach every frame',()=>{
+  const {sent,command}=setup();
+  for (const [name,type] of Object.entries({
+    'toggle-overlay':'reedah-toggle', 'pause-playback':'reedah-pause',
+    'previous-sentence':'reedah-previous-sentence', 'next-sentence':'reedah-next-sentence'
+  })) {
+    command(name);
+    const args=sent.at(-1);
+    assert.equal(args[0],7);
+    assert.equal(args[1].type,type);
+    if (name==='toggle-overlay') assert.equal(args[2].frameId,0);
+    else assert.equal(args.length,3);
+  }
+  command('activate');
+  command('_execute_action');
+  assert.equal(sent.length,4);
+});
+
+test('keyboard commands without an active tab do nothing',()=>{
+  const {sent,command}=setup([]);
+  command('next-sentence');
+  assert.equal(sent.length,0);
+});
+
+test('manifest assigns four distinct shortcuts without an activation binding',()=>{
+  const {commands}=require('../manifest.json');
+  assert.deepEqual(Object.keys(commands).sort(),['next-sentence','pause-playback','previous-sentence','toggle-overlay']);
+  for (const platform of ['default','mac']) {
+    assert.equal(new Set(Object.values(commands).map(command=>command.suggested_key[platform])).size,4);
+    for (const [name,key] of Object.entries({
+      'previous-sentence':'Alt+A', 'next-sentence':'Alt+D',
+      'pause-playback':'Alt+S', 'toggle-overlay':'Alt+X'
+    })) assert.equal(commands[name].suggested_key[platform],key);
+  }
+});
 test('top document state broadcasts to frames; child state cannot overwrite it',()=>{
   const {sent,receive}=setup();
   receive({type:'reedah-state',enabled:true},{tab:{id:7},frameId:0});

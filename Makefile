@@ -12,7 +12,7 @@ PA3_MODEL_DIR ?= $(HOME)/Library/Application Support/PA3/models
 CODESIGN_CERT_DAYS ?= 3650
 CODESIGN_P12_PASSWORD ?= pa3-local-codesign
 
-.PHONY: all build native-narrator app icons speech-tools-check speech-setup tts-setup codesign-identity clean run test pa3-test reedah-test browser-test integration-test reedah-install fixtures replay-test narration-test native-stream-test decoder-test
+.PHONY: all build native-narrator app icons speech-tools-check speech-setup tts-setup codesign-identity clean run test pa3-test extension-test browser-test integration-test extension-install fixtures replay-test narration-test native-stream-test decoder-test
 
 all: app
 
@@ -31,7 +31,7 @@ native-stream-test:
 decoder-test: native-stream-test
 	.build/native/narration-stream-test "$(PA3_MODEL_DIR)/qwen3-tts/Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf" "$(PA3_MODEL_DIR)/qwen3-tts/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf"
 
-test: pa3-test reedah-test
+test: pa3-test extension-test
 
 pa3-test: decoder-test
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Resources/Narration -p 'test_*.py'
@@ -42,18 +42,18 @@ pa3-test: decoder-test
 	.build/debug/pa3 --narration-recovery-test
 	.build/debug/pa3 --model-download-test
 
-reedah-test:
-	$(MAKE) -C reedah test
+extension-test:
+	$(MAKE) -C chrome-extension test
 
 browser-test:
-	$(MAKE) -C reedah browser-test
+	$(MAKE) -C chrome-extension browser-test
 
 integration-test:
-	$(MAKE) -C reedah integration-test
+	$(MAKE) -C chrome-extension integration-test
 
-reedah-install:
-	@test -n "$(EXTENSION_ID)" || { echo 'Usage: make reedah-install EXTENSION_ID=<chrome-extension-id>'; exit 1; }
-	./reedah/scripts/install_native_host.sh "$(EXTENSION_ID)"
+extension-install:
+	@test -n "$(EXTENSION_ID)" || { echo 'Usage: make extension-install EXTENSION_ID=<chrome-extension-id>'; exit 1; }
+	./chrome-extension/scripts/install_native_host.sh "$(EXTENSION_ID)"
 
 tts-setup: speech-setup
 
@@ -75,6 +75,8 @@ icons:
 	mkdir -p "$(ASSETS)"
 	swift Tools/IconGenerator.swift
 	iconutil -c icns "$(ASSETS)/PA3.iconset" -o "$(ASSETS)/AppIcon.icns"
+	mkdir -p chrome-extension/icons
+	cp Resources/MenuBarIcon.png chrome-extension/icons/pa3-wave.png
 
 speech-tools-check:
 	@test -x "$$($(BREW) --prefix whisper.cpp)/bin/whisper-server" && test -x "$$($(BREW) --prefix llama.cpp)/bin/llama-tts" || { echo 'Install speech tools: brew install whisper.cpp'; exit 1; }
@@ -116,7 +118,7 @@ app: build icons speech-tools-check codesign-identity
 	cp .build/native/pa3-narrator "$(MACOS)/pa3-narrator"
 	cp Info.plist "$(CONTENTS)/Info.plist"
 	cp "$(ASSETS)/AppIcon.icns" "$(RESOURCES)/AppIcon.icns"
-	cp "$(ASSETS)/MenuBarIcon.png" "$(RESOURCES)/MenuBarIcon.png"
+	cp Resources/MenuBarIcon.png "$(RESOURCES)/MenuBarIcon.png"
 	cp "$(ASSETS)/DictationPortrait.png" "$(RESOURCES)/DictationPortrait.png"
 	mkdir -p "$(RESOURCES)/narration"
 	cp Resources/Narration/timing.py "$(RESOURCES)/narration/"

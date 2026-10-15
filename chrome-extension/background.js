@@ -1,79 +1,20 @@
 importScripts("narration_text.js", "native_request_builder.js", "audio_transfer.js");
 
 const NATIVE_HOST = "com.reedah.sayer";
-const ICON_SIZES = [16, 32, 48];
 const tabState = new Map();
-let iconCache = null;
 const nativeRequestBuilder = globalThis.ReedahNativeRequestBuilder;
 if (!nativeRequestBuilder ||
   typeof nativeRequestBuilder.buildSentenceJobs !== "function") {
   console.error("Reedah: Native request builder helpers unavailable.");
   throw new Error("Reedah: native request builder helpers unavailable");
 }
-const iconSupported =
-  typeof OffscreenCanvas !== "undefined" && typeof ImageData !== "undefined";
-
-if (!iconSupported) {
-  console.error("Reedah: OffscreenCanvas unavailable; icon updates disabled.");
-}
-
-function buildIconCache() {
-  const enabled = {};
-  const disabled = {};
-  for (const size of ICON_SIZES) {
-    enabled[size] = drawIcon(size, true);
-    disabled[size] = drawIcon(size, false);
-  }
-  return { enabled, disabled };
-}
-
-function getIconData(enabled) {
-  if (!iconSupported) {
-    return null;
-  }
-  if (!iconCache) {
-    iconCache = buildIconCache();
-  }
-  return enabled ? iconCache.enabled : iconCache.disabled;
-}
-
-function drawIcon(size, enabled) {
-  const canvas = new OffscreenCanvas(size, size);
-  const ctx = canvas.getContext("2d");
-  const center = size / 2;
-  const radius = center - 1;
-
-  ctx.clearRect(0, 0, size, size);
-  ctx.fillStyle = enabled ? "#2563EB" : "#424242";
-  ctx.beginPath();
-  ctx.arc(center, center, radius, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = "#FFFFFF";
-  ctx.beginPath();
-  ctx.moveTo(size * 0.42, size * 0.32);
-  ctx.lineTo(size * 0.72, size * 0.5);
-  ctx.lineTo(size * 0.42, size * 0.68);
-  ctx.closePath();
-  ctx.fill();
-
-  return ctx.getImageData(0, 0, size, size);
-}
-
-function setTabIcon(tabId, enabled) {
-  const imageData = getIconData(enabled);
-  if (!imageData) return;
-  chrome.action.setIcon({ tabId, imageData });
-}
 
 function updateTabState(tabId, enabled) {
   tabState.set(tabId, enabled);
-  setTabIcon(tabId, enabled);
 }
 
 function clearTabState(tabId) {
   tabState.delete(tabId);
-  setTabIcon(tabId, false);
 }
 
 function requestTabState(tabId) {
@@ -97,7 +38,6 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "loading") {
     tabState.delete(tabId);
-    setTabIcon(tabId, false);
   }
   if (changeInfo.status === "complete") {
     requestTabState(tabId);
@@ -109,16 +49,21 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.commands.onCommand.addListener((command) => {
-  if (command !== "toggle-overlay" && command !== "pause-playback") return;
+  const commandMessages = {
+    "toggle-overlay": "reedah-toggle",
+    "pause-playback": "reedah-pause",
+    "previous-sentence": "reedah-previous-sentence",
+    "next-sentence": "reedah-next-sentence"
+  };
+  const type = Object.hasOwn(commandMessages, command) ? commandMessages[command] : null;
+  if (!type) return;
 
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs && tabs[0];
     if (!tab || !tab.id) return;
-    const type =
-      command === "pause-playback" ? "reedah-pause" : "reedah-toggle";
     chrome.tabs.sendMessage(tab.id, { type }, ...(type === "reedah-toggle" ? [{frameId: 0}] : []), () => {
       if (chrome.runtime.lastError) {
-        // No content script on this page (e.g., chrome://, extensions page).
+        console.error("Reedah: Could not deliver keyboard command.", chrome.runtime.lastError);
         return;
       }
     });

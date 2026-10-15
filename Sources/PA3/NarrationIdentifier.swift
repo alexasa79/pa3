@@ -2,7 +2,7 @@ import Foundation
 
 struct NarrationIdentifier {
     // Explicit letter names keep Qwen from treating a one-letter part as a consonant sound.
-    // Keep aligned with Reedah's native_request_builder.js.
+    // Keep aligned with chrome-extension/native_request_builder.js.
     private static let letterNames = [
         "a": "ay", "b": "bee", "c": "see", "d": "dee", "e": "ee", "f": "ef",
         "g": "jee", "h": "aitch", "i": "eye", "j": "jay", "k": "kay", "l": "ell",

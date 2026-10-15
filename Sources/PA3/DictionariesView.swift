@@ -21,7 +21,7 @@ struct DictionariesView: View {
                     .font(.system(size: 14, design: .monospaced))
                     .border(Color.secondary.opacity(0.25))
             } else {
-                Text("Pronunciations shared by PA3 and Reedah. Matches whole words and phrases, ignoring case.")
+                Text("Pronunciations shared by PA3 and its Chrome extension. Matches whole words and phrases, ignoring case.")
                     .foregroundStyle(.secondary)
                 if let error = dictionary.loadError { Text(error).foregroundStyle(.red) }
                 HStack {

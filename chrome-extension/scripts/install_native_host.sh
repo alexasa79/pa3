@@ -28,7 +28,7 @@ mkdir -p "$MANIFEST_DIR"
 cat > "$MANIFEST_PATH" <<JSON
 {
   "name": "com.reedah.sayer",
-  "description": "Reedah PA3 bridge",
+  "description": "PA3 Chrome extension bridge",
   "path": "$HOST_PATH",
   "type": "stdio",
   "allowed_origins": ["chrome-extension://$EXTENSION_ID/"]
