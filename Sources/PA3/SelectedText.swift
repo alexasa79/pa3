@@ -21,7 +21,9 @@ enum SelectedText {
     // AX children are in reading order. A parent's selection covers its subtree;
     // visiting those children again would repeat text. Equal text in distinct
     // elements, however, may be intentionally repeated paragraphs.
-    static func collect<Node>(from root: Node, nodeLimit: Int = 300,
+    // Outlook may omit the focused element and place hundreds of controls before
+    // the message body in its window tree. The read deadline still bounds AX work.
+    static func collect<Node>(from root: Node, nodeLimit: Int = 3000,
                               isSame: (Node, Node) -> Bool,
                               inspect: (Node) throws -> (text: String?, children: [Node])) throws -> String? {
         var pending = [root], visited: [Node] = []
@@ -72,7 +74,7 @@ enum SelectedText {
         }
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.15)
-        let deadline = Date().addingTimeInterval(2)
+        let deadline = Date().addingTimeInterval(1)
         func check(_ error: AXError) throws {
             guard Date() < deadline, error != .cannotComplete, error != .invalidUIElement else {
                 throw ReadFailure.incomplete

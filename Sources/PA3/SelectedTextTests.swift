@@ -10,7 +10,7 @@ func runSelectedTextTests() -> [String] {
         var text: String? = nil
         var children: [Int] = []
     }
-    func read(_ tree: [Int: Node], limit: Int = 300) throws -> String? {
+    func read(_ tree: [Int: Node], limit: Int = 3000) throws -> String? {
         try SelectedText.collect(from: 0, nodeLimit: limit, isSame: ==) { id in
             guard let node = tree[id] else { throw SelectedText.ReadFailure.incomplete }
             return (node.text, node.children)
@@ -23,6 +23,16 @@ func runSelectedTextTests() -> [String] {
         }
     }
     do {
+        // Outlook can expose no focused element, requiring a window scan through
+        // many unrelated controls before the message's selection is reached.
+        var outlook = [0: Node(children: Array(1...600))]
+        for id in 1...599 { outlook[id] = Node() }
+        outlook[600] = Node(text: "Selected message text.")
+        check(try SelectedText.collect(from: 0, isSame: ==) { id in
+            let node = outlook[id]!
+            return (node.text, node.children)
+        } == "Selected message text.", "window scan reaches selection after hundreds of Outlook controls")
+
         let marker = "opaque marker" as CFString
         var emptyRange = CFRange(location: 0, length: 0)
         let emptyValue = AXValueCreate(.cfRange, &emptyRange)!
