@@ -42,6 +42,8 @@ func runShortcutsTests() -> [String] {
     check(controller.characterCount == 10 && controller.wordCount == 2,
           "statistics count Unicode characters and words without counting punctuation or emoji as words (\(controller.characterCount) characters, \(controller.wordCount) words in \(controller.text))")
     check(controller.transcriptionIterations == 4, "statistics count transcription results rather than status messages")
+    controller.handleTranscription(TranscriptionUpdate(text: controller.text, language: "en", isRecognition: false))
+    check(controller.transcriptionIterations == 4, "boundary finalization does not count as another recognition")
     controller.debugMessage = "Whisper failed to start"
     check(controller.statusDetail == "Whisper failed to start", "service failures remain visible")
     controller.dictating = false

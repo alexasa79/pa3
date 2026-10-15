@@ -44,15 +44,13 @@ final class Vocabulary {
         return words
     }
 
-    func systemPrompt() -> String {
-        lock.lock()
-        defer { lock.unlock() }
-        // Give Whisper a fixed punctuation style without feeding back previous dictation.
-        let punctuationExample = "Hello. This is a punctuated transcript."
-        if words.isEmpty {
-            return punctuationExample
-        }
-        return "vocabulary: " + words.joined(separator: ", ") + "\n" + punctuationExample
+    static func whisperPrompt(for words: [String]) -> String {
+        // Whisper consumes this as prior transcript context. A heading followed
+        // by a fabricated punctuation example caused glossary words to be decoded
+        // as a speaker-like prefix in saved recordings. Supply only the glossary.
+        guard !words.isEmpty else { return "" }
+        // A terminal period preserves sentence punctuation without invented words.
+        return words.joined(separator: ", ") + "."
     }
 
     private func load() {

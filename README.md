@@ -54,11 +54,14 @@ Run `make test` from this repository's root to check both PA3 and its Chrome ext
 | --- | --- |
 | `make test` | PA3 checks plus Chrome extension JavaScript and Python tests. |
 | `make pa3-test` | PA3 checks only. |
+| `make transcription-scheduling-test` | Deterministic live-preview scheduling regression; no model server or microphone needed. |
 | `make extension-test` | Chrome extension JavaScript and Python tests only; no running app or models needed. |
 | `make browser-test` | Audio, paragraph detection, and highlighting in isolated headless Chrome; requires Node.js 22+ and Chrome. Set `CHROME` for a custom executable. |
 | `make integration-test` | Chrome extension bridge → running PA3 → real Qwen audio, including flow control and independent cancellation. Run with PA3 ready and idle; this does not play sound. |
 
 See [Chrome extension setup](chrome-extension/README.md) to install the extension and register its native bridge. Browser and live-model integration checks are explicit targets because they need Chrome or a running PA3 instance.
+
+`make transcription-scheduling-test` supplies fixed recognition responses that disagree at a boundary. It measures publication order using simulated request time, without sleeping or running Whisper. It checks that validated live text is published before boundary verification, verification is bounded per round, and unchanged rejected boundaries are not retried.
 
 `make replay-test` pushes spoken clips through the real transcription worker and checks that every cut lands in silence and that the words match the reference. Clips are built with the macOS `say` command by `make fixtures` and land in `Tests/fixtures`, together with `.txt` files holding the words spoken. The test needs the Homebrew speech tools and installed Whisper model. It uses recorded audio without opening the microphone.
 
@@ -70,7 +73,7 @@ PA3_INSTALL_DIR=$(pwd) .build/debug/pa3 --replay ~/.cache/pa3/rec/2026-09-06T10-
 
 Add `--reference file.txt` to compare against known text. Without it, the replay compares against a one-shot transcription of the whole clip when it is under 30 seconds. `--speed 1` paces the audio like a live session, which changes how much audio each Whisper round sees.
 
-`--context-seconds N` sets the replay audio duration limit (5–28 seconds; default 28).
+`--context-seconds N` sets the minimum window duration before sentence trimming becomes eligible (5–28 seconds; default 28). Unfinished sentences may extend beyond this threshold.
 
 ## Dictionaries
 
@@ -148,7 +151,7 @@ Starting dictation cancels narration. While dictation is active or its audio out
 - `Enter`: paste current transcript into the previously active app and hide PA3.
 - `q`, `Esc`, `Ctrl+C`: discard and hide PA3.
 - `Space`: pause/resume dictation.
-- `Context`: trimming target in seconds (5–28; default 28). PA3 allows up to 1.5 seconds of headroom for a verified boundary, with an absolute 29.5-second request ceiling including padding. Startup requires sustained activity across several audio frames; a single transient does not start recognition. PA3 retains one second of pre-roll for the first word, waits for speech context (or a completed short utterance), and sends at least one second of audio. Quiet freezes provisional text without committing it or repeatedly retranscribing it. Cuts first try every available sentence boundary with a verified retained opening. Long sentences can still require a verified cut within the sentence; subsequent case-only changes to the opening word retain its full-context spelling, including proper names and acronyms. A later verified cut can recognize the opening of the retained audio or match the completed spoken head to the full-window prefix; a pause alone never makes text permanent. For uninterrupted speech, PA3 can use a verified overlap without a pause. If no boundary can be verified, it preserves the recording and reports that state instead of retrying the same window indefinitely. Original recording times remain intact. The old sentence-count preference is ignored.
+- `Context`: minimum window duration before trimming is eligible (5–28 seconds; default 28). This is a lower threshold, not an input ceiling: an unfinished sentence may continue through 60–70 seconds or longer. PA3 trims only completed sentences at acoustic pauses, checking the retained opening and committed head. Live text is published before those checks. Each round attempts at most one sentence boundary with two verification requests; a disagreement preserves provisional text and audio, and an unchanged rejected head is skipped until the wording or available sentence boundaries change. Each ordinary update makes one dictionary-guided recognition request. The prompt contains only the comma-separated glossary ending in a period, without a heading or invented punctuation example; the old combination caused glossary-prefix hallucinations in saved recordings. Startup retains one second of pre-roll and requires sustained speech activity; silence does not trigger repeated transcription. Full session recordings retain the original timeline.
 - The audio capture callback feeds a bounded queue while a separate worker drains accumulated audio and talks to Whisper, matching the important `pa2` threading model.
 - macOS may prompt for Microphone and Accessibility permissions. Accessibility is needed for paste automation through System Events.
 

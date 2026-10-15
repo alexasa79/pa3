@@ -152,8 +152,15 @@ if CommandLine.arguments.contains("--dictionary-test") {
     exit(failures.isEmpty ? 0 : 2)
 }
 
+if CommandLine.arguments.contains("--transcription-scheduling-test") {
+    let failures = runTranscriptionSchedulingTests()
+    failures.forEach { print("FAIL: " + $0) }
+    print(failures.isEmpty ? "transcription-scheduling-test: ok" : "transcription-scheduling-test: failed")
+    exit(failures.isEmpty ? 0 : 2)
+}
+
 if CommandLine.arguments.contains("--whisper-text-test") {
-    let failures = runWhisperTextTests() + runSegmentationTests() + runNarrationTests() + runNarrationDictionaryTests() + runSelectedTextTests() + runWordCapitalizationTests() + runDeletionCleanupTests() + runUndoTests() + runRepeatReplacementTests() + runShortcutsTests() + runAutoMuteTests()
+    let failures = runWhisperTextTests() + runVocabularyPromptTests() + runSegmentationTests() + runNarrationTests() + runNarrationDictionaryTests() + runSelectedTextTests() + runWordCapitalizationTests() + runDeletionCleanupTests() + runUndoTests() + runRepeatReplacementTests() + runShortcutsTests() + runAutoMuteTests()
     print("whisper-text-test")
     if failures.isEmpty {
         print("ok")

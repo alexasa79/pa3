@@ -239,7 +239,7 @@ struct DictationView: View {
         .background(Color(nsColor: PaperTheme.cream))
     }
 
-    /// Duration limit for the audio clip sent to Whisper.
+    /// Minimum window duration before sentence trimming is eligible.
     private var contextControl: some View {
         HStack(spacing: 4) {
             Text("Context")
@@ -260,7 +260,7 @@ struct DictationView: View {
             }
             .disabled(controller.contextSeconds >= DictationController.contextSecondsRange.upperBound)
         }
-        .help("Maximum audio context in seconds. When exceeded, trim at the earliest suitable sentence boundary and retain the rest.")
+        .help("Minimum audio context before trimming. Unfinished sentences can extend beyond this duration.")
     }
 
     private var editSheet: some View {

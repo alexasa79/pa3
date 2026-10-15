@@ -24,10 +24,9 @@ struct SegmentationConfig {
     var minQuiet = 0.15
     /// Time between the starts of two rounds. A round that runs longer than this delays the next one.
     var minRequestInterval = 1.0
-    /// Trimming target; a short margin allows a verified boundary beyond it.
+    /// Minimum audio window duration before a completed sentence may be trimmed.
     static let contextSecondsRange = 5...28
-    var maxBuffer = Double(SegmentationConfig.contextSecondsRange.upperBound)
-    var requestLimit: Double { min(29.5, maxBuffer + 1.5) }
+    var trimAfterSeconds = Double(SegmentationConfig.contextSecondsRange.upperBound)
     /// Frame size for energy measurement.
     var frameSeconds = 0.01
     /// Speech threshold is the noise floor times this factor, clamped to the range below.
@@ -178,27 +177,11 @@ func trustedSentenceEnds(_ tokens: [TimedToken]) -> [Int] {
     return result
 }
 
-/// Cut only after exceeding the duration limit. Prefer the earliest sentence boundary
-/// that removes enough audio, preserving all later sentences as context.
+/// Duration is a lower threshold for trimming eligibility, not a deadline.
+/// An unfinished sentence remains provisional regardless of its duration.
 func chooseCut(tokens: [TimedToken], quiet: [QuietRun], duration: Double, config: SegmentationConfig = .default) -> SegmentCut? {
-    guard duration > config.maxBuffer else { return nil }
-    // One frame of headroom puts the retained clip strictly below the limit.
-    let minimumCut = duration - config.maxBuffer + config.frameSeconds
-    guard minimumCut > 0, minimumCut < duration else { return nil }
-    if let cut = sentenceCuts(tokens: tokens, quiet: quiet, minimumCut: minimumCut, duration: duration, config: config).first {
-        return cut
-    }
-
-    // Without a usable sentence boundary, preserve as much audio as possible by
-    // using the earliest sufficient pause. A time cut is the last resort.
-    let pauseTimes = quiet.compactMap { run -> Double? in
-        let time = max(minimumCut, run.middle)
-        return time < run.end && time < duration ? time : nil
-    }
-    if let time = pauseTimes.min() {
-        return cutAtTime(time, tokens: tokens, reason: "window cap")
-    }
-    return cutAtTime(minimumCut, tokens: tokens, reason: "window cap, no pause")
+    guard duration >= config.trimAfterSeconds else { return nil }
+    return sentenceCuts(tokens: tokens, quiet: quiet, minimumCut: 0.5, duration: duration, config: config).first
 }
 
 func sentenceCuts(tokens: [TimedToken], quiet: [QuietRun], minimumCut: Double, duration: Double, config: SegmentationConfig) -> [SegmentCut] {
@@ -226,13 +209,6 @@ func sentenceCuts(tokens: [TimedToken], quiet: [QuietRun], minimumCut: Double, d
     return cuts.sorted { $0.time < $1.time }
 }
 
-/// Splits by word start: a word that began before the cut was spoken before it, however far Whisper stretched its end.
-private func cutAtTime(_ time: Double, tokens: [TimedToken], reason: String) -> SegmentCut {
-    let committed = tokens.filter { $0.start < time }.map(\.text)
-    let pending = tokens.filter { $0.start >= time }.map(\.text)
-    return SegmentCut(time: time, committed: committed, pending: pending, reason: reason, timeBased: true)
-}
-
 /// Match the opening of the actual retained recording to the full-window text.
 /// Word times only constrain the search; the retained words decide which side owns
 /// a word. This prevents committing a quiet "The" that is still in retained audio.
@@ -251,6 +227,15 @@ func confirmRetainedCut(_ cut: SegmentCut, tokens: [TimedToken], retainedWords: 
     if cut.reason == "sentence", index == 0 || !endsSentence(tokens[index - 1].text) { return nil }
     return SegmentCut(time: cut.time, committed: tokens[..<index].map(\.text),
                       pending: tokens[index...].map(\.text), reason: cut.reason + " (retained verified)", timeBased: cut.timeBased)
+}
+
+/// Retained-audio verification establishes ownership at the split. The separate
+/// head decode must also agree with every word about to become permanent.
+/// Keep the contextual spelling and punctuation only when the spoken words match.
+func confirmCommittedCut(_ cut: SegmentCut, headWords: [String]) -> SegmentCut? {
+    guard normalizedWords(headWords.joined(separator: " ")) == normalizedWords(cut.committed.joined(separator: " ")) else { return nil }
+    return SegmentCut(time: cut.time, committed: cut.committed, pending: cut.pending,
+                      reason: cut.reason + " (head verified)", timeBased: cut.timeBased)
 }
 
 /// A long pause can separate complete speech from a barely started next utterance.
@@ -322,7 +307,8 @@ struct SpeechActivityGate {
     }
 }
 
-/// A hard-bounded recognition window. Trim trailing quiet audio only in the request;
+/// A recognition window that can grow until a complete sentence is available.
+/// Trim trailing quiet audio only in the request;
 /// the worker retains the original timeline until it actually consumes the samples.
 struct RecognitionWindow {
     let samples: [Float]
@@ -332,9 +318,8 @@ struct RecognitionWindow {
     let inspectedSamples: Int
 }
 
-func recognitionWindow(samples: [Float], sampleRate: Int, config: SegmentationConfig, padding: Double) -> RecognitionWindow {
-    let limit = max(1, Int((config.requestLimit - padding) * Double(sampleRate)))
-    let inspected = Array(samples.prefix(limit))
+func recognitionWindow(samples: [Float], sampleRate: Int, config: SegmentationConfig) -> RecognitionWindow {
+    let inspected = samples
     let energies = frameEnergies(samples: inspected, sampleRate: sampleRate, frameSeconds: config.frameSeconds)
     let threshold = speechThreshold(energies: energies, config: config)
     var activity = SpeechActivityGate()

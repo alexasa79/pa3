@@ -4,8 +4,8 @@ enum Logger {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var handle: FileHandle?
 
-    static func setup() {
-        let path = userDataDirectory().appendingPathComponent("pa3.log")
+    static func setup(path: URL? = nil) {
+        let path = path ?? userDataDirectory().appendingPathComponent("pa3.log")
         FileManager.default.createFile(atPath: path.path, contents: nil)
         handle = try? FileHandle(forWritingTo: path)
         try? handle?.truncate(atOffset: 0)

@@ -56,7 +56,7 @@ final class DictationController: ObservableObject {
     @Published var vocabularyWords: [String] = []
     @Published var vocabularyNotice = ""
     /// Audio duration limit in seconds. Stored separately from the old sentence preference.
-    @Published private(set) var contextSeconds = Int(SegmentationConfig.default.maxBuffer)
+    @Published private(set) var contextSeconds = Int(SegmentationConfig.default.trimAfterSeconds)
     static let contextSecondsKey = "contextSeconds"
     static let contextSecondsRange = SegmentationConfig.contextSecondsRange
 
@@ -123,7 +123,7 @@ final class DictationController: ObservableObject {
         autoMuteAudio = preferences.bool(forKey: Self.autoMuteAudioKey)
         self.vocabulary = Vocabulary(path: Self.vocabularyPath())
         self.vocabularyWords = vocabulary.allWords()
-        transcriber.setSystemPrompt(vocabulary.systemPrompt())
+        transcriber.setVocabulary(vocabulary.allWords())
         if preferences.object(forKey: Self.contextSecondsKey) != nil {
             contextSeconds = Self.contextSecondsRange.clamped(preferences.integer(forKey: Self.contextSecondsKey))
         }
@@ -338,7 +338,7 @@ final class DictationController: ObservableObject {
 
     func replaceVocabulary(with text: String) throws {
         vocabularyWords = try vocabulary.replace(with: text)
-        transcriber.setSystemPrompt(vocabulary.systemPrompt())
+        transcriber.setVocabulary(vocabulary.allWords())
         showVocabularyNotice("\(vocabularyWords.count) dictionary words saved")
     }
 
@@ -460,7 +460,7 @@ final class DictationController: ObservableObject {
     }
 
     func handleTranscription(_ update: TranscriptionUpdate) {
-        transcriptionIterations += 1
+        if update.isRecognition { transcriptionIterations += 1 }
         detectedLanguage = update.language
         serviceMessage = ""
         debugMessage = "Dictation active"
@@ -652,7 +652,7 @@ final class DictationController: ObservableObject {
         let result = vocabulary.add(word)
         if result.added {
             vocabularyWords = vocabulary.allWords()
-            transcriber.setSystemPrompt(vocabulary.systemPrompt())
+            transcriber.setVocabulary(vocabulary.allWords())
             showVocabularyNotice("Added \"\(result.normalized)\"")
         } else if !result.normalized.isEmpty {
             debugMessage = "\"\(result.normalized)\" is already in dictionary"

@@ -20,6 +20,13 @@ struct WhisperSegment: Decodable {
 struct TranscriptionUpdate: Sendable {
     let text: String
     let language: String?
+    let isRecognition: Bool
+
+    init(text: String, language: String?, isRecognition: Bool = true) {
+        self.text = text
+        self.language = language
+        self.isRecognition = isRecognition
+    }
 }
 
 struct WhisperTranscription: Decodable {
@@ -121,7 +128,9 @@ final class TranscriberService {
     private var stableRunes = 0
     private var pendingText = ""
     private var continuationAnchor: (offset: Int, word: String)?
-    private var systemPrompt = ""
+    private var rejectedBoundaryOffset = -1
+    private var rejectedBoundaryHeads: Set<String> = []
+    private var whisperPrompt = ""
     /// Called with the absolute time of every cut. Used by the replay tool.
     var cutHandler: (@Sendable (Double, SegmentCut) -> Void)?
     private var isStopping = false
@@ -194,13 +203,13 @@ final class TranscriberService {
     /// Audio duration limit in seconds. Applies from the next transcription round.
     func setContextSeconds(_ seconds: Int) {
         stateLock.lock()
-        segmentationConfig.maxBuffer = Double(SegmentationConfig.contextSecondsRange.clamped(seconds))
+        segmentationConfig.trimAfterSeconds = Double(SegmentationConfig.contextSecondsRange.clamped(seconds))
         stateLock.unlock()
     }
 
-    func setSystemPrompt(_ prompt: String) {
+    func setVocabulary(_ words: [String]) {
         stateLock.lock()
-        systemPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        whisperPrompt = Vocabulary.whisperPrompt(for: words)
         stateLock.unlock()
     }
 
@@ -237,6 +246,8 @@ final class TranscriberService {
         stableRunes = 0
         pendingText = ""
         continuationAnchor = nil
+        rejectedBoundaryOffset = -1
+        rejectedBoundaryHeads.removeAll()
         isStopping = false
         captureRequested = true
         self.skipWhisper = skipWhisper
@@ -511,7 +522,7 @@ final class TranscriberService {
                 continue
             }
             if !ended, Date().timeIntervalSince(lastRequestStart) < segmentation.minRequestInterval { continue }
-            let window = recognitionWindow(samples: audio, sampleRate: sampleRate, config: segmentation, padding: silencePadding)
+            let window = recognitionWindow(samples: audio, sampleRate: sampleRate, config: segmentation)
             if window.samples.isEmpty {
                 let count = max(0, window.inspectedSamples - sampleRate / 5)
                 if count == 0 { if ended { break }; continue }
@@ -527,9 +538,9 @@ final class TranscriberService {
                 consumedSamples += leadingQuiet
                 continue
             }
-            // If every candidate failed, do not spin on the same capped audio again.
+            // Do not spin on the same recognized audio when no new speech arrives.
             // Further audio remains recorded; no unverified text or samples are discarded.
-            let needsCut = audio.count >= Int(segmentation.maxBuffer * Double(sampleRate))
+            let needsCut = audio.count >= Int(segmentation.trimAfterSeconds * Double(sampleRate))
             if attemptedOffset == consumedSamples, attemptedSpeechEnd == window.speechEnd,
                !needsCut || attemptedNeedsCut {
                 if ended { break }
@@ -540,7 +551,7 @@ final class TranscriberService {
             attemptedNeedsCut = needsCut
             lastRequestStart = Date()
             Logger.info("recognition sourceStart=\(Double(consumedSamples) / Double(sampleRate)) speechEnd=\(Double(consumedSamples + window.speechEnd) / Double(sampleRate)) capturedEnd=\(Double(consumedSamples + audio.count) / Double(sampleRate))")
-            let result = transcribeSlice(samples: window.samples, boundarySamples: Array(audio.prefix(window.inspectedSamples)), offsetSamples: consumedSamples, sampleRate: sampleRate,
+            let result = transcribeSlice(samples: window.samples, offsetSamples: consumedSamples, sampleRate: sampleRate,
                                          needsCut: needsCut, receiver: receiver)
             if result.recognized {
                 recognizedThrough = result.trim > 0 ? consumedSamples + result.trim : max(recognizedThrough, consumedSamples + window.samples.count)
@@ -551,8 +562,6 @@ final class TranscriberService {
                 let count = min(result.trim, audio.count)
                 audio.removeFirst(count)
                 consumedSamples += count
-            } else if audio.count >= Int(segmentation.requestLimit * Double(sampleRate)) {
-                reportStatus("No verified boundary; preserving recording")
             }
             if ended, result.trim == 0 { break }
         }
@@ -597,11 +606,11 @@ final class TranscriberService {
 
     /// Sends the buffer to Whisper and commits whatever can be cut.
     /// Returns how many samples to drop from the front and the speech threshold measured on this buffer.
-    private func transcribeSlice(samples: [Float], boundarySamples: [Float], offsetSamples: Int, sampleRate: Int, needsCut: Bool, receiver: @escaping @Sendable (TranscriptionUpdate) -> Void) -> (trim: Int, threshold: Float, recognized: Bool) {
+    private func transcribeSlice(samples: [Float], offsetSamples: Int, sampleRate: Int, needsCut: Bool, receiver: @escaping @Sendable (TranscriptionUpdate) -> Void) -> (trim: Int, threshold: Float, recognized: Bool) {
         let segmentation = self.segmentation
         let energies = frameEnergies(samples: samples, sampleRate: sampleRate, frameSeconds: segmentation.frameSeconds)
         let threshold = speechThreshold(energies: energies, config: segmentation)
-        guard ensureWhisperServerStarted() else {
+        guard transcriptionRequestForTesting != nil || ensureWhisperServerStarted() else {
             return (0, threshold, false)
         }
         if !energies.contains(where: { $0 >= threshold }) {
@@ -625,116 +634,101 @@ final class TranscriberService {
         }
         let quiet = quietRuns(energies: energies, threshold: threshold, config: segmentation)
         let duration = Double(samples.count) / Double(sampleRate)
-        var cut: SegmentCut?
-        if needsCut {
-            func verifyRetained(_ candidate: SegmentCut) -> SegmentCut? {
-                let cutSamples = Int(round(candidate.time * Double(sampleRate)))
-                guard cutSamples > 0, cutSamples < samples.count - sampleRate else { return nil }
-                let acousticMargin = sampleRate / 20
-                if candidate.reason != "continuous speech" {
-                    guard cutSamples >= acousticMargin, cutSamples + acousticMargin < samples.count,
-                          isQuiet(samples[(cutSamples - acousticMargin)..<(cutSamples + acousticMargin)], threshold: threshold) else { return nil }
-                }
-                let retainedEnd = min(samples.count, cutSamples + min(6 * sampleRate, Int((segmentation.requestLimit - silencePadding) * Double(sampleRate))))
-                let retainedSamples = Array(samples[cutSamples..<retainedEnd])
-                guard containsSpeech(samples: retainedSamples, sampleRate: sampleRate, config: segmentation) else { return nil }
-                let retained = [Float](repeating: 0, count: paddingSamples) + retainedSamples
-                if let checked = recognize(samples: retained, sampleRate: sampleRate),
-                   let confirmed = confirmRetainedCut(candidate, tokens: tokens,
-                                                      retainedWords: timedTokens(checked, offset: silencePadding).map(\.text),
-                                                      headIsQuiet: isQuiet(samples[..<cutSamples], threshold: threshold)) {
-                    return confirmed
-                }
-                return nil
-            }
-            let sentenceProposals = sentenceCuts(tokens: tokens, quiet: quiet, minimumCut: 0.5, duration: duration - 1, config: segmentation)
-            for candidate in sentenceProposals {
-                if let confirmed = verifyRetained(candidate) {
-                    cut = confirmed
-                    break
-                }
-            }
-            // A long interior pause may precede an incomplete word at the window
-            // limit. The full decoder can omit that word, leaving no retained anchor.
-            // Verify the complete spoken head instead, and re-decode all retained audio.
-            let boundaryQuiet = quietRuns(samples: boundarySamples, sampleRate: sampleRate, config: segmentation)
-            for run in boundaryQuiet where cut == nil && run.length >= 1 && run.start >= 0.1 {
-                let time = run.middle
-                let count = Int(round(time * Double(sampleRate)))
-                let headSamples = Array(boundarySamples.prefix(min(count, Int(run.start * Double(sampleRate)) + sampleRate / 5)))
-                var headActivity = SpeechActivityGate()
-                headActivity.append(headSamples, sampleRate: sampleRate, threshold: segmentation.minThreshold)
-                guard headActivity.speechEnd != nil else { continue }
-                let head = [Float](repeating: 0, count: paddingSamples) + headSamples
-                let proposal = SegmentCut(time: time, committed: [], pending: [], reason: "long pause")
-                if let checked = recognize(samples: head, sampleRate: sampleRate),
-                   let confirmed = confirmPauseHead(proposal, tokens: tokens,
-                                                    headWords: timedTokens(checked, offset: silencePadding).map(\.text)) {
-                    cut = confirmed
-                    break
-                }
-            }
-            var proposalConfig = segmentation
-            proposalConfig.maxBuffer = max(0.1, duration - 0.5)
-            let preferred = chooseCut(tokens: tokens, quiet: quiet, duration: duration, config: proposalConfig)
-            var proposals = preferred.flatMap { $0.reason == "sentence" ? nil : [$0] } ?? []
-            for run in quiet where run.middle >= 0.5 && run.middle < duration - 1 {
-                if proposals.contains(where: { abs($0.time - run.middle) < 0.1 }) { continue }
-                proposals.append(SegmentCut(time: run.middle, committed: [], pending: [], reason: "alternate pause", timeBased: true))
-            }
-            // Continuous speech may have no acoustic pause. A retained-audio match
-            // can still establish the word division; never commit from timestamps alone.
-            do {
-                for fraction in [0.5, 0.6, 0.7] {
-                    proposals.append(SegmentCut(time: duration * fraction, committed: [], pending: [], reason: "continuous speech", timeBased: true))
-                }
-            }
-            for candidate in proposals where cut == nil {
-                cut = verifyRetained(candidate)
-            }
+        // Publish the validated full-window result before doing any trimming work.
+        // Finalizing a boundary is a separate update, not another recognition.
+        stateLock.lock()
+        pendingText = buildText(tokens.map(\.text))
+        let preview = joinText(stableText, pendingText)
+        stableRunes = preview.stableRunes
+        if rejectedBoundaryOffset != offsetSamples {
+            rejectedBoundaryOffset = offsetSamples
+            rejectedBoundaryHeads.removeAll()
+        }
+        let rejected = rejectedBoundaryHeads
+        stateLock.unlock()
+        Logger.info("Received Whisper transcription duration=\(String(format: "%.2f", duration)) text=\(String(reflecting: buildText(tokens.map(\.text))))")
+        reportStatus("Dictation active")
+        DispatchQueue.main.async {
+            receiver(TranscriptionUpdate(text: preview.text, language: transcription.language))
         }
 
-        stateLock.lock()
-        if let cut {
-            stableText = appendText(stableText, buildText(cut.committed))
-            pendingText = buildText(cut.pending)
-            let nextOffset = offsetSamples + Int(round(cut.time * Double(sampleRate)))
-            continuationAnchor = cut.committed.last.map { endsSentence($0) } == false
-                ? cut.pending.first.map { (offset: nextOffset, word: $0) } : nil
-        } else {
-            pendingText = buildText(tokens.map(\.text))
+        var cut: SegmentCut?
+        if needsCut, duration >= segmentation.trimAfterSeconds {
+            let proposals = sentenceCuts(tokens: tokens, quiet: quiet, minimumCut: 0.5, duration: duration - 1, config: segmentation)
+            func key(_ candidate: SegmentCut) -> String {
+                normalizedWords(candidate.committed.joined(separator: " ")).joined(separator: " ")
+            }
+            // At most one candidate and two verification requests per round.
+            // A rejected, unchanged head waits for new wording or a later sentence.
+            if let candidate = proposals.first(where: { !rejected.contains(key($0)) }) {
+                let cutSamples = Int(round(candidate.time * Double(sampleRate)))
+                let margin = sampleRate / 20
+                if cutSamples >= margin, cutSamples + margin < samples.count,
+                   isQuiet(samples[(cutSamples - margin)..<(cutSamples + margin)], threshold: threshold) {
+                    let retainedEnd = min(samples.count, cutSamples + 6 * sampleRate)
+                    let retainedSamples = Array(samples[cutSamples..<retainedEnd])
+                    if containsSpeech(samples: retainedSamples, sampleRate: sampleRate, config: segmentation) {
+                        let retained = [Float](repeating: 0, count: paddingSamples) + retainedSamples
+                        var headDisagreed = false
+                        if let checked = recognize(samples: retained, sampleRate: sampleRate),
+                           let confirmed = confirmRetainedCut(candidate, tokens: tokens,
+                               retainedWords: timedTokens(checked, offset: silencePadding).map(\.text), headIsQuiet: false) {
+                            let head = [Float](repeating: 0, count: paddingSamples) + samples.prefix(cutSamples)
+                            if let checkedHead = recognize(samples: head, sampleRate: sampleRate) {
+                                cut = confirmCommittedCut(confirmed, headWords: timedTokens(checkedHead, offset: silencePadding).map(\.text))
+                                headDisagreed = cut == nil
+                            }
+                        }
+                        if headDisagreed {
+                            stateLock.lock()
+                            rejectedBoundaryHeads.insert(key(candidate))
+                            stateLock.unlock()
+                            Logger.info("Deferring disputed sentence boundary; preserving provisional text and audio")
+                        }
+                    }
+                }
+            }
         }
+        guard let cut else { return (0, threshold, true) }
+
+        stateLock.lock()
+        stableText = appendText(stableText, buildText(cut.committed))
+        pendingText = buildText(cut.pending)
+        let nextOffset = offsetSamples + Int(round(cut.time * Double(sampleRate)))
+        continuationAnchor = cut.committed.last.map { endsSentence($0) } == false
+            ? cut.pending.first.map { (offset: nextOffset, word: $0) } : nil
         let joined = joinText(stableText, pendingText)
         stableRunes = joined.stableRunes
         stateLock.unlock()
 
-        if let cut {
-            let absolute = Double(offsetSamples) / Double(sampleRate) + cut.time
-            Logger.info("cut at \(String(format: "%.2f", absolute))s reason=\(cut.reason) committed=\(String(reflecting: buildText(cut.committed))) pending=\(String(reflecting: buildText(cut.pending)))")
-            cutHandler?(absolute, cut)
-        }
+        let absolute = Double(offsetSamples) / Double(sampleRate) + cut.time
+        Logger.info("cut at \(String(format: "%.2f", absolute))s reason=\(cut.reason) committed=\(String(reflecting: buildText(cut.committed))) pending=\(String(reflecting: buildText(cut.pending)))")
+        cutHandler?(absolute, cut)
         let text = joined.text
-        Logger.info("Received Whisper transcription duration=\(String(format: "%.2f", duration)) text=\(String(reflecting: buildText(tokens.map(\.text))))")
-        reportStatus("Dictation active")
         DispatchQueue.main.async {
-            receiver(TranscriptionUpdate(text: text, language: transcription.language))
-        }
-        guard let cut else {
-            return (0, threshold, true)
+            receiver(TranscriptionUpdate(text: text, language: transcription.language, isRecognition: false))
         }
         return (Int(round(cut.time * Double(sampleRate))), threshold, true)
     }
 
     var recognitionHandler: (@Sendable (Double) -> Void)?
 
+    // Test transport: exercises the real recognition and segmentation path without
+    // microphone access, a model server, or variable model output.
+    var transcriptionRequestForTesting: (@Sendable (Data, String) -> WhisperTranscription?)?
+
+    func debugTranscribeSlice(samples: [Float], needsCut: Bool,
+                              receiver: @escaping @Sendable (TranscriptionUpdate) -> Void) -> (trim: Int, recognized: Bool) {
+        precondition(transcriptionRequestForTesting != nil)
+        let result = transcribeSlice(samples: samples, offsetSamples: 0,
+                                     sampleRate: Self.defaultSampleRate, needsCut: needsCut, receiver: receiver)
+        return (result.trim, result.recognized)
+    }
+
     private func recognize(samples: [Float], sampleRate: Int, reportDuration: Bool = false) -> WhisperTranscription? {
         // Even a complete short word gets at least one second of acoustic context.
         let padded = samples + [Float](repeating: 0, count: max(0, sampleRate - samples.count))
         let duration = Double(padded.count) / Double(sampleRate)
-        guard duration <= segmentation.requestLimit + 0.0001 else {
-            Logger.error("Refusing oversized recognition request duration=\(duration)")
-            return nil
-        }
         recognitionHandler?(duration)
         // Boundary verification decodes short excerpts of the same audio. Those
         // requests must not replace the duration of the main transcription window.
@@ -744,11 +738,17 @@ final class TranscriberService {
             statusLock.unlock()
             durationHandler?(duration)
         }
-        Logger.info("bounded recognition duration=\(String(format: "%.3f", duration))")
+        Logger.info("recognition duration=\(String(format: "%.3f", duration))")
         return requestTranscription(wav: WAVEncoder.encode(samples: padded, sampleRate: sampleRate))
     }
 
     private func requestTranscription(wav: Data) -> WhisperTranscription? {
+        if let transport = transcriptionRequestForTesting {
+            stateLock.lock()
+            let prompt = whisperPrompt
+            stateLock.unlock()
+            return transport(wav, prompt)
+        }
         guard let url = URL(string: "http://127.0.0.1:\(whisperPort)/inference") else {
             return nil
         }
@@ -770,15 +770,13 @@ final class TranscriberService {
         addField("temperature_inc", "0.2")
 
         stateLock.lock()
-        let prompt = systemPrompt
+        let prompt = whisperPrompt
         let stopping = isStopping
         stateLock.unlock()
         if stopping {
             return nil
         }
-        if !prompt.isEmpty {
-            addField("prompt", prompt)
-        }
+        addField("prompt", prompt)
         // Explicitly override the server's English default for every audio clip.
         addField("language", "auto")
         addField("translate", "false")
@@ -838,6 +836,8 @@ final class TranscriberService {
         stableRunes = 0
         pendingText = ""
         continuationAnchor = nil
+        rejectedBoundaryOffset = -1
+        rejectedBoundaryHeads.removeAll()
         isStopping = false
         skipWhisper = false
         stateLock.unlock()

@@ -3,7 +3,7 @@ import Foundation
 
 /// Offline replay: pushes a recording through the live transcription worker and checks the result.
 ///
-///   pa3 --replay file.wav [--reference file.txt] [--speed 4] [--max-wer 0.1] [--context-seconds 28]
+///   pa3 --replay file.wav [--reference file.txt] [--speed 4] [--max-wer 0.1] [--context-seconds 28] [--vocabulary file.txt]
 ///   pa3 --replay-test [dir]        replays every dir/*.wav that has a matching .txt reference
 enum Replay {
     struct Outcome {
@@ -20,11 +20,14 @@ enum Replay {
         var longestRequest: Double
     }
 
-    /// Audio duration limit during replay. Set with `--context-seconds N`.
-    nonisolated(unsafe) static var contextSeconds = Int(SegmentationConfig.default.maxBuffer)
+    /// Minimum window duration before sentence trimming during replay. Set with `--context-seconds N`.
+    nonisolated(unsafe) static var contextSeconds = Int(SegmentationConfig.default.trimAfterSeconds)
 
     static func main(arguments: [String]) -> Int32 {
-        Logger.setup()
+        // Replays run beside the app; do not truncate its live diagnostic log.
+        let log = FileManager.default.temporaryDirectory.appendingPathComponent("pa3-replay-\(ProcessInfo.processInfo.processIdentifier).log")
+        Logger.setup(path: log)
+        print("replay log: \(log.path)")
         defer { Logger.close() }
         let speed = value(after: "--speed", in: arguments).flatMap(Double.init) ?? 4
         let maxWER = value(after: "--max-wer", in: arguments).flatMap(Double.init) ?? 0.1
@@ -47,7 +50,7 @@ enum Replay {
             return runDirectory(dir, speed: speed, maxWER: maxWER)
         }
         guard let path = value(after: "--replay", in: arguments) else {
-            print("usage: pa3 --replay file.wav [--reference file.txt] [--speed 4] [--max-wer 0.1] [--context-seconds 28]")
+            print("usage: pa3 --replay file.wav [--reference file.txt] [--speed 4] [--max-wer 0.1] [--context-seconds 28] [--vocabulary file.txt]")
             return 2
         }
         let wav = URL(fileURLWithPath: path)
@@ -59,6 +62,13 @@ enum Replay {
             reference = try? String(contentsOf: sibling, encoding: .utf8)
         }
         let transcriber = TranscriberService()
+        if let path = value(after: "--vocabulary", in: arguments) {
+            guard FileManager.default.isReadableFile(atPath: path) else {
+                print("could not read vocabulary: \(path)")
+                return 2
+            }
+            transcriber.setVocabulary(Vocabulary(path: URL(fileURLWithPath: path)).allWords())
+        }
         defer { transcriber.close() }
         guard let outcome = run(wav: wav, reference: reference, speed: speed, transcriber: transcriber) else {
             return 2
@@ -149,11 +159,6 @@ enum Replay {
         let longestRequest = collector.requests.max() ?? 0
         if collector.requests.contains(where: { $0 < 1.0 - 0.0001 }) {
             cutProblems.append("live recognition request below one-second minimum")
-        }
-        var replayConfig = config
-        replayConfig.maxBuffer = Double(contextSeconds)
-        if longestRequest > replayConfig.requestLimit + 0.0001 {
-            cutProblems.append("request exceeded safety ceiling: \(longestRequest)s > \(replayConfig.requestLimit)s")
         }
         var outcome = Outcome(name: wav.lastPathComponent, text: text, cuts: collector.cuts, cutProblems: cutProblems,
                               referenceWER: nil, oneShotWER: nil, referenceDiff: "", oneShotDiff: "", seconds: elapsed, requestCount: collector.requests.count, longestRequest: longestRequest)
