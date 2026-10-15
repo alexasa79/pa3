@@ -99,7 +99,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // A service worker can restart while the top document remains enabled.
     chrome.tabs.sendMessage(tabId, {type: "reedah-state-request"}, {frameId: 0}, response => {
       if (chrome.runtime.lastError) {
-        console.error("PA3 extension: Unable to synchronize a new frame.", chrome.runtime.lastError);
+        const error = chrome.runtime.lastError;
+        // Child frames can finish loading before the top content script exists.
+        // Stop this synchronization attempt; the top document broadcasts its
+        // state when it starts. Other messaging failures remain errors.
+        if (error.message === "Could not establish connection. Receiving end does not exist.") {
+          console.info("PA3 extension: Frame synchronization stopped; top document is not ready.", error.message);
+        } else {
+          console.error("PA3 extension: Unable to synchronize a new frame.", error.message);
+        }
         sendResponse({enabled: false});
         return;
       }

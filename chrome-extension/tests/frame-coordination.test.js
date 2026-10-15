@@ -4,21 +4,26 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
-function setup(tabs = [{id:7}]) {
-  const sent=[];
+function setup(tabs = [{id:7}], messagingError = null) {
+  const sent=[], errors=[], info=[];
   const event=()=>({addListener(fn){this.handler=fn;}});
   const chrome={
     action:{setIcon(){assert.fail('Playback state must not replace the PA3 icon');}},tabs:{onActivated:event(),onUpdated:event(),onRemoved:event(),
       query(options, callback){assert.deepEqual(JSON.parse(JSON.stringify(options)), {active:true,currentWindow:true});callback(tabs);},
-      sendMessage(...args){sent.push(args);args.at(-1)?.({enabled:true});}},
+      sendMessage(...args){
+        sent.push(args);
+        chrome.runtime.lastError = messagingError;
+        try { args.at(-1)?.(messagingError ? undefined : {enabled:true}); }
+        finally { delete chrome.runtime.lastError; }
+      }},
     commands:{onCommand:event()},runtime:{onMessage:event(),onConnect:event()}
   };
-  const context=vm.createContext({chrome,console,setTimeout,clearTimeout,
+  const context=vm.createContext({chrome,console:{error(...args){errors.push(args);},info(...args){info.push(args);}},setTimeout,clearTimeout,
     OffscreenCanvas:class {constructor(){assert.fail('The extension icon must use the packaged PA3 artwork');}},
     ImageData:class {}});
   context.importScripts=(...files)=>files.forEach(file=>vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context));
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../background.js'),'utf8'),context);
-  return {sent,receive:chrome.runtime.onMessage.handler,command:chrome.commands.onCommand.handler};
+  return {sent,errors,info,receive:chrome.runtime.onMessage.handler,command:chrome.commands.onCommand.handler};
 }
 
 test('keyboard commands reach the active tab and playback commands reach every frame',()=>{
@@ -105,4 +110,34 @@ test('only the page toolbar may route playback actions to the owning frame',()=>
   assert.equal(sent.length,1);
   assert.equal(sent[0][1].token,'child');
   assert.equal(sent[0][1].action,'playpause');
+});
+
+
+test('a child arriving before the top script stops synchronization without reporting an extension error',()=>{
+  const {receive,sent,errors,info}=setup([{id:7}], {
+    message:'Could not establish connection. Receiving end does not exist.'
+  });
+  let response;
+  receive({type:'reedah-frame-ready'},{tab:{id:7},frameId:8},value=>response=value);
+  assert.equal(response.enabled,false);
+  assert.equal(errors.length,0);
+  assert.equal(info.length,1);
+  // The missing receiver must not cache a disabled state. A second frame
+  // still probes the top document, and its eventual startup broadcasts state.
+  receive({type:'reedah-frame-ready'},{tab:{id:7},frameId:9},()=>{});
+  assert.equal(sent.length,2);
+  receive({type:'reedah-state',enabled:true},{tab:{id:7},frameId:0});
+  assert.equal(sent.at(-1)[1].type,'reedah-set-enabled');
+  assert.equal(sent.at(-1)[1].enabled,true);
+});
+
+test('unexpected frame synchronization errors remain visible',()=>{
+  const {receive,errors,info}=setup([{id:7}],{message:'Unexpected messaging failure'});
+  let response;
+  receive({type:'reedah-frame-ready'},{tab:{id:7},frameId:8},value=>response=value);
+  assert.equal(response.enabled,false);
+  assert.equal(errors.length,1);
+  assert.equal(errors[0][0],'PA3 extension: Unable to synchronize a new frame.');
+  assert.equal(errors[0][1],'Unexpected messaging failure');
+  assert.equal(info.length,0);
 });
