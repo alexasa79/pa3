@@ -32,6 +32,33 @@ func runSegmentationTests() -> [String] {
               confirmRetainedCut(candidate, tokens: tokens, retainedWords: ["In", "the", "middle"], headIsQuiet: false)?.committed == ["sentence."])
     }
 
+    // Recorded 2026-10-16 failure: the midpoint of a 4.82-second pause
+    // put "Look, this bench" more than one second beyond the proposed cut.
+    // Also cover a pause longer than the six-second verification excerpt.
+    for nextStart in [20.9, 32.0] {
+        let tokens = [TimedToken(text: "bench.", start: 15.9, end: 16.9),
+                      TimedToken(text: "Look,", start: nextStart, end: nextStart + 0.2),
+                      TimedToken(text: "this", start: nextStart + 0.2, end: nextStart + 0.4),
+                      TimedToken(text: "bench", start: nextStart + 0.4, end: nextStart + 0.6)]
+        let pause = QuietRun(start: 16.1, end: nextStart + 0.02)
+        for duration in [max(28.33, nextStart + 2), 98.81] {
+            guard let cut = chooseCut(tokens: tokens, quiet: [pause], duration: duration) else {
+                failures.append("long-pause recording must propose a sentence cut")
+                continue
+            }
+            check("long-pause cut remains inside acoustic quiet", cut.time > pause.start && cut.time < pause.end)
+            check("long-pause cut leaves quiet safety margin", pause.end - cut.time >= 0.09)
+            let verified = confirmRetainedCut(cut, tokens: tokens,
+                retainedWords: ["Look,", "this", "bench"], headIsQuiet: false)
+            check("long-pause continuation passes timestamp verification", verified?.committed == ["bench."])
+            if let verified {
+                check("long-pause head still requires spoken-word agreement",
+                      confirmCommittedCut(verified, headWords: ["bench."]) != nil &&
+                      confirmCommittedCut(verified, headWords: ["invented."]) == nil)
+            }
+        }
+    }
+
     // timedTokens
     do {
         let transcription = WhisperTranscription(task: nil, language: nil, duration: nil, text: "", segments: [

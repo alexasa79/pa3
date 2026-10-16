@@ -46,6 +46,8 @@ struct SegmentCut: Equatable {
     /// True for a duration-limit proposal whose initial word division uses timestamps.
     /// All proposals require contextual verification before committing text.
     var timeBased = false
+    /// Expected start of retained speech, which can follow seconds of quiet.
+    var continuationTime: Double? = nil
 }
 
 /// Rebuilds the whitespace-separated tokens of `decodedWhisperText` while keeping the end time of each token.
@@ -197,13 +199,16 @@ func sentenceCuts(tokens: [TimedToken], quiet: [QuietRun], minimumCut: Double, d
         guard let run = candidates.min(by: { abs($0.end - nextStart) < abs($1.end - nextStart) }) else { continue }
         let start = max(low, run.start)
         let finish = min(high, run.end)
-        let time = max(minimumCut, (start + finish) / 2)
+        // Keep pauses centered unless that would spend most of the six-second
+        // verification excerpt on silence. Preserve up to three seconds of quiet
+        // context while leaving room to recognize the continuation's words.
+        let time = max(minimumCut, max((start + finish) / 2, finish - 3))
         guard time >= start, time < finish, time < duration else { continue }
         cuts.append(SegmentCut(
             time: time,
             committed: tokens[...index].map(\.text),
             pending: tokens[(index + 1)...].map(\.text),
-            reason: "sentence"
+            reason: "sentence", continuationTime: nextStart
         ))
     }
     return cuts.sorted { $0.time < $1.time }
@@ -217,7 +222,11 @@ func confirmRetainedCut(_ cut: SegmentCut, tokens: [TimedToken], retainedWords: 
     guard retained.count >= 3 else { return nil }
     let anchor = Array(retained.prefix(3))
     let matches = tokens.indices.filter { index in
-        guard abs(tokens[index].start - cut.time) <= 1.0,
+        // Match near the expected speech onset, not the middle of its pause.
+        // Still require the anchor to belong to the actual retained excerpt.
+        guard abs(tokens[index].start - (cut.continuationTime ?? cut.time)) <= 1.0,
+              tokens[index].start >= cut.time - 1,
+              tokens[index].start <= cut.time + 7,
               tokens.count - index >= 3 else { return false }
         return normalizedWords(tokens[index..<(index + 3)].map(\.text).joined(separator: " ")) == anchor
     }

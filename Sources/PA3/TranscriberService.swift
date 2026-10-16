@@ -669,21 +669,27 @@ final class TranscriberService {
                     let retainedSamples = Array(samples[cutSamples..<retainedEnd])
                     if containsSpeech(samples: retainedSamples, sampleRate: sampleRate, config: segmentation) {
                         let retained = [Float](repeating: 0, count: paddingSamples) + retainedSamples
-                        var headDisagreed = false
-                        if let checked = recognize(samples: retained, sampleRate: sampleRate),
-                           let confirmed = confirmRetainedCut(candidate, tokens: tokens,
-                               retainedWords: timedTokens(checked, offset: silencePadding).map(\.text), headIsQuiet: false) {
-                            let head = [Float](repeating: 0, count: paddingSamples) + samples.prefix(cutSamples)
-                            if let checkedHead = recognize(samples: head, sampleRate: sampleRate) {
-                                cut = confirmCommittedCut(confirmed, headWords: timedTokens(checkedHead, offset: silencePadding).map(\.text))
-                                headDisagreed = cut == nil
+                        var disagreement: String?
+                        if let checked = recognize(samples: retained, sampleRate: sampleRate) {
+                            if let confirmed = confirmRetainedCut(candidate, tokens: tokens,
+                                retainedWords: timedTokens(checked, offset: silencePadding).map(\.text), headIsQuiet: false) {
+                                let head = [Float](repeating: 0, count: paddingSamples) + samples.prefix(cutSamples)
+                                if let checkedHead = recognize(samples: head, sampleRate: sampleRate) {
+                                    cut = confirmCommittedCut(confirmed, headWords: timedTokens(checkedHead, offset: silencePadding).map(\.text))
+                                    if cut == nil { disagreement = "head" }
+                                }
+                            } else {
+                                disagreement = "retained anchor"
                             }
                         }
-                        if headDisagreed {
+                        // Cache either verification mismatch, but let transient
+                        // request failures retry. Later sentences remain eligible
+                        // on the next round without delaying this live preview.
+                        if let disagreement {
                             stateLock.lock()
                             rejectedBoundaryHeads.insert(key(candidate))
                             stateLock.unlock()
-                            Logger.info("Deferring disputed sentence boundary; preserving provisional text and audio")
+                            Logger.info("Deferring disputed sentence boundary check=\(disagreement) at=\(candidate.time); preserving provisional text and audio")
                         }
                     }
                 }
