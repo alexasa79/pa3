@@ -78,7 +78,6 @@ def transcribe(port, pcm, offset=0, language="en"):
             start=segment['start']; end=segment['end']
             tokens.append({'word':word,'start':offset+start+(end-start)*k/max(1,len(pieces)),
                 'end':offset+start+(end-start)*(k+1)/max(1,len(pieces)), 'estimated':len(pieces)>1})
-    if not tokens: raise RuntimeError('Whisper returned no timestamped words: '+str(result)[:300])
     return result,tokens,elapsed
 
 
@@ -88,12 +87,14 @@ class Tracker:
         self.segment = None
         self.locked = {}
         self.cursor = 0
+        self.recovering = False
 
     def update(self, request, recognize):
         if self.segment != request['segment']:
             self.segment = request['segment']
             self.locked = {}
             self.cursor = 0
+            self.recovering = False
         pcm = b''.join(Path(path).read_bytes() for path in request['paths'])
         duration = len(pcm) / 96000
         start = max(0, duration - 12)
@@ -103,9 +104,14 @@ class Tracker:
         lower = max(0, min(anchors) - 3) if anchors else max(0, self.cursor - 30)
         pairs = align([word['text'].replace('’', "'") for word in reference],
                       [dict(token, word=token['word'].replace('’', "'")) for token in tokens],
-                      lower, min(len(reference), self.cursor + 80))
-        if len(pairs) / max(1, len(tokens)) < .55:
-            raise RuntimeError('Recognition could not align narration with the source text')
+                      lower, len(reference) if self.recovering else min(len(reference), self.cursor + 80))
+        if not tokens or len(pairs) / len(tokens) < .55:
+            # Publish audio with no new timings. Preserve the last reliable source
+            # position and try again on the next rolling window, without retries.
+            self.recovering = True
+            print('Narration alignment uncertain; holding last highlight until recognition recovers', file=sys.stderr, flush=True)
+            return []
+        self.recovering = False
         added = []
         for pair in pairs:
             index = pair['index']

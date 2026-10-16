@@ -308,6 +308,25 @@ private func runTimingServiceTests() async -> Bool {
     let status = json(request("GET", path))
     guard status["state"] as? String == "completed", request("GET", path + "/chunks/0").status == 200,
           let chunks = status["audio_chunks"] as? [[String: Any]], chunks[0]["word_timings"] != nil else { print("FAIL timed stream publication"); return false }
+    // An uncertain first chunk still publishes audio; later chunks can recover and lose alignment again.
+    let uncertain = service.submit(try! JSONSerialization.data(withJSONObject: ["text":"Technical identifier. Then readable words.", "output":"stream", "timing":"words"]))
+    guard let uncertainID = json(uncertain)["id"] as? String, let uncertainOutput = narrator.requests.last?.path else { return false }
+    let uncertainPath = "/v1/narrations/" + uncertainID
+    for index in 0..<3 {
+        let partialPath = uncertainOutput.path + ".part-\(index).pcm"
+        do { try Data(repeating: 0, count: 96000).write(to: URL(fileURLWithPath: partialPath)) }
+        catch { return false }
+        narrator.emit(TTSWorkerEvent(event: "partial", id: uncertainID, path: partialPath, chunk: index, samples: 24000, sampleRate: 24000))
+        await settle()
+        let words = index == 1 ? [NarrationWordTiming(location: 22, length: 4, start: 1, end: 1.5)] : []
+        timing.emit(NarrationTimingEvent(id: uncertainID, chunk: index, words: words)); await settle()
+        guard request("GET", uncertainPath + "/chunks/\(index)").status == 200,
+              json(request("GET", uncertainPath))["state"] as? String == "generating", !timing.stopped else {
+            print("FAIL uncertain recognition must publish audio and keep recognizer running"); return false
+        }
+    }
+    narrator.emit(TTSWorkerEvent(event: "audio", id: uncertainID, path: uncertainOutput.path)); await settle()
+    guard json(request("GET", uncertainPath))["state"] as? String == "completed" else { return false }
     // A new request reuses the recognizer; cancel stops it and ignores delayed callbacks.
     let second = service.submit(try! JSONSerialization.data(withJSONObject: ["text":"Another paragraph.", "output":"stream", "timing":"words"]))
     guard let secondID = json(second)["id"] as? String else { return false }

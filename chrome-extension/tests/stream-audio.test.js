@@ -153,7 +153,7 @@ test('recognized groups follow the audio clock, deduplicate expansions, and rewi
   audio.rewind(); assert.deepEqual(audio.focusRange,{start:0,end:11}); audio.dispose();
 });
 test('timed streams reject absent or invalid source metadata instead of estimating progress', () => {
-  for(const words of [undefined,[],[{location:101,length:1,start:0,end:1}],
+  for(const words of [undefined,[{location:101,length:1,start:0,end:1}],
     [{location:0,length:1,start:.8,end:.2}], [{location:0,length:1,start:0,end:2}]]) {
     const {audio}=setup({sourceLength:100});
     assert.throws(()=>audio.append({...chunk(0),wordTimings:words})); audio.dispose();
@@ -242,4 +242,28 @@ test('seeking while streaming keeps accepting later chunks and rejects invalid p
   for(const source of audio.sources.slice()) source.node.onended();
   assert.equal(ended,1);audio.dispose();
   assert.throws(()=>audio.seek(0),/disposed/i);
+});
+
+
+test('uncertain recognition keeps audio playing, holds focus and recovers on the audio clock', async () => {
+  const {audio,ctx,nodes}=setup({sourceLength:100});
+  audio.append({...chunk(0),wordTimings:[]});
+  await audio.play();
+  assert.equal(nodes.length,1);
+  assert.equal(audio.focusRange,null);
+  audio.append({...chunk(1),wordTimings:[{location:10,length:4,start:1,end:1.2}]});
+  assert.equal(audio.focusRange,null); // Future recognition must not advance highlighting early.
+  ctx.currentTime=1.3;
+  const held=audio.focusRange;
+  assert.deepEqual(held,{start:10,end:14});
+  audio.append({...chunk(2),wordTimings:[]});
+  ctx.currentTime=2.5;
+  assert.deepEqual(audio.focusRange,held);
+  audio.append({...chunk(3),wordTimings:[{location:50,length:4,start:3,end:3.2}]});
+  assert.deepEqual(audio.focusRange,held);
+  ctx.currentTime=3.3;
+  assert.equal(audio.currentSourceLocation,50);
+  assert.deepEqual(audio.focusRange,{start:50,end:54});
+  assert.equal(nodes.length,4);
+  audio.finish(4); audio.dispose();
 });

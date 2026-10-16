@@ -22,6 +22,8 @@
       this.getContext = getContext;
       this.estimatedDuration = Math.max(1, estimatedDuration);
       this.wordTimings = [];
+      this.focusBreaks = [];
+      this.awaitingRecognition = false;
       this.sourceLength = sourceLength;
       this.sentenceRanges = sentenceRanges;
       this.buffers = [];
@@ -67,7 +69,7 @@
     }
     get focusRange() {
       const words = this.wordTimings;
-      if (!words.length) return null;
+      if (!words.length || this.currentTime < words[0].start) return null;
       let current = 0;
       while (current + 1 < words.length && words[current + 1].start <= this.currentTime) current++;
       // Timings are approximate, but source sentence boundaries are known.
@@ -76,9 +78,11 @@
       const sentence = this.sentenceRanges.find(range =>
         words[current].location >= range.start && words[current].location < range.end);
       const sentenceFloor = sentence ? words.findIndex(word => word.location >= sentence.start) : 0;
-      const floor = Math.max(this.focusFloor ?? 0, sentenceFloor);
+      const recoveryFloor = this.focusBreaks.findLast(index => index <= current) ?? 0;
+      const recoveryEnd = this.focusBreaks.find(index => index > current) ?? words.length;
+      const floor = Math.max(this.focusFloor ?? 0, sentenceFloor, recoveryFloor);
       const from = floor + Math.floor(Math.max(0, current - floor) / 3) * 3;
-      const group = words.slice(from, from + 3).filter(word => !sentence || word.location < sentence.end);
+      const group = words.slice(from, Math.min(from + 3, recoveryEnd)).filter(word => !sentence || word.location < sentence.end);
       return {start:group[0].location,
         end:Math.min(sentence?.end ?? Infinity, Math.max(...group.map(w => w.location + w.length)))};
     }
@@ -89,6 +93,7 @@
     }
     appendTimings(timings, duration) {
       if (!Array.isArray(timings)) throw new Error('Missing narration word timings');
+      if (!timings.length) this.awaitingRecognition = true;
       let previous = this.wordTimings.at(-1);
       for (const word of timings) {
         if (!Number.isInteger(word.location) || !Number.isInteger(word.length) || word.location < 0 || word.length <= 0 ||
@@ -98,9 +103,14 @@
         // Several pronounced words can refer to one dictionary term in the document.
         if (previous && word.location === previous.location && word.length === previous.length) {
           previous.end = Math.max(previous.end, word.end);
-        } else { this.wordTimings.push({...word}); previous = this.wordTimings.at(-1); }
+        } else {
+          if (this.awaitingRecognition) {
+            this.focusBreaks.push(this.wordTimings.length);
+            this.awaitingRecognition = false;
+          }
+          this.wordTimings.push({...word}); previous = this.wordTimings.at(-1);
+        }
       }
-      if (!this.wordTimings.length) throw new Error('Narration recognition returned no word timings');
     }
     append(message) {
       if (this.disposed || this.finished) throw new Error('Audio received after stream closed');

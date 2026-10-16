@@ -430,7 +430,6 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             }
             last = word.start
         }
-        if index == 0 && words.isEmpty { failActive("Narration recognition returned no word timings"); return }
         jobs[active]?.streamChunks[index].words = words
         jobs[active]?.published += 1
         timingDeadline = index + 1 < job.streamChunks.count ? Date().addingTimeInterval(120) : nil
