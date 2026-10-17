@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var shortcuts = GlobalShortcutManager { [weak self] action, binding in
         GlobalHotKey(keyCode: binding.keyCode, modifiers: binding.modifiers, identifier: UInt32(action.rawValue)) {
             DispatchQueue.main.async { [weak self] in
+                Logger.info("Global shortcut invoked action=\(action.title)")
                 switch action {
                 case .dictation: self?.showWindow()
                 case .selection: self?.readSelection()
@@ -28,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     private let screenCapture = ScreenTextCapture()
+    private let screenHighlight = ScreenNarrationOverlay()
     private var selectionRequest: UUID?
     private var narrationNotice: NSPanel?
     private var previousApp: NSRunningApplication?
@@ -62,6 +64,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onDictationWillStart = { [weak self] in self?.cancelNarration() }
         narration.onSelectionFailure = { [weak self] _ in
             self?.showNarrationNotice("Could not finish narration. Select the text and try again.")
+        }
+        narration.onScreenProgress = { [weak self] document, range in
+            if let document { self?.screenHighlight.show(document, range: range) }
+            else { self?.screenHighlight.clear() }
         }
         narration.start()
 
@@ -259,6 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func readSelection() {
+        Logger.info("Selection invocation pending=\(selectionRequest != nil) narrating=\(narration.hasNarration) dictationBlocked=\(controller?.narrationIsBlocked == true)")
         if selectionRequest != nil || narration.hasNarration {
             stopNarrationFromMenu()
             return
@@ -336,7 +343,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let response = self.narration.narrateSelection(result)
                 if response.status == 202 {
                     Logger.info("Screen narration accepted chars=\(text.count)")
-                    self.showNarrationNotice("Narrating screen text · \(self.shortcuts.configuration.selection.display) to stop")
+                    self.showNarrationNotice("Narrating screen text · \(self.shortcuts.configuration.screen.display) to stop")
                 } else {
                     let error = (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any]
                     self.showNarrationNotice(error?["error"] as? String ?? "Could not start narration.")
@@ -356,7 +363,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         narrationNotice?.orderOut(nil)
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 76),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.level = .floating
+        panel.level = .popUpMenu
+        panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -365,7 +373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Image(systemName: "speaker.wave.2.fill").foregroundStyle(Color(nsColor: PaperTheme.ink))
                 Text(message).font(.system(size: 13, weight: .medium)).fixedSize(horizontal: false, vertical: true)
             }.padding(18).frame(width: 460).background(.regularMaterial))
-        if let screen = NSScreen.main {
+        if let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main {
             panel.setFrameOrigin(NSPoint(x: screen.visibleFrame.midX - 230, y: screen.visibleFrame.maxY - 106))
         }
         panel.orderFrontRegardless()

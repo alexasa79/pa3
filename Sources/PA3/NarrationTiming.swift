@@ -1,3 +1,4 @@
+@preconcurrency import AVFoundation
 import Foundation
 import Darwin
 
@@ -59,8 +60,23 @@ final class NarrationTiming: NarrationTimingWorker, @unchecked Sendable {
         writer.async { [self] in
             do {
                 let encodedWords = try JSONSerialization.jsonObject(with: JSONEncoder().encode(words))
+                let complete = paths.contains { $0.pathExtension == "wav" }
+                let pcmPaths = try paths.map { path -> String in
+                    guard path.pathExtension == "wav" else { return path.path }
+                    let file = try AVAudioFile(forReading: path)
+                    guard file.length > 0, file.length <= 2_000_000,
+                          file.processingFormat.channelCount == 1, file.processingFormat.sampleRate == 24000,
+                          let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)) else {
+                        throw NarrationText.Invalid("Invalid audio for screen highlighting")
+                    }
+                    try file.read(into: buffer)
+                    guard let samples = buffer.floatChannelData?[0] else { throw NarrationText.Invalid("Missing narration samples") }
+                    let output = path.appendingPathExtension("timing.pcm")
+                    try Data(bytes: samples, count: Int(buffer.frameLength) * MemoryLayout<Float>.size).write(to: output)
+                    return output.path
+                }
                 var data = try JSONSerialization.data(withJSONObject: ["id": id, "chunk": chunk,
-                    "segment": "\(id):\(segment)", "paths": paths.map(\.path), "words": encodedWords,
+                    "segment": "\(id):\(segment)", "paths": pcmPaths, "complete": complete, "words": encodedWords,
                     "offset": offset, "language": TTSWorker.languages[language] ?? "en"])
                 data.append(10)
                 lock.lock()

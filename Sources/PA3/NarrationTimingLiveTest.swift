@@ -34,3 +34,51 @@ func runNarrationTimingLiveTest() async -> Int32 {
     print("FAIL live timing timed out")
     return 1
 }
+
+// Exercises the WAV path used by rectangle narration, including the real audio clock.
+@MainActor
+func runScreenNarrationTimingLiveTest() async -> Int32 {
+    let text: String
+    if let path = ProcessInfo.processInfo.environment["PA3_SCREEN_NARRATION_IMAGE"] {
+        let result = await ScreenText.recognize(URL(fileURLWithPath: path))
+        guard let recognized = result.text else { print("FAIL screenshot narration: \(result.message)"); return 1 }
+        text = recognized
+        print("Screenshot text: \(text)")
+    } else {
+        text = ProcessInfo.processInfo.environment["PA3_SCREEN_NARRATION_TEXT"]
+            ?? "The cache stores documents and returns the saved result."
+    }
+    let service = NarrationService(makeTimingWorker: { callback in
+        NarrationTiming { workerID, event in
+            for word in event.words ?? [] {
+                let value = (text as NSString).substring(with: NSRange(location: word.location, length: word.length))
+                print("Recognized \(value): \(word.start)...\(word.end)")
+            }
+            callback(workerID, event)
+        }
+    })
+    defer { service.shutdown() }
+    let lastWord = try! NarrationText.plan(NarrationInput(text: text)).last!.words.last!
+    let finalRange = NSRange(location: lastWord.location, length: lastWord.length)
+    let document = ScreenTextDocument(text: text, spans: [])
+    var locations = Set<Int>()
+    var highlightedFinalWord = false
+    let expected = (ProcessInfo.processInfo.environment["PA3_SCREEN_NARRATION_EXPECT_WORDS"] ?? "")
+        .split(separator: "|").map { (text as NSString).range(of: String($0)) }
+    var observed = Set<NSRange>()
+    var failed = false
+    service.onScreenProgress = { _, range in
+        if let range { locations.insert(range.location); observed.insert(range) }
+        if range == finalRange { highlightedFinalWord = true }
+    }
+    service.onSelectionFailure = { message in print("FAIL screen narration: \(message)"); failed = true }
+    let response = service.narrateSelection(SelectedTextResult(text: text, message: "", screenDocument: document))
+    guard response.status == 202 else { print("FAIL screen narration acceptance"); return 1 }
+    let deadline = Date().addingTimeInterval(180)
+    while service.hasNarration && Date() < deadline && !failed { try? await Task.sleep(for: .milliseconds(50)) }
+    guard !service.hasNarration, !failed, locations.count >= 7, highlightedFinalWord, expected.allSatisfy({ $0.location != NSNotFound && observed.contains($0) }) else {
+        print("FAIL live screen narration: \(locations.count) highlighted source words; final word highlighted=\(highlightedFinalWord)"); return 1
+    }
+    print("PASS live screen WAV recognition and playback clock: \(locations.count) highlighted source words")
+    return 0
+}

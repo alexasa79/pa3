@@ -45,6 +45,10 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         let isSelection: Bool
         let output: String
         var timed = false
+        var screenDocument: ScreenTextDocument?
+        var playbackTimings: [Int: [NarrationWordTiming]] = [:]
+        var timingDurations: [Int: Double] = [:]
+        var playbackTimingDisabled = false
         var published = 0
         var segmentStart = 0
         var sourceLength = 0
@@ -87,6 +91,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     private var playingPath: URL?
     private var player: AVAudioPlayer?
     private var timer: Timer?
+    private var highlightTimer: Timer?
     private var token = ""
     private var shuttingDown = false
     private var warmupAttempted = false
@@ -96,6 +101,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     var prepareModels: () -> Bool = { true }
     var modelDownloadHealth: () -> [String: Any] = { [:] }
     var onSelectionFailure: (String) -> Void = { _ in }
+    var onScreenProgress: (ScreenTextDocument?, NSRange?) -> Void = { _, _ in }
     var hasNarration: Bool { active != nil || !pending.isEmpty }
 
     init(isConfigured: @escaping () -> Bool = { TTSWorker.configured }, token: String = "",
@@ -136,7 +142,10 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
                     guard let self else { return }
                     self.expireAudio()
                     if self.active != nil && self.isDictationBusy() { self.stopAll() }
-                    if let deadline = self.timingDeadline, Date() > deadline { self.failActive("Narration recognition timed out") }
+                    if let deadline = self.timingDeadline, Date() > deadline {
+                        if let active = self.active, self.jobs[active]?.screenDocument != nil { self.disableScreenTiming(); self.pump() }
+                        else { self.failActive("Narration recognition timed out") }
+                    }
                     if let deadline = self.workerDeadline, Date() > deadline { self.workerFailed("Qwen worker timed out") }
                     if !self.warmupAttempted, TTSWorker.configured, !self.isDictationBusy() {
                         self.startWorker()
@@ -221,6 +230,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             jobs[id] = Job(id: id, characters: input.text.count, voice: voice, language: language,
                            instruct: input.instruct, chunks: chunks, isSelection: selection != nil, output: input.output ?? "playback", total: chunks.count)
             jobs[id]?.timed = input.timing == "words"
+            jobs[id]?.screenDocument = selection?.screenDocument
             jobs[id]?.sourceLength = input.text.utf16.count
             jobs[id]?.audioPieces = chunks.map {
                 ["start": Double($0.sourceRange.location) / Double(input.text.utf16.count),
@@ -252,7 +262,12 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     private func pump() {
         guard !shuttingDown else { return }
         if isDictationBusy() { stopAll(); return }
-        if active == nil, !pending.isEmpty { active = pending.removeFirst() }
+        if active == nil, !pending.isEmpty {
+            active = pending.removeFirst()
+            // Locate the text while audio is generated/recognized, so the first
+            // spoken word does not have to wait for the overlay's initial OCR.
+            if let document = jobs[active!]?.screenDocument { onScreenProgress(document, nil) }
+        }
         guard let id = active, var job = jobs[id] else { return }
         if worker == nil {
             jobs[id]?.state = "loading"
@@ -260,7 +275,8 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             return
         }
         guard workerReady else { jobs[id]?.state = "loading"; return }
-        if job.output == "playback", player == nil, !prepared.isEmpty {
+        if job.output == "playback", player == nil, !prepared.isEmpty,
+           job.screenDocument == nil || job.playbackTimingDisabled || job.playbackTimings[job.played] != nil {
             let path = prepared.removeFirst()
             do {
                 let player = try AVAudioPlayer(contentsOf: path)
@@ -273,6 +289,14 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
                 self.player = player
                 playingPath = path
                 jobs[id]?.state = "playing"
+                if job.screenDocument != nil {
+                    updateScreenHighlight()
+                    highlightTimer?.invalidate()
+                    highlightTimer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+                        MainActor.assumeIsolated { self?.updateScreenHighlight() }
+                    }
+                    RunLoop.main.add(highlightTimer!, forMode: .common)
+                }
                 Logger.info("Narration playing id=\(id) piece=\(job.played + 1)")
             } catch { failActive("Could not play generated audio"); return }
         }
@@ -308,6 +332,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         } else if player == nil, prepared.isEmpty, generatingPath == nil, job.played == job.total {
             jobs[id]?.state = "completed"
             jobs[id]?.chunks = []
+            onScreenProgress(nil, nil)
             try? FileManager.default.removeItem(at: audioDirectory.appendingPathComponent(id))
             Logger.info("Narration completed id=\(id)")
             active = nil
@@ -359,6 +384,19 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             if jobs[active]?.output != "playback", !audioWithinLimit(active) {
                 failActive("Generated audio exceeds storage limit"); return
             }
+            if let job = jobs[active], job.screenDocument != nil, !job.playbackTimingDisabled {
+                do {
+                    let file = try AVAudioFile(forReading: path)
+                    jobs[active]?.timingDurations[job.generated] = Double(file.length) / file.processingFormat.sampleRate
+                    try startTimingWorker()
+                    if timingDeadline == nil { timingDeadline = Date().addingTimeInterval(15) }
+                    timingWorker?.recognize(id: active, chunk: job.generated, segment: job.generated,
+                        paths: [path], words: job.chunks[job.generated].words, offset: 0, language: job.language)
+                } catch {
+                    Logger.warn("Screen word highlighting unavailable: \(error)")
+                    disableScreenTiming()
+                }
+            }
             jobs[active]?.generated += 1
             if jobs[active]?.output != "stream" { prepared.append(path) }
             generatingPath = nil
@@ -384,7 +422,15 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         Task { @MainActor [weak self] in
             guard let self, self.player === player, let id = self.active else { return }
             self.player = nil
-            if let path = self.playingPath { try? FileManager.default.removeItem(at: path) }
+            self.highlightTimer?.invalidate()
+            self.highlightTimer = nil
+            // Keep the last word visible while the next audio piece is prepared.
+            let played = self.jobs[id]?.played ?? 0
+            self.jobs[id]?.playbackTimings.removeValue(forKey: played)
+            if let path = self.playingPath {
+                try? FileManager.default.removeItem(at: path)
+                try? FileManager.default.removeItem(at: path.appendingPathExtension("timing.pcm"))
+            }
             self.playingPath = nil
             if flag { self.jobs[id]?.played += 1; self.pump() }
             else { self.failActive("Audio playback failed") }
@@ -407,6 +453,36 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         warmupAttempted = false
     }
 
+    private func startTimingWorker() throws {
+        guard timingWorker == nil else { return }
+        let timing = makeTimingWorker { [weak self] workerID, event in
+            Task { @MainActor in self?.timingEvent(workerID, event) }
+        }
+        timingWorker = timing
+        try timing.start()
+    }
+
+    private func disableScreenTiming() {
+        timingWorker?.stop()
+        timingWorker = nil
+        timingDeadline = nil
+        if let active { jobs[active]?.playbackTimingDisabled = true }
+        // A recognizer failure must never prevent the text from being read aloud.
+        updateScreenHighlight()
+    }
+
+    private func updateScreenHighlight() {
+        guard let active, let job = jobs[active], let document = job.screenDocument, let player,
+              job.played < job.chunks.count else { return }
+        let words = job.playbackTimings[job.played] ?? []
+        // Word ends mark acoustic pauses, not a reason to remove reading focus.
+        let current = words.last { $0.start <= player.currentTime }
+        let range = current.map { NSRange(location: $0.location, length: $0.length) }
+            ?? (job.playbackTimingDisabled || words.isEmpty ? job.chunks[job.played].sourceRange : nil)
+        // Before the first word of a new piece, retain the preceding word.
+        if let range { onScreenProgress(document, range) }
+    }
+
     private func timingEvent(_ workerID: UUID, _ event: NarrationTimingEvent) {
         guard timingWorker?.id == workerID else { return }
         if let error = event.error {
@@ -414,7 +490,29 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             timingWorker?.stop()
             timingWorker = nil
             timingDeadline = nil
-            if let active, jobs[active]?.timed == true { failActive(error) }
+            if let active, jobs[active]?.screenDocument != nil { disableScreenTiming(); pump() }
+            else if let active, jobs[active]?.timed == true { failActive(error) }
+            return
+        }
+        if let active, event.id == active, let job = jobs[active], job.screenDocument != nil {
+            guard let index = event.chunk, index >= job.played, index < job.generated,
+                  job.playbackTimings[index] == nil, let duration = job.timingDurations[index],
+                  let words = event.words else { disableScreenTiming(); pump(); return }
+            let piece = job.chunks[index].sourceRange
+            var last = 0.0
+            for word in words {
+                guard word.location >= piece.location, word.length > 0,
+                      word.location <= NSMaxRange(piece) - word.length,
+                      word.start.isFinite, word.end.isFinite, word.start >= last,
+                      word.end >= word.start, word.end <= duration + 0.001 else {
+                    disableScreenTiming(); pump(); return
+                }
+                last = word.start
+            }
+            jobs[active]?.playbackTimings[index] = words
+            jobs[active]?.timingDurations.removeValue(forKey: index)
+            timingDeadline = jobs[active]?.timingDurations.isEmpty == false ? Date().addingTimeInterval(15) : nil
+            pump()
             return
         }
         guard let active, event.id == active, let job = jobs[active],
@@ -437,6 +535,9 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     }
 
     private func clearPlayback() {
+        highlightTimer?.invalidate()
+        highlightTimer = nil
+        onScreenProgress(nil, nil)
         timingWorker?.stop()
         timingWorker = nil
         timingDeadline = nil

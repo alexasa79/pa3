@@ -22,6 +22,20 @@ if CommandLine.arguments.contains("--screen-text-test") {
     testApp.run()
 }
 
+if CommandLine.arguments.contains("--screen-highlight-live-check") {
+    let testApp = NSApplication.shared
+    testApp.setActivationPolicy(.regular)
+    Task { @MainActor in exit(await runScreenHighlightLiveCheck()) }
+    testApp.run()
+}
+
+if CommandLine.arguments.contains("--screen-narration-live-test") {
+    let testApp = NSApplication.shared
+    testApp.setActivationPolicy(.accessory)
+    Task { @MainActor in exit(await runScreenNarrationTimingLiveTest()) }
+    testApp.run()
+}
+
 if CommandLine.arguments.contains("--narration-timing-live-test") {
     let testApp = NSApplication.shared
     testApp.setActivationPolicy(.accessory)

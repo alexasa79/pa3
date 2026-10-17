@@ -7,6 +7,24 @@ def words(text):
     return [(m.group().lower(), m.start(), m.end()) for m in re.finditer(r"[^\W_]+(?:['’][^\W_]+)*", text, re.UNICODE)]
 
 
+def join_cost(joined, observed):
+    """Allow an ASR word boundary change, with at most one spelling edit."""
+    if joined == observed:
+        return 0
+    if min(len(joined), len(observed)) < 6 or abs(len(joined) - len(observed)) > 1:
+        return None
+    i = 0
+    while i < min(len(joined), len(observed)) and joined[i] == observed[i]:
+        i += 1
+    if len(joined) == len(observed):
+        matches = joined[i+1:] == observed[i+1:]
+    elif len(joined) > len(observed):
+        matches = joined[i+1:] == observed[i:]
+    else:
+        matches = joined[i:] == observed[i+1:]
+    return .4 if matches else None
+
+
 def align(reference, recognized, lower=0, upper=None):
     """Monotonic local edit alignment. Free reference prefix/suffix; no future text as ASR prompt."""
     ref = reference[lower:upper]
@@ -23,6 +41,12 @@ def align(reference, recognized, lower=0, upper=None):
             same = hyp[i-1] == ref[j-1]
             options = [(score[i-1][j-1] + (0 if same else 1.2), 'match'),
                        (score[i-1][j] + 1, 'insert'), (score[i][j-1] + 1, 'delete')]
+            source_join = join_cost(ref[j-2] + ref[j-1], hyp[i-1]) if j >= 2 else None
+            recognized_join = join_cost(hyp[i-2] + hyp[i-1], ref[j-1]) if i >= 2 else None
+            if source_join is not None:
+                options.append((score[i-1][j-2] + source_join, 'reference_join'))
+            if recognized_join is not None:
+                options.append((score[i-2][j-1] + recognized_join, 'recognized_join'))
             score[i][j], back[i][j] = min(options, key=lambda x: x[0])
     # Earliest equally good location prevents jumps to later repeated phrases.
     j = min(range(n + 1), key=lambda j: score[m][j])
@@ -33,6 +57,23 @@ def align(reference, recognized, lower=0, upper=None):
             if hyp[i-1] == ref[j-1]:
                 pairs.append(dict(recognized[i-1], index=lower+j-1))
             i -= 1; j -= 1
+        elif op == 'reference_join':
+            # ASR may hear "a ranges" as the single word "arranges". Keep both
+            # known source words within that observed audio interval; only their
+            # internal boundary is estimated, by character proportion.
+            token = recognized[i-1]
+            duration = token['end'] - token['start']
+            fraction = len(ref[j-2]) / (len(ref[j-2]) + len(ref[j-1]))
+            split = token['start'] + duration * fraction
+            pairs.append(dict(token, word=ref[j-1], index=lower+j-1,
+                              start=split, estimated=True, coverage=.5))
+            pairs.append(dict(token, word=ref[j-2], index=lower+j-2,
+                              end=split, estimated=True, coverage=.5))
+            i -= 1; j -= 2
+        elif op == 'recognized_join':
+            pairs.append(dict(recognized[i-2], word=ref[j-1], index=lower+j-1,
+                              end=recognized[i-1]['end'], estimated=True, coverage=2))
+            i -= 2; j -= 1
         elif op == 'insert': i -= 1
         else: j -= 1
     return list(reversed(pairs))
@@ -97,15 +138,15 @@ class Tracker:
             self.recovering = False
         pcm = b''.join(Path(path).read_bytes() for path in request['paths'])
         duration = len(pcm) / 96000
-        start = max(0, duration - 12)
+        start = 0 if request.get("complete") else max(0, duration - 12)
         _, tokens, _ = recognize(pcm[int(start * 24000) * 4:], start)
         reference = request['words']
         anchors = [index for index, pair in self.locked.items() if pair['start'] >= start - .5]
         lower = max(0, min(anchors) - 3) if anchors else max(0, self.cursor - 30)
         pairs = align([word['text'].replace('’', "'") for word in reference],
                       [dict(token, word=token['word'].replace('’', "'")) for token in tokens],
-                      lower, len(reference) if self.recovering else min(len(reference), self.cursor + 80))
-        if not tokens or len(pairs) / len(tokens) < .55:
+                      lower, len(reference) if self.recovering or request.get("complete") else min(len(reference), self.cursor + 80))
+        if not tokens or sum(pair.get('coverage', 1) for pair in pairs) / len(tokens) < .55:
             # Publish audio with no new timings. Preserve the last reliable source
             # position and try again on the next rolling window, without retries.
             self.recovering = True

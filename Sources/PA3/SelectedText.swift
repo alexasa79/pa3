@@ -4,6 +4,7 @@ import Foundation
 struct SelectedTextResult: Sendable {
     var text: String?
     var message: String
+    var screenDocument: ScreenTextDocument?
 }
 
 enum SelectedText {
