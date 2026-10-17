@@ -37,6 +37,7 @@ pa3-test: decoder-test
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Resources/Narration -p 'test_*.py'
 	swift build
 	.build/debug/pa3 --whisper-text-test
+	.build/debug/pa3 --global-shortcuts-test
 	.build/debug/pa3 --transcription-scheduling-test
 	.build/debug/pa3 --screen-text-test
 	.build/debug/pa3 --transcript-layout-test

@@ -46,6 +46,8 @@ make SIGN_IDENTITY=- app
 
 The app stays resident after paste. Use `Ctrl+Option+Command+P` to show it again, or use the menu-bar waveform icon.
 
+To change the three global shortcuts, right-click PA3's menu-bar icon and choose **Keyboard shortcuts…**. Click a shortcut and press the new combination, then choose **Save**. Include Control, Option, or Command. Escape cancels recording; Cancel discards edits. **Restore defaults** fills in the original combinations for review before saving. PA3 remembers saved shortcuts across launches and reports duplicate or unavailable combinations. Opening settings pauses active dictation.
+
 ## Testing
 
 Run `make test` from this repository's root to check both PA3 and its Chrome extension. It requires the Homebrew speech tools, installed Qwen models, Node.js, and Python 3. The app checks include segmentation, HTTP framing, pronunciation, model-backed streaming decoder comparisons, model download integrity, interrupted transfers, cancellation, retry, and the missing-model microphone guard. The extension checks cover text extraction, highlighting, audio playback, and native bridge lifecycle.

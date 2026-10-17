@@ -15,9 +15,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dictionariesEditor: DictionariesEditor?
     private var dictionariesWindow: NSWindow?
     private var downloadWindow: NSWindow?
-    private var hotKey: GlobalHotKey?
-    private var narrationHotKey: GlobalHotKey?
-    private var screenHotKey: GlobalHotKey?
+    private var shortcutSettings: ShortcutSettingsWindowController?
+    private lazy var shortcuts = GlobalShortcutManager { [weak self] action, binding in
+        GlobalHotKey(keyCode: binding.keyCode, modifiers: binding.modifiers, identifier: UInt32(action.rawValue)) {
+            DispatchQueue.main.async { [weak self] in
+                switch action {
+                case .dictation: self?.showWindow()
+                case .selection: self?.readSelection()
+                case .screen: self?.readScreenRectangle()
+                }
+            }
+        }
+    }
     private let screenCapture = ScreenTextCapture()
     private var selectionRequest: UUID?
     private var narrationNotice: NSPanel?
@@ -61,7 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Logger.info("status item set up")
         setupWindow(controller: controller)
         Logger.info("window set up")
-        setupHotKey()
+        controller.globalShortcuts = shortcuts.configuration
+        if let error = shortcuts.register() { openShortcutSettings(error: error) }
+        updateShortcutMenuTitles()
         Logger.info("launch complete; waiting for activation")
         downloads.ensureModels()
     }
@@ -74,9 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver)
         }
         controller?.shutdown()
-        hotKey?.unregister()
-        narrationHotKey?.unregister()
-        screenHotKey?.unregister()
+        shortcuts.unregister()
         Logger.close()
     }
 
@@ -93,10 +102,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Start dictation", action: #selector(startFromMenu), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Read selection / Stop   ⌃⌥⌘O", action: #selector(readSelection), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Read screen rectangle / Stop   ⌃⌥⌘R", action: #selector(readScreenRectangle), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Read selection / Stop", action: #selector(readSelection), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Read screen rectangle / Stop", action: #selector(readScreenRectangle), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Stop narration", action: #selector(stopNarrationFromMenu), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Dictionaries…", action: #selector(showDictionaries), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Keyboard shortcuts…", action: #selector(showShortcutSettings), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Speech models…", action: #selector(showModelDownloads), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitFromMenu), keyEquivalent: "q"))
         for item in menu.items {
@@ -217,29 +227,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.window = window
     }
 
-    private func setupHotKey() {
-        let modifiers = UInt32((1 << 8) | (1 << 11) | (1 << 12))
-        hotKey = GlobalHotKey(keyCode: 35, modifiers: modifiers) { [weak self] in
-            DispatchQueue.main.async {
-                Logger.info("global hotkey pressed")
-                self?.showWindow()
+    @objc private func showShortcutSettings() { openShortcutSettings() }
+
+    private func openShortcutSettings(error: String? = nil) {
+        if let shortcutSettings, shortcutSettings.window?.isVisible == true {
+            shortcutSettings.showWindow(nil)
+        } else {
+            if controller?.dictating == true { controller?.stopDictation() }
+            let settings = ShortcutSettingsWindowController(shortcuts: shortcuts, error: error) { [weak self] in
+                guard let self else { return }
+                self.controller?.globalShortcuts = self.shortcuts.configuration
+                self.updateShortcutMenuTitles()
+            }
+            shortcutSettings = settings
+            settings.showWindow(nil)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func updateShortcutMenuTitles() {
+        let actions: [(Selector, GlobalShortcutAction)] = [
+            (#selector(startFromMenu), .dictation), (#selector(readSelection), .selection),
+            (#selector(readScreenRectangle), .screen)
+        ]
+        for (selector, action) in actions {
+            if let item = statusItem?.menu?.items.first(where: { $0.action == selector }) {
+                let title = action == .dictation ? "Start dictation" : action.title
+                item.title = title + "   " + shortcuts.configuration[action].display
             }
         }
-        hotKey?.register()
-        Logger.info("global hotkey registered Ctrl+Option+Command+P")
-        narrationHotKey = GlobalHotKey(keyCode: UInt32(kVK_ANSI_O), modifiers: modifiers) { [weak self] in
-            DispatchQueue.main.async {
-                Logger.info("narration hotkey pressed")
-                self?.readSelection()
-            }
-        }
-        narrationHotKey?.register()
-        Logger.info("narration hotkey registered Ctrl+Option+Command+O")
-        screenHotKey = GlobalHotKey(keyCode: UInt32(kVK_ANSI_R), modifiers: modifiers) { [weak self] in
-            DispatchQueue.main.async { self?.readScreenRectangle() }
-        }
-        screenHotKey?.register()
-        Logger.info("screen narration hotkey registered Ctrl+Option+Command+R")
     }
 
     @objc private func readSelection() {
@@ -276,7 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 let response = self.narration.narrateSelection(result)
                 if response.status == 202 {
-                    self.showNarrationNotice("Narrating selection · ⌃⌥⌘O to stop")
+                    self.showNarrationNotice("Narrating selection · \(self.shortcuts.configuration.selection.display) to stop")
                     Logger.info("Selection narration accepted pid=\(pid) chars=\(text.count)")
                 } else {
                     let error = (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any]
@@ -320,7 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let response = self.narration.narrateSelection(result)
                 if response.status == 202 {
                     Logger.info("Screen narration accepted chars=\(text.count)")
-                    self.showNarrationNotice("Narrating screen text · ⌃⌥⌘O to stop")
+                    self.showNarrationNotice("Narrating screen text · \(self.shortcuts.configuration.selection.display) to stop")
                 } else {
                     let error = (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any]
                     self.showNarrationNotice(error?["error"] as? String ?? "Could not start narration.")

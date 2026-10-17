@@ -2,6 +2,14 @@ import AppKit
 import AVFoundation
 import SwiftUI
 
+if CommandLine.arguments.contains("--global-shortcuts-test") {
+    _ = NSApplication.shared
+    let failures = runGlobalShortcutsTests()
+    failures.forEach { print("FAIL: " + $0) }
+    print(failures.isEmpty ? "global-shortcuts-test: ok" : "global-shortcuts-test: failed")
+    exit(failures.isEmpty ? 0 : 2)
+}
+
 if CommandLine.arguments.contains("--screen-text-test") {
     let testApp = NSApplication.shared
     testApp.setActivationPolicy(.accessory)

@@ -42,20 +42,24 @@ enum PasteHelper {
     }
 }
 
-final class GlobalHotKey {
+final class GlobalHotKey: GlobalHotKeyRegistration {
     private let keyCode: UInt32
     private let modifiers: UInt32
+    private let identifier: UInt32
     private let handler: () -> Void
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
 
-    init(keyCode: UInt32, modifiers: UInt32, handler: @escaping () -> Void) {
+    init(keyCode: UInt32, modifiers: UInt32, identifier: UInt32, handler: @escaping () -> Void) {
         self.keyCode = keyCode
         self.modifiers = modifiers
+        self.identifier = identifier
         self.handler = handler
     }
 
-    func register() {
+    @discardableResult
+    func register() -> OSStatus {
+        unregister()
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         let callback: EventHandlerUPP = { _, event, userData in
             guard let userData, let event else { return OSStatus(eventNotHandledErr) }
@@ -63,21 +67,24 @@ final class GlobalHotKey {
             var identifier = EventHotKeyID()
             guard GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                                     nil, MemoryLayout<EventHotKeyID>.size, nil, &identifier) == noErr,
-                  identifier.signature == 0x50413348, identifier.id == hotKey.keyCode + 1 else {
+                  identifier.signature == 0x50413348, identifier.id == hotKey.identifier else {
                 return OSStatus(eventNotHandledErr)
             }
             hotKey.handler()
             return noErr
         }
-        InstallEventHandler(GetApplicationEventTarget(), callback, 1, &eventType, Unmanaged.passUnretained(self).toOpaque(), &eventHandler)
+        let handlerStatus = InstallEventHandler(GetApplicationEventTarget(), callback, 1, &eventType, Unmanaged.passUnretained(self).toOpaque(), &eventHandler)
+        guard handlerStatus == noErr else { return handlerStatus }
 
-        let hotKeyID = EventHotKeyID(signature: OSType(0x50413348), id: keyCode + 1)
+        let hotKeyID = EventHotKeyID(signature: OSType(0x50413348), id: identifier)
         let status = RegisterEventHotKey(keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hotKeyRef)
         if status != noErr {
+            unregister()
             Logger.warn("RegisterEventHotKey failed: \(status)")
         } else {
             Logger.info("RegisterEventHotKey succeeded keyCode=\(keyCode)")
         }
+        return status
     }
 
     func unregister() {
