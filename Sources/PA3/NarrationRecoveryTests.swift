@@ -346,13 +346,16 @@ private func runScreenPlaybackTimingTests() async -> Bool {
     defer { service.shutdown() }
     var highlights: [NSRange?] = []
     var screenPrepared = false
+    var playbackStarts = 0
+    service.onSelectionPlaybackStarted = { playbackStarts += 1 }
+    let text = "First sentence. Second sentence."
     service.onScreenProgress = { document, range in
         if document != nil && range == nil { screenPrepared = true }
         highlights.append(range)
     }
     func settle() async { try? await Task.sleep(for: .milliseconds(40)) }
     func begin() async throws -> String {
-        let document = ScreenTextDocument(text: "First sentence.", spans: [])
+        let document = ScreenTextDocument(text: text, spans: [])
         let response = service.narrateSelection(SelectedTextResult(text: document.text, message: "", screenDocument: document))
         let json = try JSONSerialization.jsonObject(with: response.body) as! [String: Any]
         let id = json["id"] as! String
@@ -371,25 +374,26 @@ private func runScreenPlaybackTimingTests() async -> Bool {
     }
     do {
         let id = try await begin()
-        guard screenPrepared, timing.requests.count == 1, highlights.compactMap({ $0 }).isEmpty else {
+        guard screenPrepared, narrator.requests.count == 1, narrator.requests[0].text == text,
+              timing.requests.count == 1, playbackStarts == 0, highlights.compactMap({ $0 }).isEmpty else {
             print("FAIL screen playback must wait for word timing"); return false
         }
         timing.emit(NarrationTimingEvent(id: id, chunk: 0, words: [NarrationWordTiming(location: 0, length: 5, start: 0, end: 0.8)]))
         await settle()
-        guard highlights.contains(where: { $0 == NSRange(location: 0, length: 5) }) else {
+        guard playbackStarts == 1, highlights.contains(where: { $0 == NSRange(location: 0, length: 5) }) else {
             print("FAIL screen word highlight must follow playback"); return false
         }
         // Clearing a playing job removes the overlay and ignores stale timing callbacks.
         service.stopAll()
         let count = highlights.count
         timing.emit(NarrationTimingEvent(id: id, chunk: 0, words: [])); await settle()
-        guard timing.stopped, highlights.last! == nil, highlights.count == count, !service.hasNarration else {
+        guard timing.stopped, playbackStarts == 1, highlights.last! == nil, highlights.count == count, !service.hasNarration else {
             print("FAIL cancelled screen playback must clear highlighting"); return false
         }
         highlights = []
         _ = try await begin()
         timing.emit(NarrationTimingEvent(error: "Recognizer unavailable")); await settle()
-        guard service.hasNarration, highlights.contains(where: { $0 == NSRange(location: 0, length: 15) }) else {
+        guard service.hasNarration, playbackStarts == 2, highlights.contains(where: { $0 == NSRange(location: 0, length: text.utf16.count) }) else {
             print("FAIL screen recognition failure must continue with passage highlighting"); return false
         }
         service.stopAll()
@@ -406,7 +410,7 @@ private func runScreenHighlightPauseTests() async -> Bool {
         narrator = RecoveryTestWorker($0); return narrator
     }, makeTimingWorker: { timing = TimingTestWorker($0); return timing })
     defer { service.shutdown() }
-    let text = "Structures (WODS), such as trees. Leaves read."
+    let text = "Structures (WODS), such as trees.\n\nLeaves read."
     let document = ScreenTextDocument(text: text, spans: [])
     let wods = (text as NSString).range(of: "WODS")
     let such = (text as NSString).range(of: "such")
@@ -414,6 +418,8 @@ private func runScreenHighlightPauseTests() async -> Bool {
     let read = (text as NSString).range(of: "read")
     var highlights: [NSRange?] = []
     service.onScreenProgress = { _, range in highlights.append(range) }
+    var playbackStarts = 0
+    service.onSelectionPlaybackStarted = { playbackStarts += 1 }
     func waitFor(_ condition: () -> Bool) async -> Bool {
         let deadline = Date().addingTimeInterval(3)
         while !condition(), Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
@@ -445,7 +451,9 @@ private func runScreenHighlightPauseTests() async -> Bool {
         narrator.emit(TTSWorkerEvent(event: "ready"))
         guard await waitFor({ narrator.requests.count == 1 }) else { return false }
         let first = try publishAudio(0, id: id, seconds: 1)
-        guard await waitFor({ timing?.requests.count == 1 }) else { return false }
+        guard await waitFor({ timing?.requests.count == 1 && narrator.requests.count == 2 }) else {
+            print("FAIL next paragraph must generate while the first paragraph is prepared for playback"); return false
+        }
         timing.emit(NarrationTimingEvent(id: id, chunk: 0, words: [word(wods, 0, 0.10), word(such, 0.45, 0.60)]))
         guard await waitFor({ highlights.last == wods }) else { return false }
         let start = highlights.count - 1
@@ -472,7 +480,7 @@ private func runScreenHighlightPauseTests() async -> Bool {
               highlights[start...].allSatisfy({ $0 != nil }) else {
             print("FAIL highlight must bridge audio pieces and reach the final read"); return false
         }
-        guard await waitFor({ !service.hasNarration }), highlights.last! == nil else {
+        guard await waitFor({ !service.hasNarration }), playbackStarts == 1, highlights.last! == nil else {
             print("FAIL completed narration must clear highlighting"); return false
         }
         print("PASS highlight survives word gaps, audio and recognition delays, reaches a zero-duration final word, and clears on completion")

@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let screenHighlight = ScreenNarrationOverlay()
     private var selectionRequest: UUID?
     private var narrationNotice: NSPanel?
+    private var narrationNoticeUntilPlayback = false
     private var previousApp: NSRunningApplication?
     private var previousWindow: AXUIElement?
     private var lastExternalApp: NSRunningApplication?
@@ -66,9 +67,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         narration.onSelectionFailure = { [weak self] _ in
             self?.showNarrationNotice("Could not finish narration. Select the text and try again.")
         }
+        narration.onSelectionPlaybackStarted = { [weak self] in
+            guard let self, self.narrationNoticeUntilPlayback else { return }
+            self.dismissNarrationNotice()
+        }
         narration.onScreenProgress = { [weak self] document, range in
             if let document { self?.screenHighlight.show(document, range: range) }
-            else { self?.screenHighlight.clear() }
+            else {
+                self?.screenHighlight.clear()
+                if self?.narrationNoticeUntilPlayback == true { self?.dismissNarrationNotice() }
+            }
         }
         narration.start()
 
@@ -331,14 +339,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let request = UUID()
         selectionRequest = request
         // Hide our notice before the system freezes the screen for selection.
-        narrationNotice?.orderOut(nil)
-        narrationNotice = nil
+        dismissNarrationNotice()
         Logger.info("Screen rectangle requested; drag to select, Escape to cancel")
         // Allow the menu to dismiss and shortcut modifiers to be released.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
             guard let self, self.selectionRequest == request else { return }
             self.screenCapture.start(recognizing: { [weak self] in
-                self?.showNarrationNotice("Recognizing screen text…")
+                self?.showNarrationNotice("Recognizing screen text…", untilPlayback: true)
             }, completion: { [weak self] result in
                 guard let self, self.selectionRequest == request else { return }
                 self.selectionRequest = nil
@@ -349,7 +356,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let response = self.narration.narrateSelection(result)
                 if response.status == 202 {
                     Logger.info("Screen narration accepted chars=\(text.count)")
-                    self.showNarrationNotice("Narrating screen text · \(self.shortcuts.configuration.screen.display) to stop")
+                    self.showNarrationNotice("Preparing narration · \(self.shortcuts.configuration.screen.display) to stop", untilPlayback: true)
                 } else {
                     let error = (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any]
                     self.showNarrationNotice(error?["error"] as? String ?? "Could not start narration.")
@@ -362,11 +369,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         selectionRequest = nil
         screenCapture.cancel()
         narration.stopAll()
+        if narrationNoticeUntilPlayback { dismissNarrationNotice() }
     }
 
-    private func showNarrationNotice(_ message: String) {
-        Logger.info("Narration notice: \(message)")
+    private func dismissNarrationNotice() {
         narrationNotice?.orderOut(nil)
+        narrationNotice = nil
+        narrationNoticeUntilPlayback = false
+    }
+
+    private func showNarrationNotice(_ message: String, untilPlayback: Bool = false) {
+        Logger.info("Narration notice: \(message)")
+        dismissNarrationNotice()
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 76),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .popUpMenu
@@ -384,10 +398,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         panel.orderFrontRegardless()
         narrationNotice = panel
+        narrationNoticeUntilPlayback = untilPlayback
+        guard !untilPlayback else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self, weak panel] in
             guard let self, let panel, self.narrationNotice === panel else { return }
-            panel.orderOut(nil)
-            self.narrationNotice = nil
+            self.dismissNarrationNotice()
         }
     }
 

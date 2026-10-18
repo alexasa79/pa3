@@ -77,6 +77,36 @@ func runNarrationTests() -> [String] {
         check(paragraphs.count == 2, "paragraph boundaries survive sentence grouping")
     } catch { failures.append("narration paragraph planning: \(error)") }
     do {
+        let source = "1 over epsilon. To see the query performance for epsilon equals 1 over 2, evaluate the point query cost in Table 1: big O of fraction log base bee of en over epsilon end fraction equals big O of fraction log base bee of en over 1 over 2 end fraction equals big O of 2 log base bee of en, doubling the number of I/Os. Changing epsilon from 1 over 2 to 1 over 4 would make this a factor of 4. This cost can be offset by increasing B, which also improves insert performance."
+        let plan = try NarrationText.plan(NarrationInput(text: source), paragraphPlayback: true)
+        check(plan.count > 1 && plan.allSatisfy { $0.text.count <= 120 } && plan[0].text.count >= 60, "screen formula paragraph starts with a substantial piece without generating the entire paragraph")
+        check(plan.map(\.text).joined().filter { !$0.isWhitespace } == source.filter { !$0.isWhitespace }, "smaller screen pieces retain the full paragraph")
+        check(plan[0].sourceRange.location == 0 && NSMaxRange(plan.last!.sourceRange) == source.utf16.count, "screen pieces cover source from first to final word")
+        let mapped = "🙂 Use SQL in src/main.cpp. Then use SQL again."
+        let expanded = try NarrationText.plan(NarrationInput(text: mapped), dictionary: ["SQL": "ess cue ell"], paragraphPlayback: true)
+        check(expanded.count == 1 && expanded[0].text.contains("main dot C P P. Then"), "screen paragraph retains path pronunciation and sentence punctuation")
+        let sql = expanded.flatMap(\.words).filter { ["ess", "cue", "ell"].contains($0.text) }
+        check(sql.count == 6 && sql.allSatisfy { (mapped as NSString).substring(with: NSRange(location: $0.location, length: $0.length)) == "SQL" }, "screen paragraph preserves pronunciation source positions")
+        let paragraph = "First sentence. More context."
+        let paragraphs = try NarrationText.plan(NarrationInput(text: paragraph + "\n\n" + paragraph), paragraphPlayback: true)
+        check(paragraphs.map(\.text) == [paragraph, paragraph] && paragraphs.map(\.pauseAfter) == [0.65, 0.20], "screen paragraphs keep their boundaries and pauses")
+        let list = try NarrationText.plan(NarrationInput(text: "Steps:\n1. Read this. Then continue.\n2. Finish."), paragraphPlayback: true)
+        check(list.map(\.text) == ["Steps:", "1, Read this. Then continue.", "2, Finish."] && list.map(\.pauseAfter) == [0.65, 0.40, 0.20], "screen paragraph grouping preserves separate list items")
+        let sentence = "The " + String(repeating: "useful context ", count: 5) + "ends here."
+        let long = "Start. " + String(repeating: sentence + " ", count: 4)
+        let pieces = try NarrationText.plan(NarrationInput(text: long), paragraphPlayback: true)
+        check(pieces.count > 1 && pieces.allSatisfy { $0.text.count <= 120 }, "long screen paragraphs have consistently small pieces")
+        check(pieces[0].text.count >= 60 && pieces[0].text.hasSuffix("ends here."), "long screen paragraph starts with substantial audio and prefers sentence boundary")
+        let remainder = "Start. " + String(repeating: "word ", count: 150)
+        let split = try NarrationText.plan(NarrationInput(text: remainder), paragraphPlayback: true)
+        check(split[0].text.count >= 60, "short opening stays with long following sentence even when paragraph exceeds limit")
+        check(split.map(\.text).joined().filter { !$0.isWhitespace } == remainder.filter { !$0.isWhitespace }, "screen paragraph splitting preserves all text")
+        let words = split.flatMap(\.words)
+        check(words.allSatisfy { (remainder as NSString).substring(with: NSRange(location: $0.location, length: $0.length)).lowercased() == $0.text }, "split screen paragraph word positions remain accurate")
+        let ordinary = try NarrationText.prepare(NarrationInput(text: "Start. Continue."))
+        check(ordinary == ["Start.", "Continue."], "ordinary narration retains existing sentence planning")
+    } catch { failures.append("screen paragraph planning: \(error)") }
+    do {
         for output in ["playback", "pieces", "stream"] {
             for (source, expected) in [
                 ("Read (src/file.swift:42) aloud.", "Read aloud."),

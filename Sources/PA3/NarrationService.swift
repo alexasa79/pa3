@@ -101,6 +101,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     var prepareModels: () -> Bool = { true }
     var modelDownloadHealth: () -> [String: Any] = { [:] }
     var onSelectionFailure: (String) -> Void = { _ in }
+    var onSelectionPlaybackStarted: () -> Void = {}
     var onScreenProgress: (ScreenTextDocument?, NSRange?) -> Void = { _, _ in }
     var hasNarration: Bool { active != nil || !pending.isEmpty }
 
@@ -223,7 +224,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         guard isConfigured() else { return .error(503, "Install speech tools with brew install whisper.cpp, then retry.") }
         guard !isDictationBusy() else { return .error(409, "Dictation is active or audio output is still being restored") }
         do {
-            let chunks = try NarrationText.plan(input, dictionary: pronunciationDictionary())
+            let chunks = try NarrationText.plan(input, dictionary: pronunciationDictionary(), paragraphPlayback: selection?.screenDocument != nil)
             guard input.mode == "replace" || pending.count < 10 else { return .error(429, "Narration queue is full") }
             if input.mode == "replace" { stopAll() }
             let id = UUID().uuidString.lowercased()
@@ -298,6 +299,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
                     RunLoop.main.add(highlightTimer!, forMode: .common)
                 }
                 Logger.info("Narration playing id=\(id) piece=\(job.played + 1)")
+                if job.isSelection && job.played == 0 { onSelectionPlaybackStarted() }
             } catch { failActive("Could not play generated audio"); return }
         }
         job = jobs[id]!
