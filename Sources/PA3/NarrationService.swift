@@ -284,7 +284,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
                 player.delegate = self
                 // AVAudioPlayer rate adjustment preserves pitch; enable before preparing.
                 player.enableRate = true
-                player.rate = 1.1
+                player.rate = 1.05
                 player.prepareToPlay()
                 guard player.play() else { throw NarrationText.Invalid("Audio output could not start") }
                 self.player = player
