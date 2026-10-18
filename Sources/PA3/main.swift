@@ -174,6 +174,13 @@ if CommandLine.arguments.contains("--transcript-layout-test") {
     exit(failures.isEmpty ? 0 : 2)
 }
 
+if CommandLine.arguments.contains("--window-focus-test") {
+    let failures = runWindowFocusRestorationTests()
+    failures.forEach { print("FAIL: " + $0) }
+    print(failures.isEmpty ? "window-focus-test: ok" : "window-focus-test: failed")
+    exit(failures.isEmpty ? 0 : 2)
+}
+
 if CommandLine.arguments.contains("--dictionary-test") {
     _ = NSApplication.shared
     let failures = runNarrationDictionaryTests()

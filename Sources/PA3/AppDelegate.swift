@@ -8,6 +8,7 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var window: NSWindow?
+    private var windowFocusRestorer: WindowFocusRestorer?
     private var controller: DictationController?
     private let narration = NarrationService()
     private let downloads = ModelDownloadManager()
@@ -84,6 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        windowFocusRestorer?.stop()
         cancelNarration()
         downloads.cancel()
         narration.shutdown()
@@ -227,7 +229,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
         window.collectionBehavior.insert(.moveToActiveSpace)
-        window.bindAlwaysOnTop(to: controller)
+        let focusRestorer = WindowFocusRestorer(window: window)
+        windowFocusRestorer = focusRestorer
+        window.bindAlwaysOnTop(to: controller, focusRestorer: focusRestorer)
         window.contentView = hosting
         window.center()
         window.delegate = self
@@ -470,6 +474,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func dismissPA3AndRestorePreviousApp(afterRestore: (() -> Void)? = nil) {
+        windowFocusRestorer?.cancel()
         window?.orderOut(nil)
         NSApp.hide(nil)
         restorePreviousApp(afterRestore: afterRestore)
@@ -554,9 +559,10 @@ extension AppDelegate: NSWindowDelegate {
 final class KeyWindow: NSWindow {
     private var alwaysOnTopSubscription: AnyCancellable?
 
-    func bindAlwaysOnTop(to controller: DictationController) {
+    func bindAlwaysOnTop(to controller: DictationController, focusRestorer: WindowFocusRestorer? = nil) {
         alwaysOnTopSubscription = controller.$alwaysOnTop.sink { [weak self] enabled in
             self?.level = enabled ? .floating : .normal
+            focusRestorer?.setEnabled(enabled)
         }
     }
 
