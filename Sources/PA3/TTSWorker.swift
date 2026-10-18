@@ -36,6 +36,10 @@ final class TTSWorker: NarrationWorker, @unchecked Sendable {
     static var model: URL { modelDirectory.appendingPathComponent("Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf") }
     static var projector: URL { modelDirectory.appendingPathComponent("mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf") }
     static var reference: URL { appResourceDirectory().appendingPathComponent("tts-voices/\(NarrationVoice.defaultVoice).wav") }
+    static let modelIDs: Set<String> = ["qwen", "audio"]
+    static func modelsInstalled(in directory: URL) -> Bool {
+        SpeechModel.all.filter { modelIDs.contains($0.id) }.allSatisfy { $0.isInstalled(in: directory) }
+    }
     static var executable: URL {
         if Bundle.main.bundlePath.hasSuffix(".app"), let directory = Bundle.main.executableURL?.deletingLastPathComponent() {
             return directory.appendingPathComponent("pa3-narrator")
@@ -45,7 +49,7 @@ final class TTSWorker: NarrationWorker, @unchecked Sendable {
     static var configured: Bool {
         FileManager.default.isExecutableFile(atPath: executable.path)
             && SpeechRuntime.executable("llama-tts") != nil
-            && SpeechModel.all.filter { $0.id != "whisper" }.allSatisfy { $0.isInstalled(in: SpeechRuntime.models) }
+            && modelsInstalled(in: SpeechRuntime.models)
             && FileManager.default.fileExists(atPath: reference.path)
     }
     static let languages = ["English": "en", "Russian": "ru", "Chinese": "zh", "Japanese": "ja",

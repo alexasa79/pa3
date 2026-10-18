@@ -10,6 +10,14 @@ if CommandLine.arguments.contains("--global-shortcuts-test") {
     exit(failures.isEmpty ? 0 : 2)
 }
 
+if let flag = CommandLine.arguments.firstIndex(of: "--screen-ocr-test") {
+    let testApp = NSApplication.shared
+    testApp.setActivationPolicy(.accessory)
+    let urls = CommandLine.arguments.dropFirst(flag + 1).map { URL(fileURLWithPath: $0) }
+    Task { @MainActor in exit(await runScreenOCRLiveTests(urls)) }
+    testApp.run()
+}
+
 if CommandLine.arguments.contains("--screen-text-test") {
     let testApp = NSApplication.shared
     testApp.setActivationPolicy(.accessory)

@@ -21,7 +21,13 @@ struct SpeechModel: Identifiable, Sendable {
                     url: URL(string: "https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/ca27d74bc954b73dadab5b71ca265d87fc861a7c/Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf")!),
         SpeechModel(id: "audio", name: "Voice processing", detail: "Qwen3 audio model", relativePath: "qwen3-tts/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf", bytes: 446_422_912,
                     sha256: "6fd65188839bcd6ecc91b277ad471e22a0edfada4699a0fe82f1165c18cfcce2",
-                    url: URL(string: "https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/ca27d74bc954b73dadab5b71ca265d87fc861a7c/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf")!)
+                    url: URL(string: "https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/ca27d74bc954b73dadab5b71ca265d87fc861a7c/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf")!),
+        SpeechModel(id: "paddleocr", name: "Screen text recognition", detail: "PaddleOCR-VL 1.6", relativePath: "paddleocr-vl/PaddleOCR-VL-1.6-GGUF.gguf", bytes: 935_769_056,
+                    sha256: "f3ae46ec885050acf4b3d31944431e1fd90d50664fb09126af4a3c050ba14ee8",
+                    url: URL(string: "https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/resolve/511b09642bb324401f15f97cc23bc67e8f0a291d/PaddleOCR-VL-1.6-GGUF.gguf")!),
+        SpeechModel(id: "paddleocr-vision", name: "Image processing", detail: "PaddleOCR-VL 1.6 image encoder", relativePath: "paddleocr-vl/PaddleOCR-VL-1.6-GGUF-mmproj.gguf", bytes: 881_770_560,
+                    sha256: "204d757d7610d9b3faab10d506d69e5b244e32bf765e2bab2d0167e65e0a058a",
+                    url: URL(string: "https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/resolve/511b09642bb324401f15f97cc23bc67e8f0a291d/PaddleOCR-VL-1.6-GGUF-mmproj.gguf")!)
     ]
 
     func destination(in directory: URL) -> URL { directory.appendingPathComponent(relativePath) }
@@ -188,9 +194,9 @@ final class ModelDownloadManager: ObservableObject {
     var status: String {
         if let error { return error }
         if wasCancelled { return "Download cancelled. You can retry whenever you're ready." }
-        if ready { return "Your speech models are ready to use." }
+        if ready { return "Your models are ready to use." }
         if verifying { return "Verifying \(models.first { $0.id == currentID }?.name.lowercased() ?? "model")…" }
-        return "Downloading \(models.first { $0.id == currentID }?.name.lowercased() ?? "speech models")…"
+        return "Downloading \(models.first { $0.id == currentID }?.name.lowercased() ?? "models")…"
     }
 
     func refresh() {
@@ -260,7 +266,7 @@ final class ModelDownloadManager: ObservableObject {
                     wasCancelled = true
                 } else {
                     self.error = error.localizedDescription
-                    Logger.error("Speech model download failed: \(error)")
+                    Logger.error("Model download failed: \(error)")
                 }
             }
             currentID = nil

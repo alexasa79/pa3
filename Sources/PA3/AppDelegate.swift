@@ -58,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         narration.pronunciationDictionary = { [weak self] in try self?.narrationDictionary.pronunciations() ?? [:] }
         downloads.onPresent = { [weak self] in self?.showModelDownloads() }
         controller.prepareModels = { [weak self] in self?.downloads.ensure(["whisper"]) ?? false }
-        narration.prepareModels = { [weak self] in self?.downloads.ensure(["qwen", "audio"]) ?? false }
+        narration.prepareModels = { [weak self] in self?.downloads.ensure(TTSWorker.modelIDs) ?? false }
         narration.modelDownloadHealth = { [weak self] in self?.downloads.health ?? [:] }
         narration.isDictationBusy = { [weak controller] in controller?.narrationIsBlocked ?? false }
         controller.onDictationWillStart = { [weak self] in self?.cancelNarration() }
@@ -87,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cancelNarration()
         downloads.cancel()
         narration.shutdown()
+        PaddleOCR.shared.stop()
         if let workspaceObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver)
         }
@@ -113,7 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Stop narration", action: #selector(stopNarrationFromMenu), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Dictionaries…", action: #selector(showDictionaries), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Keyboard shortcuts…", action: #selector(showShortcutSettings), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Speech models…", action: #selector(showModelDownloads), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Models…", action: #selector(showModelDownloads), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitFromMenu), keyEquivalent: "q"))
         for item in menu.items {
             item.target = self
@@ -322,6 +323,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func beginScreenCapture() {
+        guard downloads.ensure(PaddleOCR.modelIDs) else { return }
         let request = UUID()
         selectionRequest = request
         // Hide our notice before the system freezes the screen for selection.
@@ -436,12 +438,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showModelDownloads() {
         if downloadWindow == nil {
             let content = ModelDownloadView(manager: downloads) { [weak self] in self?.downloadWindow?.orderOut(nil) }
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 556, height: 530),
+            let hosting = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(origin: .zero, size: hosting.fittingSize),
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            window.title = "PA3 · Speech models"
+            window.title = "PA3 · Models"
             window.titlebarAppearsTransparent = true
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: content)
+            window.contentView = hosting
             window.center()
             self.downloadWindow = window
         }

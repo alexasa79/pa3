@@ -12,6 +12,8 @@ struct ScreenTextDocument: Sendable {
     let spans: [ScreenTextSpan]
     var frame: CGRect? // Global AppKit points, independent of screenshot pixel density.
     var sourceWindow: ScreenTextWindow?
+    var tracking: ScreenTextTracking?
+    var formulas: [NSRange] = []
 
     func rectangles(for range: NSRange) -> [CGRect] {
         guard let frame else { return [] }
@@ -23,6 +25,16 @@ struct ScreenTextDocument: Sendable {
     }
 }
 
+struct ScreenTextRangeLink: Sendable {
+    let range: NSRange
+    let visualRange: NSRange
+}
+struct ScreenTextTracking: Sendable {
+    let text: String
+    let spans: [ScreenTextSpan]
+    let links: [ScreenTextRangeLink]
+}
+
 struct ScreenTextLine: Sendable {
     let text: String
     let box: CGRect
@@ -30,6 +42,40 @@ struct ScreenTextLine: Sendable {
 }
 
 enum ScreenText {
+    @MainActor
+    static func recognizeForNarration(_ url: URL,
+        recognize: @MainActor (URL) async throws -> String = { try await PaddleOCR.shared.recognize($0) }) async -> SelectedTextResult {
+        // Vision supplies positions only. The captured pixels, rather than its
+        // flattened text, are the input to the scientific-text recognizer.
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return SelectedTextResult(message: "Could not read the screenshot. Try capturing the text again.")
+        }
+        guard hasVisibleContent(image) else { return SelectedTextResult(message: "No text found in that area. Try a tighter rectangle or larger text.") }
+        let visual = await self.recognize(url)
+        let geometry = visual.screenDocument ?? ScreenTextDocument(text: "", spans: [])
+        do {
+            try Task.checkCancellation()
+            let recognized = try await recognize(url)
+            try Task.checkCancellation()
+            let document = try ScreenOCRMapping.document(recognized: recognized, visual: geometry)
+            return SelectedTextResult(text: document.text, message: "Reading screen text", screenDocument: document)
+        } catch is CancellationError { return SelectedTextResult(message: "Screen recognition cancelled.") }
+        catch let error as NarrationText.Invalid { return SelectedTextResult(message: error.message) }
+        catch {
+            Logger.warn("PaddleOCR screen recognition failed: \(error)")
+            return SelectedTextResult(message: "Could not recognize the screen text. Try capturing it again.")
+        }
+    }
+
+    private static func hasVisibleContent(_ image: CGImage) -> Bool {
+        let context = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 64,
+            space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)!
+        context.draw(image, in: CGRect(x: 0, y: 0, width: 64, height: 64))
+        let bytes = context.data!.assumingMemoryBound(to: UInt8.self)
+        let values = UnsafeBufferPointer(start: bytes, count: 4096)
+        return Int(values.max()!) - Int(values.min()!) > 8
+    }
     /// Capture pixels never leave the OCR task. Only text and normalized positions survive.
     @MainActor
     static func recognize(_ url: URL) async -> SelectedTextResult {
@@ -140,11 +186,15 @@ final class ScreenTextCapture {
     private let requiresRectangle: Bool
     private let chooseRectangle: (@escaping @MainActor (CGRect?) -> Void) -> Void
     private var picker: ScreenRectanglePicker?
+    private let recognition: @MainActor (URL) async -> SelectedTextResult
+    private var recognitionTask: Task<Void, Never>?
 
     init(permission: @escaping () -> Bool = { CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() },
          chooseRectangle: ((@escaping @MainActor (CGRect?) -> Void) -> Void)? = nil,
-         makeProcess: ((URL) -> Process)? = nil) {
+         makeProcess: ((URL) -> Process)? = nil,
+         recognition: @escaping @MainActor (URL) async -> SelectedTextResult = { await ScreenText.recognizeForNarration($0) }) {
         self.permission = permission
+        self.recognition = recognition
         self.chooseRectangle = chooseRectangle ?? { $0(nil) }
         self.requiresRectangle = chooseRectangle != nil || makeProcess == nil
         self.makeProcess = { image, frame in
@@ -164,6 +214,8 @@ final class ScreenTextCapture {
 
     func cancel() {
         requestID = nil
+        recognitionTask?.cancel()
+        recognitionTask = nil
         picker?.cancel()
         if let process, process.isRunning { process.terminate() }
         process = nil
@@ -223,14 +275,19 @@ final class ScreenTextCapture {
                     return
                 }
                 recognizing()
-                var result = await ScreenText.recognize(image)
-                try? FileManager.default.removeItem(at: directory)
-                result.screenDocument?.frame = frame
-                result.screenDocument?.sourceWindow = sourceWindow
                 guard self.requestID == id else { return }
-                self.captureDirectory = nil
-                self.requestID = nil
-                completion(result)
+                self.recognitionTask = Task { [weak self] in
+                    defer { try? FileManager.default.removeItem(at: directory) }
+                    guard let self else { return }
+                    var result = await self.recognition(image)
+                    guard !Task.isCancelled, self.requestID == id else { return }
+                    result.screenDocument?.frame = frame
+                    result.screenDocument?.sourceWindow = sourceWindow
+                    self.captureDirectory = nil
+                    self.requestID = nil
+                    self.recognitionTask = nil
+                    completion(result)
+                }
             }
         }
         do {

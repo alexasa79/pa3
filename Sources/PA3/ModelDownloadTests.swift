@@ -112,6 +112,9 @@ func runModelDownloadTests() async -> Int32 {
             SpeechModel(id: source.id, name: source.name, detail: source.detail, relativePath: source.relativePath,
                         bytes: Int64(server.payload.count), sha256: hash, url: good.url)
         }
+        let ocrIDs: Set<String> = ["paddleocr", "paddleocr-vision"]
+        try require(ocrIDs.isSubset(of: Set(models.map(\.id))) && Set(models.map(\.relativePath)).count == models.count,
+                    "OCR weights and image encoder must be registered as distinct model files")
         let manager = ModelDownloadManager(models: models, directory: directory.appendingPathComponent("manager"))
         var presentations = 0
         manager.onPresent = { presentations += 1 }
@@ -137,6 +140,61 @@ func runModelDownloadTests() async -> Int32 {
         try require(manager.ready && !manager.running && manager.error == nil && sawProgress, "Manager did not finish or report progress: \(manager.status)")
         try require(manager.ensureModels() && !manager.running, "Installed models downloaded again")
         print("PASS automatic setup, byte progress, sequential models, and installed-model skip")
+
+        // Upgrade an existing speech-only installation. OCR shares the queue and
+        // progress, but must not gate features whose own models are already ready.
+        let upgradeDirectory = directory.appendingPathComponent("upgrade")
+        for model in models where !ocrIDs.contains(model.id) {
+            let path = model.destination(in: upgradeDirectory)
+            try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try server.payload.write(to: path)
+        }
+        let upgrade = ModelDownloadManager(models: models, directory: upgradeDirectory)
+        try require(!upgrade.ready && upgrade.ensure(["whisper"]) && upgrade.ensure(["qwen", "audio"]) && !upgrade.running,
+                    "Missing OCR models must not prevent installed dictation or narration from starting")
+        try require(!upgrade.ensure(ocrIDs) && upgrade.running && upgrade.totalBytes == Int64(server.payload.count) * 2,
+                    "OCR setup must report the combined size of both missing files")
+        let upgradeDeadline = Date().addingTimeInterval(10)
+        var cancelledEncoder = false
+        while upgrade.running && Date() < upgradeDeadline {
+            try require(upgrade.ensure(["whisper"]) && upgrade.ensure(["qwen", "audio"]),
+                        "Downloading OCR must not block installed speech models")
+            if upgrade.currentID == "paddleocr-vision", upgrade.currentBytes > 0, !cancelledEncoder {
+                try require(upgrade.installed.contains("paddleocr") && upgrade.fraction > 0.5 && upgrade.fraction < 1,
+                            "OCR progress must include the completed recognition model and active image encoder")
+                try require(upgrade.health["state"] as? String == "downloading", "OCR download must appear in shared health status")
+                cancelledEncoder = true
+                upgrade.cancel()
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        try require(cancelledEncoder && !upgrade.running && upgrade.wasCancelled && !upgrade.ready
+                    && upgrade.installed.contains("paddleocr") && !upgrade.installed.contains("paddleocr-vision"),
+                    "Cancelling the encoder must preserve the verified OCR model without claiming readiness")
+        upgrade.start()
+        try require(upgrade.totalBytes == Int64(server.payload.count), "Retry must download only the unfinished OCR file")
+        let retryDeadline = Date().addingTimeInterval(10)
+        while upgrade.running && Date() < retryDeadline { try await Task.sleep(for: .milliseconds(50)) }
+        try require(upgrade.ready && !upgrade.running && upgrade.error == nil,
+                    "Both OCR files must complete through the shared downloader: \(upgrade.status)")
+        print("PASS OCR upgrade progress, shared health, speech availability, encoder cancellation, and retry")
+
+        // Exercise the production TTS readiness path, not only the manager's
+        // subset guard. Sparse files provide real catalog sizes without model data.
+        let ttsDirectory = directory.appendingPathComponent("tts-readiness")
+        for model in SpeechModel.all where TTSWorker.modelIDs.contains(model.id) {
+            let path = model.destination(in: ttsDirectory)
+            try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: path.path, contents: nil)
+            let handle = try FileHandle(forWritingTo: path)
+            try handle.truncate(atOffset: UInt64(model.bytes))
+            try handle.close()
+        }
+        try require(TTSWorker.modelsInstalled(in: ttsDirectory), "TTS readiness must not depend on OCR or dictation models")
+        let audio = SpeechModel.all.first { $0.id == "audio" }!
+        try FileManager.default.removeItem(at: audio.destination(in: ttsDirectory))
+        try require(!TTSWorker.modelsInstalled(in: ttsDirectory), "TTS must still require its own audio model")
+        print("PASS production TTS readiness depends only on narration weights and audio model")
 
         let controller = DictationController(transcriber: TranscriberService())
         var askedForModels = false

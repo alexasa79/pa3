@@ -25,7 +25,7 @@ enum ScreenHighlightGeometry {
         let focus: [CGRect]
     }
 
-    static func layout(sentence boxes: [CGRect], focus words: [CGRect]) -> Layout {
+    static func layout(sentence boxes: [CGRect], focus words: [CGRect], formulas: [CGRect] = []) -> Layout {
         let rows = lineRects(boxes.filter { !$0.isEmpty && !$0.isNull })
         guard !rows.isEmpty else { return Layout(sentence: [], focus: words.map(paintRect)) }
         func median(_ values: [CGFloat]) -> CGFloat {
@@ -91,6 +91,9 @@ enum ScreenHighlightGeometry {
             }
         }
         let focused = words.map { word in
+            // Fraction numerators and denominators extend beyond a prose row's
+            // uniform band. Keep their observed bounds rather than clipping them.
+            if formulas.contains(word) { return paintRect(word) }
             let row = rows.indices.max { a, b in
                 let aOverlap = rows[a].intersection(word)
                 let bOverlap = rows[b].intersection(word)
@@ -100,7 +103,7 @@ enum ScreenHighlightGeometry {
             guard rows[row].intersects(word) else { return paintRect(word) }
             return CGRect(x: word.minX - 1, y: bands[row].minY, width: word.width + 2, height: bands[row].height)
         }
-        return Layout(sentence: bands, focus: focused)
+        return Layout(sentence: bands + lineRects(formulas).map(paintRect), focus: focused)
     }
 
     static func sentenceRange(in text: String, containing focus: NSRange) -> NSRange {

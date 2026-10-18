@@ -5,6 +5,12 @@ from timing import Tracker, align, join_cost
 
 
 class TimingTests(unittest.TestCase):
+    def test_formula_letter_names_match_recognized_letters(self):
+        observed = [dict(word=word.lower(), start=i*.2, end=(i+1)*.2)
+                    for i, word in enumerate(['log', 'base', 'B', 'of', 'N'])]
+        pairs = align(['log', 'base', 'bee', 'of', 'en'], observed)
+        self.assertEqual([pair['index'] for pair in pairs], list(range(5)))
+
     def test_repeated_words_choose_earliest_source(self):
         pairs = align(['the', 'cache', 'the', 'cache'], [dict(word='the', start=0, end=.1), dict(word='cache', start=.1, end=.5)])
         self.assertEqual([p['index'] for p in pairs], [0, 1])

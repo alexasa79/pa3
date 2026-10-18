@@ -40,10 +40,11 @@ func runNarrationTimingLiveTest() async -> Int32 {
 func runScreenNarrationTimingLiveTest() async -> Int32 {
     let text: String
     if let path = ProcessInfo.processInfo.environment["PA3_SCREEN_NARRATION_IMAGE"] {
-        let result = await ScreenText.recognize(URL(fileURLWithPath: path))
+        let result = await ScreenText.recognizeForNarration(URL(fileURLWithPath: path))
         guard let recognized = result.text else { print("FAIL screenshot narration: \(result.message)"); return 1 }
         text = recognized
         print("Screenshot text: \(text)")
+        PaddleOCR.shared.stop()
     } else {
         text = ProcessInfo.processInfo.environment["PA3_SCREEN_NARRATION_TEXT"]
             ?? "The cache stores documents and returns the saved result."

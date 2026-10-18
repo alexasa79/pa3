@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 func runScreenTextTests() async -> [String] {
     var failures = runScreenTextLayoutTests()
+    failures += runScreenMathTests()
     failures += await runScreenHighlightTests()
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pa3-ocr-test-\(UUID())")
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -58,6 +59,17 @@ func runScreenTextTests() async -> [String] {
         }
 
         let captureFixture = try fixture("capture", lines: lines)
+        var modelRequests = 0
+        let modelResult = await ScreenText.recognizeForNarration(captureFixture) { url in
+            modelRequests += 1
+            if url != captureFixture { failures.append("The model must receive the original captured image") }
+            return lines.joined(separator: "\n")
+        }
+        if modelRequests != 1 || modelResult.text != lines.joined(separator: "\n") || modelResult.screenDocument?.tracking == nil {
+            failures.append("Screen narration must use model text and retain separate visual tracking data")
+        }
+        let failedModel = await ScreenText.recognizeForNarration(captureFixture) { _ in throw NarrationText.Invalid("Recognition unavailable") }
+        if failedModel.text != nil || failedModel.message != "Recognition unavailable" { failures.append("A failed model must not silently fall back to inaccurate formula text") }
         var captureURL: URL?
         let capture = ScreenTextCapture(permission: { true }, makeProcess: { image in
             captureURL = image
@@ -65,7 +77,7 @@ func runScreenTextTests() async -> [String] {
             process.executableURL = URL(fileURLWithPath: "/bin/cp")
             process.arguments = [captureFixture.path, image.path]
             return process
-        })
+        }, recognition: { await ScreenText.recognize($0) })
         var captured: SelectedTextResult?
         capture.start(recognizing: {}, completion: { captured = $0 })
         let deadline = Date().addingTimeInterval(5)
@@ -94,13 +106,36 @@ func runScreenTextTests() async -> [String] {
         while captured == nil && Date() < retryDeadline { try await Task.sleep(for: .milliseconds(10)) }
         if captured?.text == nil { failures.append("New capture must work after cancellation") }
 
+        var modelEntered = false, modelCancelled = false, modelCompleted = false
+        var slowURL: URL?
+        let slowCapture = ScreenTextCapture(permission: { true }, makeProcess: { image in
+            slowURL = image
+            let child = Process()
+            child.executableURL = URL(fileURLWithPath: "/bin/cp")
+            child.arguments = [captureFixture.path, image.path]
+            return child
+        }, recognition: { _ in
+            modelEntered = true
+            do { try await Task.sleep(for: .seconds(5)) } catch { modelCancelled = true }
+            return SelectedTextResult(text: "Late recognition", message: "")
+        })
+        slowCapture.start(recognizing: {}, completion: { _ in modelCompleted = true })
+        let slowDeadline = Date().addingTimeInterval(3)
+        while !modelEntered && Date() < slowDeadline { try await Task.sleep(for: .milliseconds(10)) }
+        slowCapture.cancel()
+        try await Task.sleep(for: .milliseconds(40))
+        if !modelEntered || !modelCancelled || modelCompleted { failures.append("Stopping during model inference must cancel work and suppress its completion") }
+        if let slowURL, FileManager.default.fileExists(atPath: slowURL.deletingLastPathComponent().path) {
+            failures.append("Cancelled model recognition must remove the capture")
+        }
+
         let selectedFrame = CGRect(x: -900, y: 180, width: 600, height: 150)
         let positionedCapture = ScreenTextCapture(permission: { true }, chooseRectangle: { $0(selectedFrame) }, makeProcess: { image in
             let child = Process()
             child.executableURL = URL(fileURLWithPath: "/bin/cp")
             child.arguments = [captureFixture.path, image.path]
             return child
-        })
+        }, recognition: { await ScreenText.recognize($0) })
         captured = nil
         positionedCapture.start(recognizing: {}, completion: { captured = $0 })
         let positionedDeadline = Date().addingTimeInterval(5)
@@ -117,6 +152,11 @@ func runScreenTextTests() async -> [String] {
         if blank.text != nil || !blank.message.contains("No text found") {
             failures.append("Blank screenshot must not produce narration")
         }
+        let blankModel = await ScreenText.recognizeForNarration(try fixture("blank-model", lines: [])) { _ in
+            failures.append("Uniform blank images must not reach the generative recognizer")
+            return "Invented text"
+        }
+        if blankModel.text != nil { failures.append("Blank model input must not produce narration") }
         let invalid = directory.appendingPathComponent("invalid.png")
         try Data("not an image".utf8).write(to: invalid)
         if await ScreenText.recognize(invalid).text != nil {

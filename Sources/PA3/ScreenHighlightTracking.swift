@@ -137,6 +137,23 @@ struct ScreenTextRelocation {
     }
 
     init(source: ScreenTextDocument, current: ScreenTextDocument) {
+        if let tracking = source.tracking {
+            let visual = ScreenTextDocument(text: tracking.text, spans: tracking.spans, frame: source.frame, sourceWindow: source.sourceWindow)
+            let relocated = ScreenTextRelocation(source: visual, current: current)
+            let links = tracking.links.filter { relocated.contains($0.visualRange) }
+            let words = Self.words(source.text)
+            sourceWords = words
+            matchedWords = Set(words.indices.filter { index in
+                links.contains { NSIntersectionRange($0.range, words[index].range).length > 0 }
+            })
+            let spans = links.flatMap { link in
+                relocated.document.spans.filter { NSIntersectionRange($0.range, link.visualRange).length > 0 }.map {
+                    ScreenTextSpan(range: link.range, box: $0.box)
+                }
+            }
+            document = ScreenTextDocument(text: source.text, spans: spans, frame: current.frame, formulas: source.formulas)
+            return
+        }
         let original = Self.words(source.text), visible = Self.words(current.text)
         sourceWords = original
         let width = min(5, original.count)

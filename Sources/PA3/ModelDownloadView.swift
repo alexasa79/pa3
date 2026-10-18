@@ -19,7 +19,7 @@ struct ModelDownloadView: View {
                 VStack(alignment: .leading, spacing: 7) {
                     Text(manager.ready ? "PA3 is ready" : "Preparing PA3")
                         .font(.system(size: 25, weight: .semibold))
-                    Text("Download speech models once. Dictation and narration then work offline.")
+                    Text("Download models once. They stay on this Mac for offline use.")
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -51,7 +51,7 @@ struct ModelDownloadView: View {
 
             VStack(alignment: .leading, spacing: 9) {
                 HStack {
-                    Text(manager.verifying ? "Checking download" : manager.ready ? "All models installed" : "Speech models")
+                    Text(manager.verifying ? "Checking download" : manager.ready ? "All models installed" : "Models")
                         .font(.system(size: 12, weight: .medium))
                     Spacer()
                     Text("\(Int(manager.fraction * 100))%")
@@ -59,7 +59,7 @@ struct ModelDownloadView: View {
                 }
                 ProgressView(value: manager.fraction)
                     .progressViewStyle(.linear)
-                    .accessibilityLabel("Speech model download")
+                    .accessibilityLabel("Model download")
                     .accessibilityValue("\(Int(manager.fraction * 100)) percent")
                 if manager.running {
                     Text("\(size(manager.completedBytes + manager.currentBytes)) of \(size(manager.totalBytes))")

@@ -27,8 +27,14 @@ def join_cost(joined, observed):
 
 def align(reference, recognized, lower=0, upper=None):
     """Monotonic local edit alignment. Free reference prefix/suffix; no future text as ASR prompt."""
-    ref = reference[lower:upper]
-    hyp = [w['word'] for w in recognized]
+    # The voice receives explicit letter names in formulas and identifiers;
+    # recognition commonly writes the corresponding single letter instead.
+    letter_names = {'ay':'a', 'bee':'b', 'see':'c', 'dee':'d', 'ee':'e', 'ef':'f',
+                    'jee':'g', 'aitch':'h', 'eye':'i', 'jay':'j', 'kay':'k', 'ell':'l',
+                    'em':'m', 'en':'n', 'oh':'o', 'pee':'p', 'cue':'q', 'ar':'r',
+                    'ess':'s', 'tee':'t', 'you':'u', 'vee':'v', 'ex':'x', 'why':'y', 'zee':'z'}
+    ref = [letter_names.get(word, word) for word in reference[lower:upper]]
+    hyp = [letter_names.get(w['word'], w['word']) for w in recognized]
     if not ref or not hyp:
         return []
     n, m = len(ref), len(hyp)

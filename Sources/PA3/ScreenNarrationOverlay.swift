@@ -216,7 +216,8 @@ final class ScreenNarrationOverlay {
         }
         let document = relocation.document
         let sentenceRange = ScreenHighlightGeometry.sentenceRange(in: document.text, containing: range)
-        let layout = ScreenHighlightGeometry.layout(sentence: document.rectangles(for: sentenceRange), focus: document.rectangles(for: range))
+        let formulaRects = document.formulas.filter { NSIntersectionRange($0, sentenceRange).length > 0 }.flatMap { document.rectangles(for: $0) }
+        let layout = ScreenHighlightGeometry.layout(sentence: document.rectangles(for: sentenceRange), focus: document.rectangles(for: range), formulas: formulaRects)
         let sentence = layout.sentence
         let focus = layout.focus
         if panels.map(\.frame) != NSScreen.screens.map(\.frame) {
