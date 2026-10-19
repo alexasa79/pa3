@@ -75,6 +75,9 @@ final class DictationController: ObservableObject {
     private var committed = ""
     private var segment = ""
     private var segmentSeparator = "\n\n"
+    /// Number of existing paragraphs before this segment; the rest remain after it.
+    private var segmentInsertionParagraph: Int?
+    private var pendingWordEnd = -1
     private var selectionAnchor = -1
     private var editAction: EditAction = .replace
     private var editSelectAll = false
@@ -169,6 +172,7 @@ final class DictationController: ObservableObject {
         undoHistory.removeAll()
         committed = ""
         segment = ""
+        segmentInsertionParagraph = nil
         text = ""
         words = []
         wordParagraphs = []
@@ -309,7 +313,7 @@ final class DictationController: ObservableObject {
     func shortcutSections() -> [(title: String, bindings: [String])] {
         [
             ("General", ["?: show/hide shortcuts (pauses dictation)", "esc: close shortcuts, otherwise discard", "space: pause/resume dictation", "enter: paste result", "q / Q: discard", "ctrl+c: abort", "v: insert clipboard"]),
-            ("Dictation", ["R: restart dictation", "o: new paragraph", "O: continue current paragraph", "s: spell check transcript", "D: edit dictionary"]),
+            ("Dictation", ["R: restart dictation", "o: new paragraph after current paragraph", "O: continue current paragraph", "s: spell check transcript", "D: edit dictionary"]),
             ("Navigation · while paused", ["arrows: navigate words", "shift+arrows: expand selection", "J: join next paragraph", "S: split paragraph after current word"]),
             ("Editing · while paused", ["c: edit selection", "C: change all matching text", "a: append after", "i / I: insert before", "x: delete selection", "X: delete to sentence end (keep ending punctuation)", "t: cycle capitalization", "u: undo last change", ".: repeat change", ">: repeat change on all matches", "A: add selected word to dictionary"]),
             ("Inside the text editor", ["enter: apply edit", "esc: cancel edit", "arrows: move cursor", "home/end: jump", "alt+backspace: delete word", "backspace: delete character", "delete: delete ahead", "cmd+a: select all"]),
@@ -360,7 +364,7 @@ final class DictationController: ObservableObject {
                 text: word,
                 paragraph: index < wordParagraphs.count ? wordParagraphs[index] : 0,
                 selected: selectionStart >= 0 && selectionEnd >= selectionStart && index >= selectionStart && index <= selectionEnd,
-                pending: pendingWordStart >= 0 && index >= pendingWordStart
+                pending: pendingWordStart >= 0 && index >= pendingWordStart && index <= pendingWordEnd
             )
         }
     }
@@ -369,12 +373,21 @@ final class DictationController: ObservableObject {
         !dictating && !words.isEmpty && selectionStart >= 0 && selectionEnd >= selectionStart && selectionEnd < words.count
     }
 
-    private func combineText() -> String {
+    private func dictationParts() -> (prefix: String, suffix: String) {
         let c = committed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let insertion = segmentInsertionParagraph else { return (c, "") }
+        let paragraphs = c.components(separatedBy: "\n\n").filter {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return (paragraphs.prefix(insertion).joined(separator: "\n\n"),
+                paragraphs.dropFirst(insertion).joined(separator: "\n\n"))
+    }
+
+    private func combineText() -> String {
+        let parts = dictationParts()
         let s = segment.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !c.isEmpty && !s.isEmpty { return c + segmentSeparator + s }
-        if !c.isEmpty { return c }
-        return s
+        let prefix = [parts.prefix, s].filter { !$0.isEmpty }.joined(separator: segmentSeparator)
+        return [prefix, parts.suffix].filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 
     private func updateDisplay() {
@@ -390,15 +403,17 @@ final class DictationController: ObservableObject {
         words = split.0
         wordParagraphs = split.1
         pendingWordStart = -1
+        pendingWordEnd = -1
 
         if dictating, !segment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let stableRunes = max(0, transcriber.stablePrefixRunes())
-            let committedWords = splitWords(committed.trimmingCharacters(in: .whitespacesAndNewlines))
+            let committedWords = splitWords(dictationParts().prefix)
             let segmentWords = splitWords(segment.trimmingCharacters(in: .whitespacesAndNewlines))
             if !segmentWords.isEmpty {
                 let segmentPending = wordIndexForRunes(words: segmentWords, stableRunes: stableRunes)
                 if segmentPending < segmentWords.count {
                     pendingWordStart = committedWords.count + segmentPending
+                    pendingWordEnd = committedWords.count + segmentWords.count - 1
                 }
             }
         }
@@ -478,10 +493,15 @@ final class DictationController: ObservableObject {
         Logger.info("contextSeconds=\(value)")
     }
 
-    func startDictation(continuingParagraph: Bool = false) {
+    func startDictation(continuingParagraph: Bool = false, afterSelectedParagraph: Bool = false) {
         Logger.info("startDictation requested")
         guard canStartDictation else { return }
         segmentSeparator = continuingParagraph ? " " : "\n\n"
+        segmentInsertionParagraph = nil
+        if continuingParagraph || afterSelectedParagraph,
+           wordParagraphs.indices.contains(selectedWord) {
+            segmentInsertionParagraph = wordParagraphs[selectedWord] + 1
+        }
         guard prepareModels?() ?? true else {
             serviceMessage = "Downloading speech models. Start dictation when the download finishes."
             debugMessage = serviceMessage
@@ -541,6 +561,7 @@ final class DictationController: ObservableObject {
         }
         committed = ""
         segment = ""
+        segmentInsertionParagraph = nil
         clearSelection()
         updateDisplay()
         guard wasDictating else {
@@ -568,12 +589,12 @@ final class DictationController: ObservableObject {
             DispatchQueue.global(qos: .userInitiated).async {
                 transcriber.stopTranscribe()
                 DispatchQueue.main.async {
-                    self.startDictation()
+                    self.startDictation(afterSelectedParagraph: true)
                 }
             }
             return
         }
-        startDictation()
+        startDictation(afterSelectedParagraph: true)
     }
 
     private func insertClipboardParagraph() {
@@ -672,14 +693,14 @@ final class DictationController: ObservableObject {
     }
 
     private func commitSegment() {
-        let seg = segment.trimmingCharacters(in: .whitespacesAndNewlines)
-        if seg.isEmpty {
-            segment = ""
-            return
+        if segmentInsertionParagraph != nil {
+            let prefixWords = splitWords(dictationParts().prefix).count
+            let segmentWords = splitWords(segment).count
+            setSelection(max(0, prefixWords + segmentWords - 1))
         }
-        let c = committed.trimmingCharacters(in: .whitespacesAndNewlines)
-        committed = c.isEmpty ? seg : c + segmentSeparator + seg
+        committed = combineText()
         segment = ""
+        segmentInsertionParagraph = nil
     }
 
     private func clearSelection() {

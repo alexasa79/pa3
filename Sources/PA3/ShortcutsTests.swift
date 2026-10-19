@@ -127,6 +127,10 @@ func runShortcutsTests() -> [String] {
     // paragraph destination selected by the actual keyboard handlers.
     func pauseAndCommit() {
         controller.dictating = true
+        // Real live updates clear the paused selection while recording.
+        controller.selectedWord = -1
+        controller.selectionStart = -1
+        controller.selectionEnd = -1
         controller.stopDictation()
         let deadline = Date().addingTimeInterval(2)
         while !controller.canStartDictation && Date() < deadline {
@@ -157,6 +161,68 @@ func runShortcutsTests() -> [String] {
     controller.handleTranscription(TranscriptionUpdate(text: "Third paragraph.", language: "english"))
     pauseAndCommit()
     check(controller.text.hasSuffix("Continued.\n\nThird paragraph."), "o still starts a new paragraph after a continuation")
+    for key in ["o", "O"] {
+        for paragraph in [0, 1] {
+            controller.beginNewSession()
+            let original = ["First paragraph ends here.", "Second paragraph ends here.", "Third paragraph stays."]
+            controller.handleTranscription(TranscriptionUpdate(text: original.joined(separator: "\n\n"), language: "english"))
+            pauseAndCommit()
+            let selected = controller.wordParagraphs.firstIndex(of: paragraph)!
+            controller.selectedWord = selected
+            controller.selectionStart = selected
+            controller.selectionEnd = selected
+            press(key)
+            check(controller.text == original.joined(separator: "\n\n"), "\(key) preserves text before speech arrives")
+            controller.dictating = true // Simulate live updates without a microphone.
+            controller.handleTranscription(TranscriptionUpdate(text: "Draft words.", language: "english"))
+            controller.handleTranscription(TranscriptionUpdate(text: "Inserted words.\n\nAnother spoken paragraph.", language: "english"))
+            let inserted = ["Inserted words.", "Another spoken paragraph."]
+            var expected = Array(original.prefix(paragraph + 1))
+            if key == "O" {
+                expected[paragraph] += " " + inserted[0]
+                expected.append(inserted[1])
+            } else {
+                expected += inserted
+            }
+            expected += original.dropFirst(paragraph + 1)
+            let expectedText = expected.joined(separator: "\n\n")
+            check(controller.text == expectedText, "\(key) inserts changing live text after paragraph \(paragraph) and preserves the suffix")
+            let suffixStart = controller.wordParagraphs.firstIndex(of: paragraph + (key == "O" ? 2 : 3))!
+            let tokens = controller.tokens()
+            check(tokens[..<suffixStart].contains(where: \.pending) && !tokens[suffixStart...].contains(where: \.pending),
+                  "\(key) marks only inserted text pending, never later paragraphs")
+            pauseAndCommit()
+            check(controller.text == expectedText, "\(key) commits inserted text in place")
+            check(controller.selectedWord == suffixStart - 1, "\(key) leaves the cursor at the end of inserted speech")
+            press("O")
+            controller.handleTranscription(TranscriptionUpdate(text: "Continued here.", language: "english"))
+            pauseAndCommit()
+            expected[paragraph + (key == "O" ? 1 : 2)] += " Continued here."
+            check(controller.text == expected.joined(separator: "\n\n"), "O continues the inserted paragraph on the next resume")
+            controller.selectedWord = 0
+            press(key)
+            pauseAndCommit()
+            check(controller.text == expected.joined(separator: "\n\n"), "\(key) with no speech preserves all paragraphs")
+        }
+    }
+    controller.beginNewSession()
+    controller.handleTranscription(TranscriptionUpdate(text: "First paragraph.\n\nLast paragraph.", language: "english"))
+    pauseAndCommit()
+    controller.selectedWord = 0
+    press("o")
+    controller.dictating = true
+    controller.handleTranscription(TranscriptionUpdate(text: "Middle paragraph.", language: "english"))
+    let startsBeforeNewParagraph = startRequests
+    press("o")
+    let paragraphDeadline = Date().addingTimeInterval(2)
+    while startRequests == startsBeforeNewParagraph && Date() < paragraphDeadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+    }
+    check(startRequests == startsBeforeNewParagraph + 1, "o while recording starts another segment")
+    controller.handleTranscription(TranscriptionUpdate(text: "Another middle paragraph.", language: "english"))
+    pauseAndCommit()
+    check(controller.text == "First paragraph.\n\nMiddle paragraph.\n\nAnother middle paragraph.\n\nLast paragraph.",
+          "o while recording keeps new paragraphs before the preserved suffix")
     controller.beginNewSession()
     press("O")
     controller.handleTranscription(TranscriptionUpdate(text: "Fresh text.", language: "english"))
