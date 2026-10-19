@@ -20,6 +20,12 @@ func runDeletionCleanupTests() -> [String] {
     }
     for (source, removed, expected) in [
         ("Done. However, we continue.", "However", "Done. We continue."),
+        ("Keep this. Remove this. next sentence.", "Remove this", "Keep this. Next sentence."),
+        ("Keep this. Remove this.", "Remove this", "Keep this."),
+        ("Keep this. Remove this.\n\nnext paragraph.", "Remove this", "Keep this.\n\nnext paragraph."),
+        ("Wait... Remove this. Next.", "Remove this", "Wait.... Next."),
+        ("Keep this. Remove this... Next.", "Remove this", "Keep this.... Next."),
+        ("Odd.. stays. Remove this. Next.", "Remove this.", "Odd.. stays. Next."),
         ("Hello, extra. Next.", "extra", "Hello. Next."),
         ("One, extra, two.", "extra", "One, two."),
         ("Actually, hello there.", "Actually", "Hello there."),
@@ -106,6 +112,16 @@ func runDeletionCleanupTests() -> [String] {
         controller.selectionStart = index
         controller.selectionEnd = index
         return index
+    }
+    do {
+        let source = "Keep this. Remove this. next sentence."
+        let index = seedSentence(source, at: "Remove")
+        controller.selectionEnd = index + 1
+        press("x")
+        check(controller.text == "Keep this. Next sentence.", "x collapses joined periods and capitalizes the next sentence")
+        press("u")
+        check(controller.text == source && controller.selectionStart == index && controller.selectionEnd == index + 1,
+              "x undo restores both periods and the deleted selection")
     }
     for (source, word, expected) in [
         ("The quick brown fox sleeps. Next sentence.", "brown", "The quick. Next sentence."),

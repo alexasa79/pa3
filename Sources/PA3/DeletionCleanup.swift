@@ -13,10 +13,14 @@ func cleanupDeletion(words input: [String], paragraphs: [Int], at boundary: Int,
     let stops: Set<String> = [".", "!", "?"]
 
     // Remove an orphan separator at a paragraph start, or a newly adjacent
-    // separator next to a sentence stop. Leave quotes, brackets, ?! and ... alone.
+    // separator next to a sentence stop, or a duplicate period at the new join.
+    // Match individual periods so existing ellipses, quotes and ?! stay intact.
     while join < words.count && paras[join] == deletedParagraph {
         let paragraphStart = join == 0 || paras[join - 1] != paras[join]
         if paragraphStart && separators.contains(words[join]) {
+            words.remove(at: join)
+            paras.remove(at: join)
+        } else if !paragraphStart && words[join - 1] == "." && words[join] == "." {
             words.remove(at: join)
             paras.remove(at: join)
         } else if !paragraphStart && separators.contains(words[join]) &&
