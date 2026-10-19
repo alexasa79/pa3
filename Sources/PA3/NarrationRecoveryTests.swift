@@ -17,6 +17,7 @@ private final class RecoveryTestWorker: NarrationWorker {
 
 @MainActor
 func runNarrationRecoveryTests() async -> Int32 {
+    guard runNarrationCaptureRetentionTests() else { return 1 }
     guard await runTimingServiceTests(), await runScreenPlaybackTimingTests(), await runScreenHighlightPauseTests(), await runSharedDictionaryServiceTests() else { return 1 }
     var workers: [RecoveryTestWorker] = []
     let service = NarrationService(isConfigured: { true }) { callback in
@@ -176,11 +177,13 @@ private func runNarrationPieceTests() async -> Int32 {
 @MainActor
 private func runNarrationStreamTests() async -> Int32 {
     var worker: RecoveryTestWorker!
-    let service = NarrationService(isConfigured: { true }, token: "test-token") { callback in
+    let captureDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("pa3-capture-test-\(UUID())")
+    let capture = NarrationCapture(directory: captureDirectory)
+    let service = NarrationService(isConfigured: { true }, token: "test-token", capture: capture) { callback in
         worker = RecoveryTestWorker(callback)
         return worker
     }
-    defer { service.shutdown() }
+    defer { service.shutdown(); try? FileManager.default.removeItem(at: captureDirectory) }
     func request(_ method: String, _ path: String, auth: Bool = true) -> NarrationHTTPResponse {
         service.handle(NarrationHTTPRequest(method: method, path: path,
             headers: auth ? ["authorization": "Bearer test-token"] : [:], body: Data()))
@@ -216,6 +219,21 @@ private func runNarrationStreamTests() async -> Int32 {
         guard status["state"] as? String == "completed", status["pieces_played"] as? Int == 0,
               (status["audio_chunks"] as? [[String: Int]])?.count == 2, !service.hasNarration,
               request("DELETE", path).status == 200, request("GET", path + "/chunks/0").status == 404 else { return 1 }
+        capture.flush()
+        let folder = captureDirectory.appendingPathComponent(id)
+        let saved = try Data(contentsOf: folder.appendingPathComponent("audio.wav"))
+        let savedRequest = try Data(contentsOf: folder.appendingPathComponent("request.json"))
+        let events = try String(contentsOf: folder.appendingPathComponent("events.jsonl"), encoding: .utf8)
+            .split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+        let names = events.compactMap { $0["event"] as? String }
+        let file = try AVAudioFile(forReading: folder.appendingPathComponent("audio.wav"))
+        guard savedRequest == body, saved.dropFirst(44) == pcm + pcm,
+              file.length == 8, file.processingFormat.sampleRate == 24000,
+              names.filter({ $0 == "audio_generated" }).count == 2,
+              names.filter({ $0 == "audio_served" }).count == 2,
+              names.contains("completed"), names.last == "deleted_or_cancelled" else {
+            print("FAIL narration diagnostics must retain exact request, PCM, and timeline after DELETE"); return 1
+        }
         let next = try submit(), nextPath = "/v1/narrations/" + next
         let chunk = worker.requests.last!.path.path + ".part-0.pcm"
         try pcm.write(to: URL(fileURLWithPath: chunk))
@@ -225,6 +243,13 @@ private func runNarrationStreamTests() async -> Int32 {
               request("DELETE", nextPath).status == 200,
               request("GET", nextPath + "/chunks/0").status == 404,
               !FileManager.default.fileExists(atPath: chunk), worker.stopped else { return 1 }
+        service.shutdown()
+        capture.flush()
+        guard FileManager.default.fileExists(atPath: folder.appendingPathComponent("audio.wav").path),
+              try Data(contentsOf: captureDirectory.appendingPathComponent(next).appendingPathComponent("audio.wav")).dropFirst(44) == pcm else {
+            print("FAIL diagnostic audio must survive cancellation and shutdown"); return 1
+        }
+        print("PASS narration capture preserves exact audio, request and timeline after deletion, cancellation and shutdown")
         print("PASS whole-sentence streaming, early PCM, auth, ordering, completion, and partial cancellation")
         return 0
     } catch { print("FAIL narration streaming: \(error)"); return 1 }

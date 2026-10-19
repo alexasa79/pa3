@@ -95,6 +95,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     private var token = ""
     private var shuttingDown = false
     private var warmupAttempted = false
+    private var capture: NarrationCapture?
     private let audioDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("pa3-narration-\(UUID().uuidString)")
     var isDictationBusy: () -> Bool = { false }
     var pronunciationDictionary: () throws -> [String: String] = { [:] }
@@ -105,10 +106,11 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     var onScreenProgress: (ScreenTextDocument?, NSRange?) -> Void = { _, _ in }
     var hasNarration: Bool { active != nil || !pending.isEmpty }
 
-    init(isConfigured: @escaping () -> Bool = { TTSWorker.configured }, token: String = "",
+    init(isConfigured: @escaping () -> Bool = { TTSWorker.configured }, token: String = "", capture: NarrationCapture? = nil,
          makeWorker: @escaping (@escaping @Sendable (UUID, TTSWorkerEvent) -> Void) -> any NarrationWorker = { TTSWorker(onEvent: $0) },
          makeTimingWorker: @escaping (@escaping @Sendable (UUID, NarrationTimingEvent) -> Void) -> any NarrationTimingWorker = { NarrationTiming(onEvent: $0) }) {
         self.token = token
+        self.capture = capture
         self.isConfigured = isConfigured
         self.makeWorker = makeWorker
         self.makeTimingWorker = makeTimingWorker
@@ -123,6 +125,10 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     private let languages = Array(TTSWorker.languages.keys)
 
     func start() {
+        if capture == nil, UserDefaults.standard.bool(forKey: "narrationCaptureEnabled") {
+            capture = NarrationCapture(directory: pa3CacheDirectory().appendingPathComponent("narration", isDirectory: true))
+            Logger.info("Narration capture enabled: \(capture!.directory.path)")
+        }
         do {
             let tokenFile = userDataDirectory().appendingPathComponent("narration-token")
             if let saved = try? String(contentsOf: tokenFile, encoding: .utf8), !saved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -237,6 +243,12 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
                 ["start": Double($0.sourceRange.location) / Double(input.text.utf16.count),
                  "end": Double(NSMaxRange($0.sourceRange)) / Double(input.text.utf16.count)]
             }
+            if input.output == "stream" {
+                capture?.begin(id, request: data, plan: chunks.map {
+                    ["text": $0.text, "location": $0.sourceRange.location, "length": $0.sourceRange.length,
+                     "pause_after": $0.pauseAfter, "voice": voice, "language": language]
+                })
+            }
             order.append(id)
             pending.append(id)
             pruneHistory()
@@ -313,6 +325,8 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             jobs[id]?.segmentStart = job.streamChunks.count
             workerDeadline = Date().addingTimeInterval(120)
             if player == nil { jobs[id]?.state = "generating" }
+            capture?.event(id, "generation_started", fields: ["piece": job.generated,
+                "text": job.chunks[job.generated].text, "seed": 7 + job.silenceRetries])
             worker?.generate(id: id, text: job.chunks[job.generated].text, voice: job.voice,
                              language: job.language, instruct: job.instruct, path: path,
                              pause: job.chunks[job.generated].pauseAfter, seed: 7 + job.silenceRetries, stream: job.output == "stream")
@@ -327,6 +341,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             } catch { failActive("Could not assemble generated audio: \(error)"); return }
             prepared = []
             jobs[id]?.state = "completed"
+            capture?.event(id, "completed")
             jobs[id]?.chunks = []
             jobs[id]?.audioExpires = Date().addingTimeInterval(300)
             active = nil
@@ -362,6 +377,11 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             guard (try? chunkPath.resourceValues(forKeys: [.fileSizeKey]).fileSize) == samples * 4,
                   audioWithinLimit(active) else { failActive("Invalid streaming audio or storage limit exceeded"); return }
             jobs[active]?.streamChunks.append(StreamChunk(path: chunkPath, samples: samples, sampleRate: rate))
+            if capture != nil, let pcm = try? Data(contentsOf: chunkPath) {
+                capture?.append(active, pcm: pcm)
+                capture?.event(active, "audio_generated", fields: ["chunk": job.streamChunks.count,
+                    "samples": samples, "sample_rate": rate])
+            }
             jobs[active]?.nextStreamChunk += 1
             if job.timed {
                 if timingWorker == nil {
@@ -531,6 +551,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             last = word.start
         }
         jobs[active]?.streamChunks[index].words = words
+        capture?.event(active, "audio_published", fields: ["chunk": index, "word_timings": words.map(\.json)])
         jobs[active]?.published += 1
         timingDeadline = index + 1 < job.streamChunks.count ? Date().addingTimeInterval(120) : nil
         pump()
@@ -556,6 +577,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     }
 
     private func workerFailed(_ message: String) {
+        if let active { capture?.event(active, "failed", fields: ["error": message]) }
         Logger.error("Narration worker failure: \(message)")
         stopWorker()
         warmupAttempted = true // Retry on the next request, not every timer tick.
@@ -570,6 +592,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
 
     private func failActive(_ message: String) {
         guard let id = active else { return }
+        capture?.event(id, "failed", fields: ["error": message])
         Logger.error("Narration failed id=\(id): \(message)")
         if generatingPath != nil { stopWorker() }
         showFailure(message)
@@ -616,7 +639,9 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
             return .error(404, "Audio chunk is not ready or has expired")
         }
         do {
-            return NarrationHTTPResponse(status: 200, body: try Data(contentsOf: job.streamChunks[index].path), contentType: "application/octet-stream")
+            let data = try Data(contentsOf: job.streamChunks[index].path)
+            capture?.event(id, "audio_served", fields: ["chunk": index])
+            return NarrationHTTPResponse(status: 200, body: data, contentType: "application/octet-stream")
         } catch { return .error(500, "Could not read streaming audio") }
     }
 
@@ -644,6 +669,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     }
 
     private func cancel(_ id: String) {
+        capture?.event(id, "deleted_or_cancelled")
         if jobs[id]?.audioExpires != nil { removeAudio(id) }
 
         guard pending.contains(id) || active == id else { return }
@@ -660,6 +686,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
 
     func stopAll() {
         let affected = pending + [active].compactMap { $0 }
+        for id in affected { capture?.event(id, "cancelled") }
         pending = []
         for id in affected { jobs[id]?.state = "cancelled"; jobs[id]?.chunks = [] }
         active = nil
@@ -684,5 +711,6 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         stopAll()
         stopWorker()
         try? FileManager.default.removeItem(at: audioDirectory)
+        capture?.flush()
     }
 }

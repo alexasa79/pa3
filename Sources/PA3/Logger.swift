@@ -66,11 +66,17 @@ func recordingDirectory() -> URL {
     if let override = environment["PA3_RECORDING_DIR"], !override.isEmpty {
         return URL(fileURLWithPath: override, isDirectory: true)
     }
+    return pa3CacheDirectory().appendingPathComponent("rec", isDirectory: true)
+}
+
+/// Shared cache root for dictation recordings and narration diagnostics.
+func pa3CacheDirectory() -> URL {
+    let environment = ProcessInfo.processInfo.environment
     let cache: URL
     if let xdg = environment["XDG_CACHE_HOME"], !xdg.isEmpty {
         cache = URL(fileURLWithPath: xdg, isDirectory: true)
     } else {
         cache = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache", isDirectory: true)
     }
-    return cache.appendingPathComponent("pa3/rec", isDirectory: true)
+    return cache.appendingPathComponent("pa3", isDirectory: true)
 }
