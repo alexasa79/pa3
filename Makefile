@@ -12,7 +12,7 @@ PA3_MODEL_DIR ?= $(HOME)/Library/Application Support/PA3/models
 CODESIGN_CERT_DAYS ?= 3650
 CODESIGN_P12_PASSWORD ?= pa3-local-codesign
 
-.PHONY: all build native-narrator app icons speech-tools-check speech-setup tts-setup codesign-identity clean run test pa3-test extension-test browser-test integration-test extension-install fixtures replay-test narration-test native-stream-test decoder-test transcription-scheduling-test
+.PHONY: all build native-narrator app icons speech-tools-check speech-setup tts-setup codesign-identity clean run restart test pa3-test extension-test browser-test integration-test extension-install fixtures replay-test narration-test native-stream-test decoder-test transcription-scheduling-test
 
 all: app
 
@@ -135,6 +135,15 @@ app: build icons speech-tools-check codesign-identity
 
 run: app
 	open "$(APP)"
+
+restart: app
+	osascript -e 'if application id "com.local.pa3" is running then tell application id "com.local.pa3" to quit' \
+		-e 'repeat 150 times' \
+		-e 'if application id "com.local.pa3" is not running then return' \
+		-e 'delay 0.2' \
+		-e 'end repeat' \
+		-e 'error "PA3 did not quit within 30 seconds; restart cancelled."'
+	open "$(abspath $(APP))"
 
 clean:
 	rm -rf .build "$(APP)" "$(ASSETS)"
