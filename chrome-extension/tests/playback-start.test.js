@@ -51,8 +51,15 @@ function setup(realAudio = false, completionRace = false) {
     applyHighlightWordFocus = () => {};
     startHighlightWordFocusLoop = () => {};
     updateControls = () => {};
+    getPreviousCandidate = () => null;
     createAudioUrl = text => text;
-    globalThis.queueTest = {state, maybeStartPlayback, skipSentence, playPreviousSentence, togglePause, currentNavigationIndex, enqueueAudio, handleSessionMessage, stopNativeNarration, rememberPlayed, trimStreamHistory, activateSession, handleSessionDisconnect};
+    const paragraphStarts = [];
+    function setPreviousCandidate(el) {
+      getPreviousCandidate = () => el;
+      isCandidate = () => true;
+      startNarration = (target, options) => paragraphStarts.push({target, ...options});
+    }
+    globalThis.queueTest = {state, paragraphStarts, setPreviousCandidate, maybeStartPlayback, skipSentence, playPreviousSentence, togglePause, currentNavigationIndex, enqueueAudio, handleSessionMessage, stopNativeNarration, rememberPlayed, trimStreamHistory, activateSession, handleSessionDisconnect};
   })();`), context);
   const {state, maybeStartPlayback} = context.queueTest;
   state.playbackId = 1;
@@ -203,6 +210,30 @@ function paragraphSetup(passages = null) {
   }
   return {...api,session,sent,text,append,word};
 }
+
+test('previous sentence crosses to the preceding paragraph even before current audio arrives', () => {
+  const api = paragraphSetup(), previous = {};
+  api.setPreviousCandidate(previous);
+  api.playPreviousSentence();
+  assert.equal(api.paragraphStarts.length, 1);
+  assert.equal(api.paragraphStarts[0].target, previous);
+  assert.equal(api.paragraphStarts[0].lastSentence, true);
+  api.stopNativeNarration();
+});
+
+test('previous sentence stays in the paragraph until its first sentence', async () => {
+  const api = paragraphSetup();
+  api.setPreviousCandidate({});
+  api.append(0, 0, [api.word(0, 0), api.word(1, .4)]);
+  await Promise.resolve();
+  api.skipSentence(); await Promise.resolve();
+  api.playPreviousSentence(); await Promise.resolve();
+  assert.equal(api.currentNavigationIndex(), 0);
+  assert.equal(api.paragraphStarts.length, 0);
+  api.playPreviousSentence();
+  assert.equal(api.paragraphStarts.length, 1);
+  api.stopNativeNarration();
+});
 
 test('sentence buttons seek inside a paragraph without consuming or regenerating its stream',async()=>{
   const api=paragraphSetup();const {state,session,append,word,sent}=api;

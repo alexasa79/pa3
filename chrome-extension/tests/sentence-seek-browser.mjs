@@ -58,4 +58,42 @@ export async function checkSentenceSeeking(call) {
   assert.deepEqual(data.focus,data.expectedFocus,'Streaming playback focus stays inside the current sentence');
   assert.equal(data.startCount,1);assert.equal(data.passageCount,1);assert.equal(data.consumed,0);assert.equal(data.disposed,true);
   console.log('PASS: actual sentence controls, buffering/rapid clicks, pause-and-seek, audio-clock sentence counts and no paragraph regeneration.');
+  const crossing=await call('Runtime.evaluate',{expression:`(async()=>{
+    document.body.innerHTML='<main><p id="oldest">Oldest sentence here.</p><p id="previous">First sentence here. Last sentence here.</p><p id="current">Current sentence here. Following sentence here.</p></main>';
+    requests.length=0;
+    const api=seekTest;api.enable();
+    api.state.overlays.get(document.querySelector('#current')).click();
+    const enabledBeforeAudio=!api.state.controls.prevSentence.disabled;
+    const current=api.state.activeSession;
+    const pcm=btoa(String.fromCharCode(...new Uint8Array(24000*4)));
+    const append=(session)=>api.handleSessionMessage(session,{type:'audio',stream:true,index:0,pieceIndex:0,
+      sampleRate:24000,samples:24000,audioBase64:pcm,location:0,length:session.sourceText.length,rate:1,
+      wordTimings:session.navigationTargets.map((target,index)=>({location:target.start,length:5,start:index*.4,end:index*.4+.2}))});
+    append(current);await Promise.resolve();
+    api.state.controls.playPause.click();
+    api.state.controls.prevSentence.click();await Promise.resolve();
+    const destination=api.state.activeEl.id;
+    const previous=api.state.activeSession;
+    append(previous);await Promise.resolve();
+    const offset=api.state.currentAudio?.offset;
+    const status=api.state.controls.sentence.textContent;
+    const resumed=!api.state.isPaused;
+    api.state.controls.prevSentence.click();await Promise.resolve();
+    const withinParagraph={destination:api.state.activeEl.id,offset:api.state.currentAudio?.offset};
+    api.state.controls.prevSentence.click();await Promise.resolve();
+    const oldest=api.state.activeSession;
+    append(oldest);await Promise.resolve();
+    api.state.controls.prevSentence.click();await Promise.resolve();
+    const atBeginning={destination:api.state.activeEl.id,offset:api.state.currentAudio?.offset};
+    api.disable();return {destination,offset,status,enabledBeforeAudio,resumed,withinParagraph,atBeginning};
+  })()`,returnByValue:true,awaitPromise:true});
+  assert.ok(!crossing.exceptionDetails,JSON.stringify(crossing.exceptionDetails));
+  assert.equal(crossing.result.value.destination,'previous','Previous sentence must cross to the preceding DOM paragraph');
+  assert.equal(crossing.result.value.offset,.4,'Crossing backward starts at the previous paragraph’s final sentence');
+  assert.match(crossing.result.value.status,/S 2\/2/);
+  assert.equal(crossing.result.value.enabledBeforeAudio,true,'Previous remains available while the first sentence is buffering');
+  assert.equal(crossing.result.value.resumed,true,'Crossing backward resumes paused playback');
+  assert.deepEqual(crossing.result.value.withinParagraph,{destination:'previous',offset:0});
+  assert.deepEqual(crossing.result.value.atBeginning,{destination:'oldest',offset:0});
+  console.log('PASS: previous sentence crosses DOM paragraph boundaries to the final sentence.');
 }

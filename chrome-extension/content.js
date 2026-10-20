@@ -1218,7 +1218,7 @@
     startNarration(el);
   }
 
-  function startNarration(el) {
+  function startNarration(el, { lastSentence = false } = {}) {
     chrome.runtime.sendMessage({type: "reedah-frame-play", token: FRAME_TOKEN});
     stopNarration();
 
@@ -1268,6 +1268,11 @@
     session.el = el;
     session.editorRoot = editorNarration.rootFor(el);
     activateSession(session, playbackId, el);
+    if (lastSentence) {
+      const index = session.navigationTargets.length - 1;
+      state.navigationIndex = index;
+      state.pendingSentenceSeek = {index};
+    }
     updateControls();
   }
 
@@ -2481,7 +2486,7 @@
       hasPreviousParagraph,
       hasNextParagraph,
       hasPreviousSentence: active && (targets
-        ? state.activeSession.streams.has(previous?.passageIndex)
+        ? (currentNavigationIndex() === 0 && hasPreviousParagraph) || state.activeSession.streams.has(previous?.passageIndex)
         : state.playedHistory.length > 0),
       metaText: active
         ? `${state.pendingSentenceSeek || state.currentAudio?.waiting ? "Buffering • " : ""}S ${currentSentence}/${totalSentences || 0} • Q ${queued}`
@@ -2521,6 +2526,10 @@
   function navigateSentence(direction) {
     const session = state.activeSession;
     const targets = session.navigationTargets;
+    if (direction < 0 && currentNavigationIndex() === 0 && getPreviousCandidate(state.activeEl)) {
+      previousParagraph({lastSentence: true});
+      return;
+    }
     const index = Math.max(0, currentNavigationIndex() + direction);
     if (index >= targets.length) { skipParagraph(); return; }
     const target = targets[index];
@@ -2656,7 +2665,7 @@
     updateControls();
   }
 
-  function previousParagraph() {
+  function previousParagraph({ lastSentence = false } = {}) {
     if (!state.activeEl) return;
     const previous = getPreviousCandidate(state.activeEl);
     if (!previous) {
@@ -2667,7 +2676,7 @@
       console.error("PA3 extension: Previous paragraph is not narratable.");
       return;
     }
-    startNarration(previous);
+    startNarration(previous, {lastSentence});
     updateControls();
   }
 
