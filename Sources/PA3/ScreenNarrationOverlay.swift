@@ -13,6 +13,7 @@ private func overlayPanel(frame: CGRect, interactive: Bool) -> NSPanel {
     panel.isOpaque = false
     panel.backgroundColor = .clear
     panel.hasShadow = false
+    if !interactive { panel.animationBehavior = .none }
     panel.isReleasedWhenClosed = false
     panel.level = .screenSaver
     panel.ignoresMouseEvents = !interactive

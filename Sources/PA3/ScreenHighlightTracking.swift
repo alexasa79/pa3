@@ -293,7 +293,8 @@ final class ScreenHighlightTracker {
         revision += 1
         lastInput = Date()
         fingerprint = nil
-        onUpdate(nil, nil)
+        // Keep the last verified highlight until fresh OCR supplies a replacement.
+        // Screen capture already excludes PA3's panels, so hiding is unnecessary.
     }
 
     func refresh() async {
@@ -311,7 +312,6 @@ final class ScreenHighlightTracker {
             let verifiedRects = focusMissing ? [] : relocation.map { $0.document.rectangles(for: NSRange(location: 0, length: source.text.utf16.count)) } ?? []
             let hash = snapshot.fingerprint(in: verifiedRects)
             let changed = hash != fingerprint || frame != snapshot.frame
-            if changed { onUpdate(nil, nil) }
             // Wait out wheel momentum and key repeats. A late OCR response can never
             // restore coordinates invalidated by a newer event or cancelled session.
             guard Date().timeIntervalSince(lastInput) >= 0.18 else { return }
@@ -331,7 +331,8 @@ final class ScreenHighlightTracker {
         } catch {
             guard running, revision == started else { return }
             status = "capture error: \(error)"
-            onUpdate(nil, nil)
+            // A temporary capture/OCR error must not blink the last verified
+            // sentence. Retry on the next refresh while playback continues.
             if !loggedFailure { Logger.warn("Screen highlight tracking unavailable: \(error)"); loggedFailure = true }
         }
     }

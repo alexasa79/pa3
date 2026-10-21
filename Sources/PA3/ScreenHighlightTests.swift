@@ -5,6 +5,9 @@ import ImageIO
 private final class HighlightSnapshotCell {
     var value: ScreenHighlightSnapshot
     var document: ScreenTextDocument?
+    var delayVerification = false
+    var failVerification = false
+    var verification: CheckedContinuation<ScreenTextDocument, Never>?
     init(_ value: ScreenHighlightSnapshot) { self.value = value }
 }
 
@@ -159,12 +162,43 @@ func runScreenHighlightTests() async -> [String] {
     await tracker.refresh()
     expect(calls == 1, "Animation outside the selected passage must not trigger OCR or hide its highlight")
     tracker.invalidate()
-    expect(updates.last == false, "Scrolling must hide the old overlay immediately")
+    expect(updates.last == true, "Input must retain the verified highlight while a replacement is located")
     try? await Task.sleep(for: .milliseconds(200))
     await tracker.refresh()
     expect(updates.last == true, "An unchanged verified surface can recover after interaction")
     tracker.stop()
     expect(updates.last == false, "Stopping must remove the overlay")
+
+    // A changed passage must remain highlighted throughout slow verification.
+    let verificationScene = HighlightSnapshotCell(snapshot)
+    var verificationCalls = 0, verificationUpdates: [Bool] = []
+    let continuous = ScreenHighlightTracker(source: original, capture: { _ in verificationScene.value }, recognize: { _ in
+        verificationCalls += 1
+        if verificationScene.failVerification { throw NarrationText.Invalid("temporary OCR failure") }
+        if verificationScene.delayVerification {
+            return await withCheckedContinuation { verificationScene.verification = $0 }
+        }
+        return original
+    }, onUpdate: { match, _ in verificationUpdates.append(match != nil) })
+    continuous.focusRange = focus
+    await continuous.refresh()
+    verificationScene.value = ScreenHighlightSnapshot(image: image(true), frame: original.frame!, visibleRegions: [original.frame!])
+    verificationScene.delayVerification = true
+    let verifying = Task { await continuous.refresh() }
+    while verificationScene.verification == nil { await Task.yield() }
+    expect(verificationCalls == 2 && verificationUpdates == [true], "Changed pixels must trigger OCR without hiding the verified highlight while it waits")
+    verificationScene.verification?.resume(returning: original)
+    await verifying.value
+    expect(verificationUpdates == [true, true], "Fresh geometry must replace the old highlight without an intervening blank")
+    verificationScene.delayVerification = false
+    verificationScene.failVerification = true
+    verificationScene.value = snapshot
+    await continuous.refresh()
+    expect(verificationCalls == 3 && verificationUpdates == [true, true], "Transient OCR errors must retain the last verified highlight")
+    verificationScene.failVerification = false
+    await continuous.refresh()
+    expect(verificationCalls == 4 && verificationUpdates == [true, true, true], "Verification must recover after a transient error without blinking")
+    continuous.stop()
 
     // Some source words can remain visible while the focused passage is offscreen.
     // Their stable pixels must never prevent a full search when the passage returns.
