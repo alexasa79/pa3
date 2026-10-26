@@ -319,7 +319,7 @@ private func runTimingServiceTests() async -> Bool {
     guard let id = json(response)["id"] as? String else { print("FAIL timed stream acceptance"); return false }
     let path = "/v1/narrations/" + id
     narrator.emit(TTSWorkerEvent(event: "ready")); await settle()
-    guard narrator.requests.count == 1, narrator.requests[0].text.contains("Second sentence.") else { print("FAIL paragraph generation"); return false }
+    guard narrator.requests.count == 1, narrator.requests[0].text == "First sentence." else { print("FAIL first sentence generation"); return false }
     let output = narrator.requests[0].path
     let partial = output.path + ".part-0.pcm"
     do { try Data(repeating: 0, count: 96000).write(to: URL(fileURLWithPath: partial)) }
@@ -330,11 +330,25 @@ private func runTimingServiceTests() async -> Bool {
           json(request("GET", path))["state"] as? String == "generating" else { print("FAIL audio must wait for timings"); return false }
     timing.emit(NarrationTimingEvent(id: id, chunk: 0, words: [NarrationWordTiming(location: 0, length: 5, start: 0, end: 0.5)]))
     await settle()
+    guard narrator.requests.count == 2, narrator.requests[1].text == "Second sentence.",
+          request("GET", path + "/chunks/0").status == 200,
+          json(request("GET", path))["state"] as? String == "generating" else { print("FAIL second sentence generation and first sentence publication"); return false }
+    let secondOutput = narrator.requests[1].path
+    let secondPartial = secondOutput.path + ".part-0.pcm"
+    do { try Data(repeating: 0, count: 96000).write(to: URL(fileURLWithPath: secondPartial)) }
+    catch { return false }
+    narrator.emit(TTSWorkerEvent(event: "partial", id: id, path: secondPartial, chunk: 0, samples: 24000, sampleRate: 24000))
+    narrator.emit(TTSWorkerEvent(event: "audio", id: id, path: secondOutput.path)); await settle()
+    guard timing.requests.count == 2, timing.requests[1].words.first?.location == 16,
+          request("GET", path + "/chunks/1").status == 404 else { print("FAIL second sentence source timing"); return false }
+    timing.emit(NarrationTimingEvent(id: id, chunk: 1, words: [NarrationWordTiming(location: 16, length: 6, start: 1, end: 1.5)]))
+    await settle()
     let status = json(request("GET", path))
     guard status["state"] as? String == "completed", request("GET", path + "/chunks/0").status == 200,
-          let chunks = status["audio_chunks"] as? [[String: Any]], chunks[0]["word_timings"] != nil else { print("FAIL timed stream publication"); return false }
+          let chunks = status["audio_chunks"] as? [[String: Any]], chunks.count == 2,
+          chunks[0]["word_timings"] != nil, chunks[1]["word_timings"] != nil else { print("FAIL timed stream publication"); return false }
     // An uncertain first chunk still publishes audio; later chunks can recover and lose alignment again.
-    let uncertain = service.submit(try! JSONSerialization.data(withJSONObject: ["text":"Technical identifier. Then readable words.", "output":"stream", "timing":"words"]))
+    let uncertain = service.submit(try! JSONSerialization.data(withJSONObject: ["text":"Technical identifier, then readable words.", "output":"stream", "timing":"words"]))
     guard let uncertainID = json(uncertain)["id"] as? String, let uncertainOutput = narrator.requests.last?.path else { return false }
     let uncertainPath = "/v1/narrations/" + uncertainID
     for index in 0..<3 {

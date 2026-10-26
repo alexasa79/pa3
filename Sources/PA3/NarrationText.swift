@@ -319,18 +319,8 @@ enum NarrationText {
                     start = cut
                 }
             }
-            if input.timing == "words", pieces.count > firstPiece {
-                let sentences = Array(pieces[firstPiece...])
-                pieces.removeSubrange(firstPiece...)
-                for sentence in sentences {
-                    if pieces.count > firstPiece, let previous = pieces.last,
-                       previous.text.count + sentence.text.count + 1 <= 600 {
-                        pieces[pieces.count - 1] = NarrationPiece(text: previous.text + " " + sentence.text,
-                            sourceRange: NSUnionRange(previous.sourceRange, sentence.sourceRange),
-                            pauseAfter: sentence.pauseAfter, words: previous.words + sentence.words)
-                    } else { pieces.append(sentence) }
-                }
-            }
+            // Keep timed sentence boundaries as generation boundaries. Joining
+            // sentences leaves their pauses entirely to the model's prosody.
             if pieces.count > firstPiece, blockIndex + 1 < blocks.count {
                 let next = blocks[blockIndex + 1]
                 pieces[pieces.count - 1].pauseAfter = block.isList && next.isList && !next.blankBefore ? 0.40 : 0.65

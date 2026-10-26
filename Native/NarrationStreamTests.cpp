@@ -48,7 +48,18 @@ int main(int argc, char **argv) {
         // These boundaries must stay safe even if the latency policy changes.
         for (int i = 1; i < 72; ++i) check(!narrationCanPublish(i), "Premature padded decoder flush");
         check(narrationCanPublish(72) && narrationCanPublish(144) && narrationCanPublish(155, true), "Missing safe decoder flush");
-        if (argc == 1) { puts("PASS decoder window publication boundaries"); return 0; }
+        std::vector<float> speech(2400, 0.1f);
+        check(narrationPausePadding(speech.data(), speech.size(), 24000, .20) == 4800, "Missing sentence pause after speech");
+        speech.resize(3600, 0);
+        check(narrationPausePadding(speech.data(), speech.size(), 24000, .20) == 3600, "Existing trailing silence must count toward the pause");
+        speech.resize(9600, 0);
+        check(narrationPausePadding(speech.data(), speech.size(), 24000, .20) == 0, "Long natural pauses must remain intact without extra padding");
+        check(narrationPausePadding(speech.data(), speech.size(), 24000, 0) == 0, "Zero pause must not add samples");
+        speech.back() = .1f;
+        check(narrationPausePadding(speech.data(), speech.size(), 24000, .20) == 4800, "Interior silence must not substitute for the final pause");
+        speech.resize(9601, .1f);
+        check(narrationPausePadding(speech.data(), speech.size(), 24000, .20) == 4800, "Final partial acoustic window must retain speech before padding");
+        if (argc == 1) { puts("PASS decoder window publication boundaries and streamed sentence pause padding"); return 0; }
         check(argc == 3, "Use: narration-stream-test [model.gguf projector.gguf]");
         ggml_backend_load_all(); llama_backend_init();
         auto mp = llama_model_default_params(); mp.n_gpu_layers = 99;

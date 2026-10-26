@@ -96,7 +96,7 @@ final class TTSWorker: NarrationWorker, @unchecked Sendable {
                     throw NarrationText.Invalid("Invalid native narration request")
                 }
                 if stream { streamingPaths.insert(path.path) } else { pauses[path.path] = pause }
-                var data = try JSONSerialization.data(withJSONObject: ["id": requestID, "text": text, "language": languageCode, "path": path.path, "seed": seed, "stream": stream])
+                var data = try JSONSerialization.data(withJSONObject: ["id": requestID, "text": text, "language": languageCode, "path": path.path, "seed": seed, "stream": stream, "pause": pause])
                 data.append(10)
                 try input.write(contentsOf: data)
             } catch { onEvent(id, TTSWorkerEvent(event: "error", error: "Could not send narration request: \(error)")) }

@@ -3,9 +3,13 @@ import Foundation
 // Opt-in end-to-end check in a side process: no HTTP listener or local playback.
 @MainActor
 func runNarrationTimingLiveTest() async -> Int32 {
-    let service = NarrationService(token: "timing-test")
-    defer { service.shutdown() }
-    let text = "The cache stores recently requested documents. When another request arrives, the cache returns the saved result. This keeps the response fast and reduces repeated work."
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("pa3-sentence-pause-" + UUID().uuidString)
+    let capture = NarrationCapture(directory: directory)
+    let service = NarrationService(token: "timing-test", capture: capture)
+    defer { service.shutdown(); try? FileManager.default.removeItem(at: directory) }
+    let text = ProcessInfo.processInfo.environment["PA3_NARRATION_TIMING_TEXT"]
+        ?? "The cache stores recently requested documents. When another request arrives, the cache returns the saved result. This keeps the response fast and reduces repeated work."
+    guard let plan = try? NarrationText.plan(NarrationInput(text: text, output: "stream", timing: "words")) else { print("FAIL live timing plan"); return 1 }
     let response = service.submit(try! JSONSerialization.data(withJSONObject: ["text": text, "output": "stream", "timing": "words"]))
     func json(_ response: NarrationHTTPResponse) -> [String: Any] { (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any] ?? [:] }
     guard response.status == 202, let id = json(response)["id"] as? String else { print("FAIL live timing: \(String(decoding: response.body, as: UTF8.self))"); return 1 }
@@ -25,8 +29,34 @@ func runNarrationTimingLiveTest() async -> Int32 {
         }
         received = chunks.count
         if status["state"] as? String == "completed" {
-            guard received > 1, wordCount >= 22, status["pieces"] as? Int == 1 else { print("FAIL incomplete paragraph alignment: \(wordCount) words"); return 1 }
-            print("PASS live paragraph generation and recognition: \(received) PCM chunks, \(wordCount) source words")
+            guard received > 1, wordCount >= 22, status["pieces"] as? Int == plan.count else { print("FAIL incomplete sentence alignment: \(wordCount) words"); return 1 }
+            capture.flush()
+            do {
+                let folder = directory.appendingPathComponent(id)
+                let audio = try Data(contentsOf: folder.appendingPathComponent("audio.wav")).dropFirst(44)
+                let events = try String(contentsOf: folder.appendingPathComponent("events.jsonl"), encoding: .utf8)
+                var samples = 0, boundaries = 0
+                for line in events.split(separator: "\n") {
+                    let event = try JSONSerialization.jsonObject(with: Data(line.utf8)) as! [String: Any]
+                    if event["event"] as? String == "audio_generated" { samples += event["samples"] as! Int }
+                    if event["event"] as? String == "generation_started", let piece = event["piece"] as? Int, piece > 0 {
+                        let count = Int((plan[piece - 1].pauseAfter * 24000).rounded())
+                        guard samples >= count, samples * 4 <= audio.count else { print("FAIL missing sentence boundary PCM"); return 1 }
+                        let tail = audio.dropFirst((samples - count) * 4).prefix(count * 4)
+                        let energy = tail.withUnsafeBytes { bytes in
+                            stride(from: 0, to: bytes.count, by: 4).reduce(0.0) { total, offset in
+                                let sample = Double(bytes.loadUnaligned(fromByteOffset: offset, as: Float.self))
+                                return total + sample * sample
+                            } / Double(count)
+                        }
+                        guard energy.isFinite, energy <= 0.0000032 else { print("FAIL missing acoustic pause before piece \(piece): energy=\(energy)"); return 1 }
+                        boundaries += 1
+                    }
+                }
+                guard boundaries == plan.count - 1 else { print("FAIL missing sentence boundary events"); return 1 }
+                print("PASS \(boundaries) acoustic generation-boundary pauses in captured PCM")
+            } catch { print("FAIL sentence pause capture: \(error)"); return 1 }
+            print("PASS live sentence generation and recognition: \(plan.count) sentences, \(received) PCM chunks, \(wordCount) source words")
             return 0
         }
         try? await Task.sleep(for: .milliseconds(100))

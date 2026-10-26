@@ -103,7 +103,7 @@ def read_event(process, timeout=180):
 def generate(process, fixture, output, on_chunk=None):
     started=time.monotonic()
     request={'id':fixture['id'],'text':' '.join(fixture['sentences']), 'language':'en',
-             'path':str(output/(fixture['id']+'.raw')), 'stream':True, 'seed':7}
+             'path':str(output/(fixture['id']+'.raw')), 'stream':True, 'seed':7, 'pause':.2}
     process.stdin.write((json.dumps(request)+'\n').encode()); process.stdin.flush()
     chunks=[]; data=bytearray()
     while True:

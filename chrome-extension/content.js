@@ -248,8 +248,9 @@
     try {
       if (window.top !== window) {
         chrome.runtime.sendMessage({type: "reedah-frame-ready"}, response => {
-          if (chrome.runtime.lastError) {
-            console.error("PA3 extension: Frame state synchronization failed.", chrome.runtime.lastError);
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reportStateSyncError(error);
             return;
           }
           if (response?.enabled && !state.enabled) enable();
@@ -259,8 +260,22 @@
       }
       chrome.runtime.sendMessage({ type: "reedah-state", enabled: state.enabled });
     } catch (error) {
-      console.error("PA3 extension: Extension state synchronization failed.", error);
+      reportStateSyncError(error);
     }
+  }
+
+  function reportStateSyncError(error) {
+    const message = error.message;
+    // These state probes can outlive a frame/navigation or extension reload.
+    // Stop this attempt, without retrying or changing the current state.
+    if (message === "Could not establish connection. Receiving end does not exist." ||
+        message === "The message port closed before a response was received." ||
+        message === "A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received" ||
+        message === "Extension context invalidated.") {
+      console.info("PA3 extension: State synchronization stopped; messaging context is unavailable.", message);
+      return;
+    }
+    console.error("PA3 extension: Frame state synchronization failed.", message);
   }
 
   function attachObservers() {

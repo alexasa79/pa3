@@ -158,3 +158,43 @@ test('unexpected frame synchronization errors remain visible',()=>{
   assert.equal(errors[0][1],'Unexpected messaging failure');
   assert.equal(info.length,0);
 });
+
+test('frame probes outside browser tabs receive a disabled response without tab messaging',()=>{
+  const {receive,sent,errors,info}=setup();
+  for (const sender of [{}, {tab:{}}, {tab:{id:-1}}, {tab:{id:null}}]) {
+    const replies=[];
+    receive({type:'reedah-frame-ready'},sender,value=>replies.push(value));
+    assert.equal(replies.length,1,'every probe must close its response channel');
+    assert.equal(replies[0].enabled,false);
+  }
+  assert.equal(sent.length,0);
+  assert.equal(errors.length,0);
+  assert.equal(info.length,4);
+});
+
+test('tab zero is a valid frame synchronization destination',()=>{
+  const {receive,sent}=setup();
+  let response;
+  receive({type:'reedah-frame-ready'},{tab:{id:0},frameId:1},value=>response=value);
+  assert.equal(sent[0][0],0);
+  assert.equal(response.enabled,true);
+});
+
+for (const type of ['reedah-state','reedah-controls-state']) {
+  test(`${type} delivery stops quietly when navigation removes the receiver`,()=>{
+    const {receive,errors,info}=setup([{id:7}],{
+      message:'Could not establish connection. Receiving end does not exist.'
+    });
+    receive({type,enabled:false},{tab:{id:7},frameId:type==='reedah-state'?0:1});
+    assert.equal(errors.length,0);
+    assert.equal(info.length,1);
+  });
+
+  test(`${type} unexpected delivery failures include Chrome's message`,()=>{
+    const {receive,errors,info}=setup([{id:7}],{message:'Unexpected messaging failure'});
+    receive({type,enabled:false},{tab:{id:7},frameId:type==='reedah-state'?0:1});
+    assert.equal(errors.length,1);
+    assert.equal(errors[0][1],'Unexpected messaging failure');
+    assert.equal(info.length,0);
+  });
+}

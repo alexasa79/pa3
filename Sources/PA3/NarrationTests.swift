@@ -65,8 +65,8 @@ func runNarrationTests() -> [String] {
     do {
         let source = "🙂 Use SQL (src/file.swift:42). Then use SQL again."
         let plan = try NarrationText.plan(NarrationInput(text: source, output: "stream", timing: "words"), dictionary: ["SQL": "ess cue ell"])
-        check(plan.count == 1, "timed narration groups sentences into one paragraph")
-        check(plan[0].text.contains("Then use ess cue ell again."), "paragraph retains dictionary pronunciations")
+        check(plan.count == 2, "timed narration keeps each sentence in a separate generation")
+        check(plan[1].text == "Then use ess cue ell again.", "sentences retain dictionary pronunciations")
         let mapped = plan.flatMap(\.words)
         let sql = mapped.filter { $0.text == "ess" || $0.text == "cue" || $0.text == "ell" }
         check(sql.count == 6 && sql.allSatisfy { (source as NSString).substring(with: NSRange(location: $0.location, length: $0.length)) == "SQL" }, "expanded words retain original UTF16 dictionary range")
@@ -74,8 +74,28 @@ func runNarrationTests() -> [String] {
         let long = try NarrationText.plan(NarrationInput(text: String(repeating: "A useful explanation. ", count: 80), output: "stream", timing: "words"))
         check(long.count > 1 && long.allSatisfy { $0.text.count <= 600 }, "long paragraphs have bounded generation chunks")
         let paragraphs = try NarrationText.plan(NarrationInput(text: "First paragraph. More context.\n\nSecond paragraph. More context.", output: "stream", timing: "words"))
-        check(paragraphs.count == 2, "paragraph boundaries survive sentence grouping")
+        check(paragraphs.count == 4 && paragraphs.map(\.pauseAfter) == [0.20, 0.65, 0.20, 0.20], "timed sentence and paragraph boundaries retain their pauses")
     } catch { failures.append("narration paragraph planning: \(error)") }
+    do {
+        let sentences = [
+            "This is why the question pressed on El-Sayed for weeks has produced very little.",
+            "It is, for one thing, impossible to answer.",
+            "Membership in the Brotherhood is secret, granted in stages only after years of observation, and impossible to establish from the outside.",
+            "It is therefore one of those questions that simply cries out for a flat denial.",
+            "Also, and as I explained above, the actual organization itself is limited.",
+            "The question is also, in a sense, beside the point.",
+            "The Brotherhood has always operated through people who are not members, and someone formed by that world does not need to join it to be of use to it.",
+            "As with any other candidate, the test must be what he says and does."
+        ]
+        let source = sentences.joined(separator: " ")
+        let plan = try NarrationText.plan(NarrationInput(text: source, output: "stream", timing: "words"))
+        check(plan.map(\.text) == sentences, "reported denial/Also paragraph keeps all eight sentence generation boundaries")
+        check(plan.map { (source as NSString).substring(with: $0.sourceRange) } == sentences, "sentence generation preserves original source offsets")
+        check(plan.allSatisfy { $0.pauseAfter == 0.20 }, "every full stop has an explicit pause, including denial/Also")
+        check(plan.flatMap(\.words).allSatisfy { (source as NSString).substring(with: NSRange(location: $0.location, length: $0.length)).lowercased() == $0.text }, "sentence splitting preserves word timing source positions")
+        let short = try NarrationText.plan(NarrationInput(text: "Yes. Also, continue.", output: "stream", timing: "words"))
+        check(short.map(\.text) == ["Yes.", "Also, continue."], "short timed sentences must not swallow the following sentence")
+    } catch { failures.append("timed sentence pause regression: \(error)") }
     do {
         let source = "1 over epsilon. To see the query performance for epsilon equals 1 over 2, evaluate the point query cost in Table 1: big O of fraction log base bee of en over epsilon end fraction equals big O of fraction log base bee of en over 1 over 2 end fraction equals big O of 2 log base bee of en, doubling the number of I/Os. Changing epsilon from 1 over 2 to 1 over 4 would make this a factor of 4. This cost can be offset by increasing B, which also improves insert performance."
         let plan = try NarrationText.plan(NarrationInput(text: source), paragraphPlayback: true)

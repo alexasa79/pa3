@@ -78,17 +78,35 @@ chrome.commands.onCommand.addListener((command) => {
 
 function broadcastFrameMessage(tabId, message) {
   chrome.tabs.sendMessage(tabId, message, () => {
-    if (chrome.runtime.lastError) console.error("PA3 extension: Frame broadcast failed.", chrome.runtime.lastError);
+    if (chrome.runtime.lastError) reportFrameDeliveryError("Frame broadcast failed.", chrome.runtime.lastError);
   });
+}
+
+function reportFrameDeliveryError(context, error) {
+  if (error.message === "Could not establish connection. Receiving end does not exist." ||
+      error.message === "The message port closed before a response was received.") {
+    console.info("PA3 extension: Frame delivery stopped; page receiver is unavailable.", error.message);
+    return;
+  }
+  console.error(`PA3 extension: ${context}`, error.message);
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const tabId = sender?.tab?.id;
-  if (!tabId || !message) return;
+  if (!message) return;
+  if (!Number.isInteger(tabId) || tabId < 0) {
+    // Authentication webviews can run content scripts outside a browser tab.
+    // Always answer their state probe; there is no top tab to synchronize with.
+    if (message.type === "reedah-frame-ready") {
+      console.info("PA3 extension: Frame synchronization stopped; sender has no browser tab.");
+      sendResponse({enabled: false});
+    }
+    return;
+  }
   if (message.type === "reedah-controls-state") {
     if ((sender.frameId ?? 0) === 0) return;
     chrome.tabs.sendMessage(tabId, message, {frameId: 0}, () => {
-      if (chrome.runtime.lastError) console.error("PA3 extension: Could not update page controls.", chrome.runtime.lastError);
+      if (chrome.runtime.lastError) reportFrameDeliveryError("Could not update page controls.", chrome.runtime.lastError);
     });
     return;
   }
@@ -108,12 +126,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const error = chrome.runtime.lastError;
         // Child frames can finish loading before the top content script exists.
         // Stop this synchronization attempt; the top document broadcasts its
-        // state when it starts. Other messaging failures remain errors.
-        if (error.message === "Could not establish connection. Receiving end does not exist.") {
-          console.info("PA3 extension: Frame synchronization stopped; top document is not ready.", error.message);
-        } else {
-          console.error("PA3 extension: Unable to synchronize a new frame.", error.message);
-        }
+        // state when it starts. Do not cache a failed probe as disabled.
+        reportFrameDeliveryError("Unable to synchronize a new frame.", error);
         sendResponse({enabled: false});
         return;
       }

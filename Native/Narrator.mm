@@ -95,6 +95,9 @@ int main(int argc, char **argv) {
                     input.top_p = 1;
                     input.seed = seed;
                     const bool streaming = [request[@"stream"] boolValue];
+                    require([request[@"pause"] isKindOfClass:NSNumber.class], "Missing narration pause");
+                    const double pause = [request[@"pause"] doubleValue];
+                    require(std::isfinite(pause) && pause >= 0 && pause <= 2, "Invalid narration pause");
                     input.out_type = streaming ? MTMD_HELPER_GEN_AUDIO_OUTTYPE_PCM : MTMD_HELPER_GEN_AUDIO_OUTTYPE_WAV;
                     require(mtmd_helper_gen_audio_set_input(gen, &input) == 0, "Speech input failed");
                     int remaining;
@@ -128,12 +131,14 @@ int main(int argc, char **argv) {
                             if (!final && samples - begin < rate * 0.6) return;
                             speechStarted = true;
                         }
-                        if (samples == begin) return;
+                        const size_t padding = final ? narrationPausePadding(pcm, samples, rate, pause) : 0;
+                        if (samples == begin && padding == 0) return;
                         NSString *path = [request[@"path"] stringByAppendingFormat:@".part-%d.pcm", chunkIndex];
-                        NSData *data = [NSData dataWithBytes:pcm + begin length:(samples - begin) * sizeof(float)];
+                        NSMutableData *data = [NSMutableData dataWithBytes:pcm + begin length:(samples - begin) * sizeof(float)];
+                        [data increaseLengthBy:padding * sizeof(float)];
                         require([data writeToFile:path options:NSDataWritingAtomic error:nil], "Could not write streaming audio");
                         emit(@{@"event": @"partial", @"id": request[@"id"], @"path": path,
-                               @"chunk": @(chunkIndex++), @"samples": @(samples - begin), @"sampleRate": @(rate)});
+                               @"chunk": @(chunkIndex++), @"samples": @(samples - begin + padding), @"sampleRate": @(rate)});
                         emittedSamples = samples;
                     };
                     bool stop = false;
