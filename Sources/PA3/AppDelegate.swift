@@ -483,8 +483,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Logger.info("pasteboard write success=\(wrotePasteboard)")
 
         dismissPA3AndRestorePreviousApp {
-            Logger.info("running paste after focus restore")
-            PasteHelper.paste()
+            guard let target = NSWorkspace.shared.frontmostApplication else { return }
+            let targetPID = target.processIdentifier
+            let isScreenSharing = target.bundleIdentifier == "com.apple.ScreenSharing"
+            let paste: @MainActor @Sendable () -> Void = {
+                guard NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID else {
+                    Logger.warn("paste target changed while waiting; skipping paste")
+                    return
+                }
+                Logger.info("running paste after focus restore")
+                PasteHelper.paste(eventInterval: isScreenSharing ? 0.02 : 0)
+            }
+            if isScreenSharing {
+                // Shared Clipboard transfers asynchronously. This is a short grace
+                // period, not confirmation that the remote clipboard has arrived.
+                Logger.info("allowing 350ms for Screen Sharing clipboard synchronization")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: paste)
+            } else {
+                paste()
+            }
         }
     }
 

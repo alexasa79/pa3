@@ -2,6 +2,13 @@ import AppKit
 import AVFoundation
 import SwiftUI
 
+if CommandLine.arguments.contains("--paste-helper-test") {
+    let failures = runPasteHelperTests()
+    failures.forEach { print("FAIL: " + $0) }
+    print(failures.isEmpty ? "paste-helper-test: ok" : "paste-helper-test: failed")
+    exit(failures.isEmpty ? 0 : 2)
+}
+
 if CommandLine.arguments.contains("--global-shortcuts-test") {
     _ = NSApplication.shared
     let failures = runGlobalShortcutsTests()

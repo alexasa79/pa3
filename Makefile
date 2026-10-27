@@ -42,6 +42,7 @@ pa3-test: decoder-test
 	.build/debug/pa3 --screen-text-test
 	.build/debug/pa3 --transcript-layout-test
 	.build/debug/pa3 --window-focus-test
+	.build/debug/pa3 --paste-helper-test
 	.build/debug/pa3 --narration-recovery-test
 	.build/debug/pa3 --model-download-test
 

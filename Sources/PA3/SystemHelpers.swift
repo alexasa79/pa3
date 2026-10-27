@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import Carbon
 import Foundation
+import IOKit.hidsystem
 
 enum SystemHelpers {
     static func closeWindow() {
@@ -21,24 +22,45 @@ enum SystemHelpers {
 
 enum PasteHelper {
     @discardableResult
-    static func paste() -> Bool {
+    static func paste(eventInterval: TimeInterval = 0) -> Bool {
         Logger.info("paste requested accessibilityTrusted=\(AXIsProcessTrusted())")
         guard AXIsProcessTrusted() else {
             Logger.warn("CGEvent paste skipped because Accessibility is not trusted")
             return false
         }
-        guard let source = CGEventSource(stateID: .hidSystemState),
-              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false) else {
+        guard let events = makePasteEvents() else {
             Logger.warn("unable to create paste CGEvents")
             return false
         }
-        keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
-        Logger.info("paste sent with physical Command+V CGEvents")
+        for (index, event) in events.enumerated() {
+            if index > 0 && eventInterval > 0 { Thread.sleep(forTimeInterval: eventInterval) }
+            event.post(tap: .cghidEventTap)
+        }
+        Logger.info("paste sent with explicit left Command down, V down/up, Command up CGEvents")
         return true
+    }
+
+    // Remote desktop clients can track modifier transitions separately from the
+    // flags on V. Send a complete chord, including release, before returning.
+    // Build every event before posting so allocation failure cannot strand Command.
+    static func makePasteEvents() -> [CGEvent]? {
+        guard let source = CGEventSource(stateID: .hidSystemState),
+              let commandDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_Command), keyDown: true),
+              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false),
+              let commandUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_Command), keyDown: false) else {
+            return nil
+        }
+        commandDown.type = .flagsChanged
+        // Include the side-specific bit carried by a physical left Command key.
+        // Consumers that distinguish left/right modifiers need more than maskCommand.
+        let commandFlags = CGEventFlags.maskCommand.union(CGEventFlags(rawValue: UInt64(NX_DEVICELCMDKEYMASK)))
+        commandDown.flags = commandFlags
+        keyDown.flags = commandFlags
+        keyUp.flags = commandFlags
+        commandUp.type = .flagsChanged
+        commandUp.flags = []
+        return [commandDown, keyDown, keyUp, commandUp]
     }
 }
 
