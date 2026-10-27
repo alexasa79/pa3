@@ -102,14 +102,12 @@ test("buildSentenceRanges still handles ellipses and punctuation outside quotes"
   }
 });
 
-test('paragraph ranges retain several sentences and bound very long paragraphs', () => {
-  const {buildParagraphRanges}=require('../sentence');
-  const text='First sentence. Second sentence.\n\nNext paragraph.';
-  assert.deepEqual(buildParagraphRanges(text).map(r=>text.slice(r.start,r.end)),['First sentence. Second sentence.','Next paragraph.']);
-  const long='A useful technical explanation. '.repeat(200);
-  const ranges=buildParagraphRanges(long);
-  assert.equal(ranges.map(r=>long.slice(r.start,r.end)).join(''),long);
-  assert.ok(ranges.every(r=>r.end-r.start<=3800));
+test('one transport stream preserves paragraphs and long sentences for PA3', () => {
+  const {buildTransportRanges}=require('../sentence');
+  for (const text of ['First sentence. Second sentence.\n\nNext paragraph.', 'unbroken sentence '.repeat(300)]) {
+    assert.deepEqual(buildTransportRanges(text),[{start:0,end:text.length}]);
+  }
+  assert.deepEqual(buildTransportRanges(' \n '),[]);
 });
 
 test('navigation sentences remain independent of paragraph transport ranges', () => {

@@ -126,6 +126,18 @@ class HostTests(unittest.TestCase):
         for raw in [b"\x01", struct.pack("=I", 600000), struct.pack("=I", 3) + b"{}"]:
             with self.assertRaises(ValueError): NativeMessenger(stdin=io.BytesIO(raw)).read_message()
 
+    def test_long_source_is_forwarded_whole_without_preparation(self):
+        text = "🙂 SQL (src/file.swift:42). " + "unbroken sentence " * 300 + "ends here.\n\nNext paragraph."
+        message = {"utteranceId": "test", "sentenceJobs": [{"index": 0, "location": 0, "length": len(text.encode("utf-16-le")) // 2, "text": text}]}
+        client, messenger = Client(audio=b"\0" * 8), Messenger()
+        narrate(message, messenger, threading.Event(), lambda: client)
+        posts = [call for call in client.calls if call[0] == "POST"]
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0][2], {"text": text, "output": "stream", "timing": "words"})
+        self.assertEqual(messenger.events[-1]["event"], "finished")
+        message["sentenceJobs"][0]["text"] = "x" * 100001
+        with self.assertRaisesRegex(ValueError, "100,000"): validate_jobs(message["sentenceJobs"])
+
     def test_invalid_sentence_jobs(self):
         for value in [[], None, [{"text": "hello", "index": True, "location": 0, "length": 5}]]:
             with self.assertRaises(ValueError): validate_jobs(value)

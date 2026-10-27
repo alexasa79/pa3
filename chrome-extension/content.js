@@ -1262,7 +1262,7 @@
       return;
     }
 
-    const sentenceRanges = sentence.buildParagraphRanges(narration.text);
+    const sentenceRanges = sentence.buildTransportRanges(narration.text);
     if (!sentenceRanges.length) {
       console.error("PA3 extension: No sentences available for narration.");
       clearActiveNarration();
@@ -1393,7 +1393,7 @@
           continue;
         }
         console.info(
-          "PA3 extension: Narration sentence sent to model:",
+          "PA3 extension: Source text sent to PA3:",
           job.index,
           job.location,
           job.length,
@@ -1558,7 +1558,7 @@
     const narration = buildNarrationPayload(next);
     if (!narration) return;
 
-    const sentenceRanges = sentence.buildParagraphRanges(narration.text);
+    const sentenceRanges = sentence.buildTransportRanges(narration.text);
     if (!sentenceRanges.length) return;
 
     const prefetchId = ++state.prefetchId;

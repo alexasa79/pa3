@@ -93,7 +93,7 @@ func runScreenNarrationTimingLiveTest() async -> Int32 {
     service.onSelectionPlaybackStarted = {
         print("First screen audio started after \(String(format: "%.2f", Date().timeIntervalSince(started)))s")
     }
-    let plan = try! NarrationText.plan(NarrationInput(text: text), paragraphPlayback: true)
+    let plan = try! NarrationText.plan(NarrationInput(text: text))
     print("Screen playback plan: \(plan.count) pieces, \(plan.map { $0.text.count }) spoken characters")
     let lastWord = plan.last!.words.last!
     let finalRange = NSRange(location: lastWord.location, length: lastWord.length)

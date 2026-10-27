@@ -25,7 +25,7 @@ function setup(deferred = false) {
   return {hosts, content, storage};
 }
 const start = {type:'start', utteranceId:'test', text:'PA3 is ready.', sentenceRanges:[{start:0,end:13}]};
-test('background keeps DOM whitespace aligned with sentence offsets from the Factorio paragraph', async () => {
+test('background forwards the whole source even when browser navigation ranges differ', async () => {
   const {buildSentenceRanges}=require('../sentence');
   const sentences=[
     'It all started in the hot summer of 2024 when we worked really hard to finish the Space Age DLC.',
@@ -38,10 +38,10 @@ test('background keeps DOM whitespace aligned with sentence offsets from the Fac
     const ranges=buildSentenceRanges(text);
     await content.onMessage.emit({...start,text,sentenceRanges:ranges});
     const jobs=hosts[0].sent[0].sentenceJobs;
-    assert.deepEqual(Array.from(jobs,job=>job.text),sentences);
-    for (const job of jobs) {
-      assert.equal(sentences[job.index],text.slice(job.location,job.location+job.length));
-    }
+    assert.equal(jobs.length,1);
+    assert.equal(jobs[0].text,text);
+    assert.equal(jobs[0].location,0);
+    assert.equal(jobs[0].length,text.length);
     await hosts[0].onMessage.emit({event:'finished'});
   }
 });
@@ -123,4 +123,15 @@ test('two tabs have independent queues and stopping one leaves the other connect
   assert.equal(two.hosts[0].sent.length,1);assert.equal(two.hosts[0].disconnected,false);
   await one.hosts[0].onMessage.emit({event:'cancelled'});
   await two.hosts[0].onMessage.emit({event:'finished'});
+});
+
+test('browser sentence hints never partition long or multi-paragraph speech requests', async () => {
+  const {hosts,content}=setup();
+  const text='Yes. ' + 'keep these words together '.repeat(180) + 'until the end.\n\nNext paragraph.';
+  await content.onMessage.emit({...start,text,sentenceRanges:[{start:0,end:4},{start:4,end:120}]});
+  const jobs=hosts[0].sent[0].sentenceJobs;
+  assert.equal(jobs.length,1);
+  assert.equal(jobs[0].text,text);
+  assert.equal(jobs[0].length,text.length);
+  await hosts[0].onMessage.emit({event:'finished'});
 });

@@ -125,30 +125,9 @@ enum NarrationText {
         return ending.last.map { ".!?。！？".contains($0) } == true
     }
 
-    // Streaming budgets are targets: never cut a phrase just to meet a character count.
-    private static func clauseCut(_ text: String, start: String.Index, end: String.Index,
-                                  target: String.Index, minimum: Int) -> String.Index {
-        var before: String.Index?
-        var index = start
-        while index < end {
-            let punctuation = text[index]
-            if ",;:，；：、—".contains(punctuation) {
-                var cut = text.index(after: index)
-                while cut < end, "\"'”’)]}".contains(text[cut]) { cut = text.index(after: cut) }
-                // Avoid punctuation inside numbers, URLs, and identifiers.
-                if cut == end || text[cut].isWhitespace || "，；：、—".contains(punctuation) {
-                    if cut >= target { return before ?? cut }
-                    if text.distance(from: start, to: cut) >= minimum { before = cut }
-                }
-            }
-            index = text.index(after: index)
-        }
-        return before ?? end
-    }
-
     static func prepare(_ input: NarrationInput) throws -> [String] { try plan(input).map(\.text) }
 
-    static func plan(_ input: NarrationInput, dictionary: [String: String] = [:], paragraphPlayback: Bool = false) throws -> [NarrationPiece] {
+    static func plan(_ input: NarrationInput, dictionary: [String: String] = [:]) throws -> [NarrationPiece] {
         let original = input.text
         guard !original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw Invalid("Text is empty") }
         guard original.count <= 100_000 else { throw Invalid("Text exceeds 100,000 characters") }
@@ -251,9 +230,6 @@ enum NarrationText {
             segmentationText.enumerateSubstrings(in: segmentationText.startIndex..<segmentationText.endIndex, options: [.bySentences, .localized]) { _, range, _, _ in
                 sentenceRanges.append(NSRange(range, in: segmentationText))
             }
-            // Group screen prose within its paragraph, avoiding a tiny opening
-            // sentence while keeping generation pieces short enough to start promptly.
-            if paragraphPlayback { sentenceRanges = [NSRange(location: 0, length: boundaryText.utf16.count)] }
             for range in sentenceRanges {
                 guard Range(range, in: boundaryText) != nil else { throw Invalid("Invalid sentence range") }
                 var sentence = mapped.slice(range)
@@ -271,55 +247,21 @@ enum NarrationText {
                 expandedCount += sentence.text.count - originalCount
                 guard expandedCount <= 200_000 else { throw Invalid("Expanded pronunciation text is too large") }
                 let text = sentence.text
-                var start = text.startIndex
-                let end = text.endIndex
-                var paragraphEnds: [String.Index] = []
-                if paragraphPlayback {
-                    text.enumerateSubstrings(in: text.startIndex..<end, options: [.bySentences, .localized]) { _, range, _, _ in
-                        paragraphEnds.append(range.upperBound)
-                    }
+                // One model request per sentence for every source and delivery mode.
+                // Audio streaming controls publication, never text boundaries.
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty, let spokenRange = text.range(of: trimmed) else { continue }
+                let range = NSRange(spokenRange, in: text)
+                let wordRegex = try NSRegularExpression(pattern: #"[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*"#)
+                let words = wordRegex.matches(in: text, range: range).map { match in
+                    let origin = sentence.sourceRange(match.range)
+                    return NarrationWord(text: (text as NSString).substring(with: match.range).lowercased(),
+                                         location: origin.location, length: origin.length)
                 }
-                while start < end {
-                    while start < end, text[start].isWhitespace { start = text.index(after: start) }
-                    guard start < end else { break }
-                    let streaming = input.output == "pieces"
-                    let budget = paragraphPlayback ? 120 : input.timing == "words" ? 600 : streaming ? (pieces.isEmpty ? 64 : 96) : (pieces.isEmpty ? 160 : 300)
-                    let limit = input.output == "stream" && input.timing != "words" ? end : (text.index(start, offsetBy: budget, limitedBy: end) ?? end)
-                    var cut = limit
-                    if limit < end {
-                        if paragraphPlayback,
-                           let sentenceEnd = paragraphEnds.last(where: { $0 <= limit && $0 > start && text.distance(from: start, to: $0) >= budget / 2 }) {
-                            cut = sentenceEnd
-                        } else if streaming {
-                            cut = clauseCut(text, start: start, end: end, target: limit, minimum: budget / 2)
-                            // Keep a short sentence ending with its preceding clause.
-                            if text[cut..<end].trimmingCharacters(in: .whitespacesAndNewlines).count <= 40 {
-                                cut = end
-                            }
-                        } else {
-                            let clause = text[start..<limit].lastIndex(where: { ",;:".contains($0) })
-                            if let clause, text.distance(from: start, to: clause) >= (paragraphPlayback ? budget / 2 : 60) { cut = text.index(after: clause) }
-                            else if let space = text[start..<limit].lastIndex(where: { $0.isWhitespace }), space > start { cut = space }
-                        }
-                    }
-                    var spokenEnd = cut
-                    while spokenEnd > start, text[text.index(before: spokenEnd)].isWhitespace { spokenEnd = text.index(before: spokenEnd) }
-                    let spoken = String(text[start..<spokenEnd])
-                    if !spoken.isEmpty {
-                        let spokenRange = NSRange(start..<spokenEnd, in: text)
-                        let wordRegex = try NSRegularExpression(pattern: #"[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*"#)
-                        let words = wordRegex.matches(in: text, range: spokenRange).map { match in
-                            let origin = sentence.sourceRange(match.range)
-                            return NarrationWord(text: (text as NSString).substring(with: match.range).lowercased(),
-                                                 location: origin.location, length: origin.length)
-                        }
-                        pieces.append(NarrationPiece(text: spoken, sourceRange: sentence.sourceRange(NSRange(start..<spokenEnd, in: text)),
-                                                     pauseAfter: hasSentenceEnding(spoken) ? 0.20 : 0.12, words: words))
-                    }
-                    start = cut
-                }
+                pieces.append(NarrationPiece(text: trimmed, sourceRange: sentence.sourceRange(range),
+                                             pauseAfter: hasSentenceEnding(trimmed) ? 0.20 : 0.12, words: words))
             }
-            // Keep timed sentence boundaries as generation boundaries. Joining
+            // Keep sentence boundaries as generation boundaries. Joining
             // sentences leaves their pauses entirely to the model's prosody.
             if pieces.count > firstPiece, blockIndex + 1 < blocks.count {
                 let next = blocks[blockIndex + 1]

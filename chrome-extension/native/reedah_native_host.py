@@ -73,7 +73,7 @@ class PA3Client:
             headers = {"Authorization": "Bearer " + self.token}
             body = None
             if payload is not None:
-                body = json.dumps(payload).encode()
+                body = json.dumps(payload, ensure_ascii=False).encode()
                 headers["Content-Type"] = "application/json"
             connection.request(method, path, body=body, headers=headers)
             response = connection.getresponse()
@@ -100,8 +100,8 @@ def validate_jobs(value):
     for job in value:
         if not isinstance(job, dict) or not isinstance(job.get("text"), str) or not job["text"].strip():
             raise ValueError("Each sentence needs text")
-        if len(job["text"]) > 4000:
-            raise ValueError("Each sentence is limited to 4,000 characters")
+        if len(job["text"]) > 100_000:
+            raise ValueError("Text exceeds 100,000 characters")
         for key in ("index", "location", "length"):
             if type(job.get(key)) is not int or job[key] < 0:
                 raise ValueError("Invalid sentence position")

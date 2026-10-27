@@ -10,7 +10,7 @@ export async function checkFactorioNarration(call) {
     const results = [...root.querySelectorAll('p')].map(p => {
       const text = mathTest.getFullText(p);
       const ranges = ReedahSentence.buildSentenceRanges(text);
-      const jobs = ReedahNativeRequestBuilder.buildSentenceJobs(text, ranges, []);
+      const jobs = ReedahNativeRequestBuilder.buildNarrationJobs(text);
       for (const range of ranges) {
         mathTest.highlightSentence(p, range);
         if (mathTest.getFullText(p) !== text) throw Error('Highlight changed narration text');
@@ -25,14 +25,14 @@ export async function checkFactorioNarration(call) {
   const paragraphs = result.result.value;
   assert.equal(paragraphs.length, 3);
   assert.deepEqual(paragraphs.flatMap(p => p.jobs.map(j => j.text.trim().split(/\s+/)[0])),
-    ['It', 'The', 'A', 'Since', 'Being', 'When']);
+    ['It', 'Since', 'Being']);
   for (const paragraph of paragraphs) {
     const spoken = paragraph.jobs.map(j => j.text).join(' ').replace(/\s+/g, ' ').trim();
     assert.equal(spoken, paragraph.visible);
     assert.doesNotMatch(spoken, /<|>|href|https:/);
   }
-  assert.match(paragraphs[0].jobs[1].text, /our players\.$/);
-  assert.match(paragraphs[0].jobs[2].text, /^A decision.*playtesting event \(FFF-427\),/);
-  assert.match(paragraphs[0].jobs[2].text, /FFF-427/);
+  assert.match(paragraphs[0].jobs[0].text, /our players\./);
+  assert.match(paragraphs[0].jobs[0].text, /A decision.*playtesting event \(FFF-427\),/);
+  assert.match(paragraphs[0].jobs[0].text, /FFF-427/);
   console.log('PASS: Factorio sentence starts, inline link text, no HTML leakage, and stable text after highlighting.');
 }

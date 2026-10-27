@@ -1,10 +1,10 @@
-importScripts("narration_text.js", "native_request_builder.js", "audio_transfer.js");
+importScripts("native_request_builder.js", "audio_transfer.js");
 
 const NATIVE_HOST = "com.reedah.sayer";
 const tabState = new Map();
 const nativeRequestBuilder = globalThis.ReedahNativeRequestBuilder;
 if (!nativeRequestBuilder ||
-  typeof nativeRequestBuilder.buildSentenceJobs !== "function") {
+  typeof nativeRequestBuilder.buildNarrationJobs !== "function") {
   console.error("PA3 extension: Native request builder helpers unavailable.");
   throw new Error("PA3 extension: native request builder helpers unavailable");
 }
@@ -256,21 +256,13 @@ chrome.runtime.onConnect.addListener((port) => {
     const current = {window:message.window ?? 2, consumed:new Set()};
     session = current;
 
-    // Sentence ranges address the content script's original UTF-16 text.
-    // Trimming here shifts every range past its opening and into the next one.
+    // Forward the entire extracted source unchanged. Trimming or partitioning
+    // here would shift source offsets and change PA3's narration plan.
     const text = typeof message.text === "string" ? message.text : "";
-    const sentenceRanges = Array.isArray(message.sentenceRanges)
-      ? message.sentenceRanges
-      : null;
     if (!text.trim()) {
       port.postMessage({ type: "error", error: "empty_text" });
       return;
     }
-    if (!sentenceRanges || sentenceRanges.length === 0) {
-      port.postMessage({ type: "error", error: "missing_sentence_ranges" });
-      return;
-    }
-
     const utteranceId = message.utteranceId || `${Date.now()}`;
     const settings = await getSettings();
     if (disconnected || session !== current) return;
@@ -295,9 +287,10 @@ chrome.runtime.onConnect.addListener((port) => {
       port.postMessage({ type: "error", utteranceId, error: "invalid_rate" });
       return;
     }
+    // Legacy wire name: this is one source transport job, not model sentences.
     let sentenceJobs;
     try {
-      sentenceJobs = nativeRequestBuilder.buildSentenceJobs(text, sentenceRanges, {preserveOffsets: true});
+      sentenceJobs = nativeRequestBuilder.buildNarrationJobs(text);
     } catch (error) {
       const details = error.message || String(error);
       console.error("PA3 extension: Failed to build sentence jobs.", details);
@@ -327,7 +320,7 @@ chrome.runtime.onConnect.addListener((port) => {
 
     for (const job of sentenceJobs) {
       console.info(
-        "PA3 extension: Narration sentence sent to model:",
+        "PA3 extension: Source text sent to PA3:",
         job.index,
         job.location,
         job.length,

@@ -4,13 +4,13 @@ import AVFoundation
 private final class RecoveryTestWorker: NarrationWorker {
     let id = UUID()
     let onEvent: @Sendable (UUID, TTSWorkerEvent) -> Void
-    var requests: [(text: String, path: URL, seed: Int, stream: Bool)] = []
+    var requests: [(text: String, path: URL, seed: Int, stream: Bool, pause: Double)] = []
     var stopped = false
     init(_ onEvent: @escaping @Sendable (UUID, TTSWorkerEvent) -> Void) { self.onEvent = onEvent }
     func start() throws {}
     func stop() { stopped = true }
     func generate(id: String, text: String, voice: String, language: String, instruct: String?, path: URL, pause: Double, seed: Int, stream: Bool) {
-        requests.append((text, path, seed, stream))
+        requests.append((text, path, seed, stream, pause))
     }
     func emit(_ event: TTSWorkerEvent) { onEvent(id, event) }
 }
@@ -18,7 +18,7 @@ private final class RecoveryTestWorker: NarrationWorker {
 @MainActor
 func runNarrationRecoveryTests() async -> Int32 {
     guard runNarrationCaptureRetentionTests() else { return 1 }
-    guard await runTimingServiceTests(), await runScreenPlaybackTimingTests(), await runScreenHighlightPauseTests(), await runSharedDictionaryServiceTests() else { return 1 }
+    guard await runSharedNarrationSourceTests(), await runTimingServiceTests(), await runScreenPlaybackTimingTests(), await runScreenHighlightPauseTests(), await runSharedDictionaryServiceTests() else { return 1 }
     var workers: [RecoveryTestWorker] = []
     let service = NarrationService(isConfigured: { true }) { callback in
         let worker = RecoveryTestWorker(callback)
@@ -413,7 +413,7 @@ private func runScreenPlaybackTimingTests() async -> Bool {
     }
     do {
         let id = try await begin()
-        guard screenPrepared, narrator.requests.count == 1, narrator.requests[0].text == text,
+        guard screenPrepared, narrator.requests.count == 2, narrator.requests.map(\.text) == ["First sentence.", "Second sentence."],
               timing.requests.count == 1, playbackStarts == 0, highlights.compactMap({ $0 }).isEmpty else {
             print("FAIL screen playback must wait for word timing"); return false
         }
@@ -432,7 +432,7 @@ private func runScreenPlaybackTimingTests() async -> Bool {
         highlights = []
         _ = try await begin()
         timing.emit(NarrationTimingEvent(error: "Recognizer unavailable")); await settle()
-        guard service.hasNarration, playbackStarts == 2, highlights.contains(where: { $0 == NSRange(location: 0, length: text.utf16.count) }) else {
+        guard service.hasNarration, playbackStarts == 2, highlights.contains(where: { $0 == NSRange(location: 0, length: "First sentence.".utf16.count) }) else {
             print("FAIL screen recognition failure must continue with passage highlighting"); return false
         }
         service.stopAll()
@@ -525,4 +525,59 @@ private func runScreenHighlightPauseTests() async -> Bool {
         print("PASS highlight survives word gaps, audio and recognition delays, reaches a zero-duration final word, and clears on completion")
         return true
     } catch { print("FAIL highlight pause test: \(error)"); return false }
+}
+
+// Exercise actual entry points, not just the planner, so source flags cannot
+// reintroduce OCR-specific grouping or browser-specific sentence budgets.
+@MainActor
+private func runSharedNarrationSourceTests() async -> Bool {
+    let long = "The narrator " + String(repeating: "keeps these words together ", count: 170) + "until this sentence ends."
+    let source = "🙂 Read SQL (src/file.swift:42). " + long + "\n\n1. Finish with SQL."
+    let expected = ["🙂 Read ess cue ell.", long, "1, Finish with ess cue ell."]
+    for origin in ["selection", "screenshot", "chrome"] {
+        var worker: RecoveryTestWorker!
+        let service = NarrationService(isConfigured: { true }, token: "source-test", makeWorker: {
+            worker = RecoveryTestWorker($0); return worker
+        }, makeTimingWorker: { TimingTestWorker($0) })
+        service.pronunciationDictionary = { ["SQL": "ess cue ell"] }
+        defer { service.shutdown() }
+        do {
+            let response: NarrationHTTPResponse
+            if origin == "chrome" {
+                let body = try JSONSerialization.data(withJSONObject: ["text": source, "output": "stream", "timing": "words"])
+                response = service.handle(NarrationHTTPRequest(method: "POST", path: "/v1/narrations",
+                    headers: ["authorization": "Bearer source-test", "content-type": "application/json"], body: body))
+            } else {
+                let document = origin == "screenshot" ? ScreenTextDocument(text: source, spans: []) : nil
+                response = service.narrateSelection(SelectedTextResult(text: source, message: "", screenDocument: document))
+            }
+            let json = try JSONSerialization.jsonObject(with: response.body) as? [String: Any]
+            guard response.status == 202, json?["pieces"] as? Int == 3, let id = json?["id"] as? String else {
+                print("FAIL shared source acceptance: \(origin)"); return false
+            }
+            worker.emit(TTSWorkerEvent(event: "ready"))
+            for index in 0..<expected.count {
+                try await Task.sleep(for: .milliseconds(40))
+                guard worker.requests.count == index + 1,
+                      worker.requests[index].text == expected[index],
+                      worker.requests[index].pause == [0.20, 0.65, 0.20][index] else {
+                    print("FAIL shared model request or pause: \(origin), sentence \(index)"); return false
+                }
+                if index + 1 < expected.count {
+                    let path = worker.requests[index].path
+                    let format = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1)!
+                    let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 240)!
+                    buffer.frameLength = 240
+                    buffer.floatChannelData![0].initialize(repeating: 0, count: 240)
+                    do {
+                        let file = try AVAudioFile(forWriting: path, settings: format.settings)
+                        try file.write(from: buffer)
+                    }
+                    worker.emit(TTSWorkerEvent(event: "audio", id: id, path: path.path))
+                }
+            }
+        } catch { print("FAIL shared narration sources: \(origin): \(error)"); return false }
+    }
+    print("PASS selected text, OCR, and browser HTTP generate identical complete sentences, pronunciations, and pauses")
+    return true
 }

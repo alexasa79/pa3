@@ -20,7 +20,7 @@ export async function checkMathNarration(call) {
     const api=mathTest;
     const style=document.createElement('style');style.textContent=${JSON.stringify(css)};document.head.appendChild(style);
     const texts=Object.fromEntries(['leetcode','dual','hidden','no-aria'].map(id=>[id,api.getFullText(document.getElementById(id))]));
-    const jobs=ReedahNativeRequestBuilder.buildSentenceJobs(texts.leetcode,ReedahSentence.buildSentenceRanges(texts.leetcode),[]);
+    const jobs=ReedahNativeRequestBuilder.buildNarrationJobs(texts.leetcode);
     const highlights=[];
     for(const id of ['leetcode','dual']) {
       const p=document.getElementById(id), original=p.innerHTML, text=texts[id];
@@ -63,7 +63,7 @@ export async function checkMathNarration(call) {
   assert.equal(texts.dual,'Use X is greater than or equal to 0 as the condition. This sentence follows the formula.','Read MathML once, without its rendered copy or TeX annotations');
   assert.equal(texts.hidden,'Keep visible prose only.','Do not expose hidden ancestors, descendants, or unrelated elements');
   assert.equal(texts['no-aria'],'Without aria attributes: X.');
-  assert.equal(jobs.length,4);
+  assert.equal(jobs.length,1);
   assert.equal(jobs.map(job=>job.text).join(' '),expected);
   for(const job of jobs) assert.equal(job.text,expected.slice(job.location,job.location+job.length));
   assert.equal(highlights.reduce((sum,item)=>sum+item.mathCount,0),6);
@@ -108,13 +108,13 @@ export async function checkMathVariants(call) {
         api.clearHighlight();
       }
       api.state.currentHighlightTextOffset=0;
-      const jobs=ReedahNativeRequestBuilder.buildSentenceJobs(payload.text,ranges);
+      const jobs=ReedahNativeRequestBuilder.buildNarrationJobs(payload.text);
       checks.push({id:el.id,text,expected,spans,restored:el.innerHTML===original,
         payloadValid:payload.text===prefix+text && payload.highlightTextOffset===prefix.length,
         sentences,expectedSentences:el.dataset.sentences ? JSON.parse(el.dataset.sentences) : null,
         jobTexts:jobs.map(job=>job.text),
-        expectedJobTexts:el.dataset.jobTexts ? JSON.parse(el.dataset.jobTexts) : ranges.map(s=>payload.text.slice(s.start,s.end)),
-        jobsValid:jobs.length===ranges.length && jobs.every((job,i)=>job.location===ranges[i].start && job.length===ranges[i].end-ranges[i].start)});
+        expectedJobTexts:[payload.text],
+        jobsValid:jobs.length===1 && jobs[0].location===0 && jobs[0].length===payload.text.length});
     }
     const errors=[], failures=[], log=console.error, connect=chrome.runtime.connect;
     let nativeConnections=0;

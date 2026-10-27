@@ -72,7 +72,7 @@ func runNarrationTests() -> [String] {
         check(sql.count == 6 && sql.allSatisfy { (source as NSString).substring(with: NSRange(location: $0.location, length: $0.length)) == "SQL" }, "expanded words retain original UTF16 dictionary range")
         check(!mapped.contains { $0.text.contains("swift") }, "skipped references produce no timing words")
         let long = try NarrationText.plan(NarrationInput(text: String(repeating: "A useful explanation. ", count: 80), output: "stream", timing: "words"))
-        check(long.count > 1 && long.allSatisfy { $0.text.count <= 600 }, "long paragraphs have bounded generation chunks")
+        check(long.count == 80 && long.allSatisfy { $0.text == "A useful explanation." }, "long paragraphs generate one request per sentence")
         let paragraphs = try NarrationText.plan(NarrationInput(text: "First paragraph. More context.\n\nSecond paragraph. More context.", output: "stream", timing: "words"))
         check(paragraphs.count == 4 && paragraphs.map(\.pauseAfter) == [0.20, 0.65, 0.20, 0.20], "timed sentence and paragraph boundaries retain their pauses")
     } catch { failures.append("narration paragraph planning: \(error)") }
@@ -97,35 +97,25 @@ func runNarrationTests() -> [String] {
         check(short.map(\.text) == ["Yes.", "Also, continue."], "short timed sentences must not swallow the following sentence")
     } catch { failures.append("timed sentence pause regression: \(error)") }
     do {
-        let source = "1 over epsilon. To see the query performance for epsilon equals 1 over 2, evaluate the point query cost in Table 1: big O of fraction log base bee of en over epsilon end fraction equals big O of fraction log base bee of en over 1 over 2 end fraction equals big O of 2 log base bee of en, doubling the number of I/Os. Changing epsilon from 1 over 2 to 1 over 4 would make this a factor of 4. This cost can be offset by increasing B, which also improves insert performance."
-        let plan = try NarrationText.plan(NarrationInput(text: source), paragraphPlayback: true)
-        check(plan.count > 1 && plan.allSatisfy { $0.text.count <= 120 } && plan[0].text.count >= 60, "screen formula paragraph starts with a substantial piece without generating the entire paragraph")
-        check(plan.map(\.text).joined().filter { !$0.isWhitespace } == source.filter { !$0.isWhitespace }, "smaller screen pieces retain the full paragraph")
-        check(plan[0].sourceRange.location == 0 && NSMaxRange(plan.last!.sourceRange) == source.utf16.count, "screen pieces cover source from first to final word")
-        let mapped = "🙂 Use SQL in src/main.cpp. Then use SQL again."
-        let expanded = try NarrationText.plan(NarrationInput(text: mapped), dictionary: ["SQL": "ess cue ell"], paragraphPlayback: true)
-        check(expanded.count == 1 && expanded[0].text.contains("main dot C P P. Then"), "screen paragraph retains path pronunciation and sentence punctuation")
-        let sql = expanded.flatMap(\.words).filter { ["ess", "cue", "ell"].contains($0.text) }
-        check(sql.count == 6 && sql.allSatisfy { (mapped as NSString).substring(with: NSRange(location: $0.location, length: $0.length)) == "SQL" }, "screen paragraph preserves pronunciation source positions")
+        let regression = "The narrator should read this entire sentence smoothly because every word belongs to the same thought and there is no punctuation before it ends."
+        let long = "The " + String(repeating: "useful context ", count: 55) + "ends here."
+        let source = "Start. " + regression + " " + long + "\n\n1. Read SQL in src/main.cpp. Then continue."
+        let expected = ["Start.", regression, long, "1, Read ess cue ell in src slash main dot C P P.", "Then continue."]
+        let pauses = [0.20, 0.20, 0.65, 0.20, 0.20]
+        for output in [nil, "playback", "audio", "pieces", "stream"] as [String?] {
+            for timing in output == "stream" ? [nil, "words"] as [String?] : [nil] {
+                let plan = try NarrationText.plan(NarrationInput(text: source, output: output, timing: timing), dictionary: ["SQL": "ess cue ell"])
+                check(plan.map(\.text) == expected, "all delivery modes use complete sentence requests: \(output ?? "default"), \(timing ?? "untimed")")
+                check(plan.map(\.pauseAfter) == pauses, "all delivery modes retain identical sentence and paragraph pauses")
+                check(plan[1].sourceRange.length == regression.utf16.count && plan[2].sourceRange.length == long.utf16.count, "sentences beyond old 120/160/300/600 budgets stay whole")
+                let sql = plan.flatMap(\.words).filter { ["ess", "cue", "ell"].contains($0.text) }
+                check(sql.count == 3 && sql.allSatisfy { (source as NSString).substring(with: NSRange(location: $0.location, length: $0.length)) == "SQL" }, "sentence planning preserves dictionary source positions")
+            }
+        }
         let paragraph = "First sentence. More context."
-        let paragraphs = try NarrationText.plan(NarrationInput(text: paragraph + "\n\n" + paragraph), paragraphPlayback: true)
-        check(paragraphs.map(\.text) == [paragraph, paragraph] && paragraphs.map(\.pauseAfter) == [0.65, 0.20], "screen paragraphs keep their boundaries and pauses")
-        let list = try NarrationText.plan(NarrationInput(text: "Steps:\n1. Read this. Then continue.\n2. Finish."), paragraphPlayback: true)
-        check(list.map(\.text) == ["Steps:", "1, Read this. Then continue.", "2, Finish."] && list.map(\.pauseAfter) == [0.65, 0.40, 0.20], "screen paragraph grouping preserves separate list items")
-        let sentence = "The " + String(repeating: "useful context ", count: 5) + "ends here."
-        let long = "Start. " + String(repeating: sentence + " ", count: 4)
-        let pieces = try NarrationText.plan(NarrationInput(text: long), paragraphPlayback: true)
-        check(pieces.count > 1 && pieces.allSatisfy { $0.text.count <= 120 }, "long screen paragraphs have consistently small pieces")
-        check(pieces[0].text.count >= 60 && pieces[0].text.hasSuffix("ends here."), "long screen paragraph starts with substantial audio and prefers sentence boundary")
-        let remainder = "Start. " + String(repeating: "word ", count: 150)
-        let split = try NarrationText.plan(NarrationInput(text: remainder), paragraphPlayback: true)
-        check(split[0].text.count >= 60, "short opening stays with long following sentence even when paragraph exceeds limit")
-        check(split.map(\.text).joined().filter { !$0.isWhitespace } == remainder.filter { !$0.isWhitespace }, "screen paragraph splitting preserves all text")
-        let words = split.flatMap(\.words)
-        check(words.allSatisfy { (remainder as NSString).substring(with: NSRange(location: $0.location, length: $0.length)).lowercased() == $0.text }, "split screen paragraph word positions remain accurate")
-        let ordinary = try NarrationText.prepare(NarrationInput(text: "Start. Continue."))
-        check(ordinary == ["Start.", "Continue."], "ordinary narration retains existing sentence planning")
-    } catch { failures.append("screen paragraph planning: \(error)") }
+        let paragraphs = try NarrationText.plan(NarrationInput(text: paragraph + "\n\n" + paragraph))
+        check(paragraphs.map(\.text) == ["First sentence.", "More context.", "First sentence.", "More context."] && paragraphs.map(\.pauseAfter) == [0.20, 0.65, 0.20, 0.20], "paragraphs preserve separate sentences and paragraph pauses")
+    } catch { failures.append("shared sentence planning: \(error)") }
     do {
         for output in ["playback", "pieces", "stream"] {
             for (source, expected) in [
@@ -176,17 +166,13 @@ func runNarrationTests() -> [String] {
         check(result == "sequel SQLAlchemy P A three PA30. York Y.", "word boundaries or nonrecursive longest match failed")
         let unicode = "Привет, мир. " + String(repeating: "🙂", count: 901) + " Final sentence."
         let chunks = try NarrationText.prepare(NarrationInput(text: unicode))
-        check(chunks.allSatisfy { $0.count <= 300 }, "chunk limit exceeded")
+        check(chunks.contains { $0.contains(String(repeating: "🙂", count: 901)) }, "unpunctuated Unicode text stays whole in local playback")
         check(chunks.joined().filter { !$0.isWhitespace } == unicode.filter { !$0.isWhitespace }, "Unicode chunking lost text")
         let streamed = try NarrationText.plan(NarrationInput(text: unicode, output: "pieces"))
         check(streamed.contains { $0.text.contains(String(repeating: "🙂", count: 901)) }, "unpunctuated streaming text stays intact")
         let paragraph = "The day we discovered we had been designated a global terrorist organization, we promised that we would try to resist as long as this was possible, that we would not back down as long as we could see options to stand our ground."
         let clauses = try NarrationText.plan(NarrationInput(text: paragraph, output: "pieces"))
-        check(clauses.map(\.text) == [
-            "The day we discovered we had been designated a global terrorist organization,",
-            "we promised that we would try to resist as long as this was possible,",
-            "that we would not back down as long as we could see options to stand our ground."
-        ], "streaming keeps terrorist organization together and splits at commas")
+        check(clauses.map(\.text) == [paragraph], "commas do not split a sentence into separate model requests")
         check(clauses.allSatisfy { (paragraph as NSString).substring(with: $0.sourceRange) == $0.text }, "clause source ranges preserve highlighting")
         let unpunctuated = String(repeating: "keep these words together ", count: 8).trimmingCharacters(in: .whitespaces) + "."
         check(try NarrationText.prepare(NarrationInput(text: unpunctuated, output: "pieces")) == [unpunctuated], "no arbitrary word splits without clause punctuation")
@@ -200,7 +186,7 @@ func runNarrationTests() -> [String] {
         for length in [40, 41] {
             let sentence = longOpening + ", " + String(repeating: "x", count: length - 1) + "."
             let pieces = try NarrationText.prepare(NarrationInput(text: sentence, output: "pieces"))
-            check(pieces.count == (length == 40 ? 1 : 2), "short ending threshold at \(length) characters")
+            check(pieces == [sentence], "sentence endings stay attached at \(length) characters")
         }
         let numeric = "The processing system expects a total of exactly 1,000 entries at https://example.org/path before completing this operation."
         check(try NarrationText.prepare(NarrationInput(text: numeric, output: "pieces")) == [numeric], "number and URL punctuation are not clause boundaries")
@@ -208,7 +194,7 @@ func runNarrationTests() -> [String] {
             let opening = "This opening clause has enough words to exceed the startup target" + punctuation
             let source = opening + " " + unpunctuated
             let parts = try NarrationText.plan(NarrationInput(text: source, output: "pieces"))
-            check(parts.first?.text == opening, "streaming clause boundary at " + punctuation)
+            check(parts.map(\.text) == [source], "clause punctuation does not split model requests: " + punctuation)
         }
         check(streamed.map(\.text).joined().filter { !$0.isWhitespace } == unicode.filter { !$0.isWhitespace }, "streaming Unicode chunks preserve all text")
         check(streamed.allSatisfy { (unicode as NSString).substring(with: $0.sourceRange) == $0.text }, "streaming source ranges match every piece")

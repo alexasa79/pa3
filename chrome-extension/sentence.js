@@ -1,4 +1,5 @@
 (() => {
+  // Browser navigation/highlighting only. PA3 determines speech boundaries.
   const DEFAULT_MIN_SENTENCE_LENGTH = 20;
   const DEFAULT_ABBREVIATIONS = ["e.g.", "i.e.", "Mr."];
   const SENTENCE_CLOSERS = "\"'”’»›)]}";
@@ -166,28 +167,10 @@
     return raw.replace(/\s+/g, " ").trim().length;
   }
 
-  // Candidates are already DOM paragraphs/list items. Bound exceptionally long
-  // candidates for the narration API, preferring a sentence boundary.
-  function buildParagraphRanges(text) {
-    if (!text || !text.trim()) return [];
-    const result = [];
-    for (const match of text.matchAll(/[^\n\r\u2029]+(?:[\n\r](?![\n\r])[^\n\r\u2029]+)*/gu)) {
-      let start = match.index;
-      const end = start + match[0].length;
-      while (start < end) {
-        let cut = Math.min(end, start + 3800);
-        if (cut < end) {
-          const sentences = buildSentenceRanges(text.slice(start, cut));
-          const boundary = sentences.length > 1 ? sentences.at(-2).end : 0;
-          const space = text.lastIndexOf(' ', cut);
-          cut = boundary > 1900 ? start + boundary : space > start ? space : cut;
-          if (/[\uD800-\uDBFF]/.test(text[cut - 1])) cut--;
-        }
-        result.push({start, end:cut});
-        start = cut;
-      }
-    }
-    return result;
+  // Navigation stays in the browser. The full source is one transport stream;
+  // PA3 alone determines model requests and pauses, including paragraph gaps.
+  function buildTransportRanges(text) {
+    return text && text.trim() ? [{start: 0, end: text.length}] : [];
   }
   // Playback passages are transport units, not sentence navigation boundaries.
   function buildNavigationTargets(text, passages) {
@@ -196,7 +179,7 @@
       return passageIndex < 0 ? [] : [{...range, passageIndex}];
     });
   }
-  const api = { buildSentenceRanges, buildParagraphRanges, buildNavigationTargets };
+  const api = { buildSentenceRanges, buildTransportRanges, buildNavigationTargets };
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

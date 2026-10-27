@@ -213,7 +213,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
     func submit(_ data: Data, selection: SelectedTextResult? = nil) -> NarrationHTTPResponse {
         guard let input = try? JSONDecoder().decode(NarrationInput.self, from: data) else { return .error(400, "Invalid JSON; text must be a string") }
         guard ["playback", "audio", "pieces", "stream"].contains(input.output ?? "playback") else { return .error(422, "Output must be playback, audio, pieces, or stream") }
-        if ["audio", "pieces", "stream"].contains(input.output ?? ""), input.text.count > 4000 { return .error(422, "Audio requests are limited to 4,000 characters") }
+        if ["audio", "pieces"].contains(input.output ?? ""), input.text.count > 4000 { return .error(422, "Audio requests are limited to 4,000 characters") }
         guard input.timing == nil || (input.timing == "words" && input.output == "stream") else {
             return .error(422, "Word timing requires stream output")
         }
@@ -230,7 +230,7 @@ final class NarrationService: NSObject, AVAudioPlayerDelegate {
         guard isConfigured() else { return .error(503, "Install speech tools with brew install whisper.cpp, then retry.") }
         guard !isDictationBusy() else { return .error(409, "Dictation is active or audio output is still being restored") }
         do {
-            let chunks = try NarrationText.plan(input, dictionary: pronunciationDictionary(), paragraphPlayback: selection?.screenDocument != nil)
+            let chunks = try NarrationText.plan(input, dictionary: pronunciationDictionary())
             guard input.mode == "replace" || pending.count < 10 else { return .error(429, "Narration queue is full") }
             if input.mode == "replace" { stopAll() }
             let id = UUID().uuidString.lowercased()

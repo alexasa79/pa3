@@ -290,7 +290,7 @@ function startPreviewRequest({
           continue;
         }
         console.info(
-          "PA3 extension: Options preview sentence sent to model:",
+          "PA3 extension: Options preview source sent to PA3:",
           job.index,
           job.location,
           job.length,
