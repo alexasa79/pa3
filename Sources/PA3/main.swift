@@ -204,7 +204,7 @@ if CommandLine.arguments.contains("--transcription-scheduling-test") {
 }
 
 if CommandLine.arguments.contains("--whisper-text-test") {
-    let failures = runWhisperTextTests() + runVocabularyPromptTests() + runSegmentationTests() + runNarrationTests() + runNarrationDictionaryTests() + runSelectedTextTests() + runWordCapitalizationTests() + runDeletionCleanupTests() + runUndoTests() + runRepeatReplacementTests() + runShortcutsTests() + runAutoMuteTests()
+    let failures = runWhisperTextTests() + runVocabularyPromptTests() + runSegmentationTests() + runNarrationTests() + runNarrationDictionaryTests() + runSelectedTextTests() + runWordCapitalizationTests() + runDeletionCleanupTests() + runClipboardInsertionTests() + runUndoTests() + runRepeatReplacementTests() + runShortcutsTests() + runAutoMuteTests()
     print("whisper-text-test")
     if failures.isEmpty {
         print("ok")

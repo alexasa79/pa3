@@ -77,6 +77,15 @@ final class DictationController: ObservableObject {
     private var segmentSeparator = "\n\n"
     /// Number of existing paragraphs before this segment; the rest remain after it.
     private var segmentInsertionParagraph: Int?
+    /// A clipboard insertion can resume speech before an existing paragraph tail.
+    private var clipboardContinuation: ClipboardContinuation?
+    private struct ClipboardContinuation {
+        let word: Int
+        let separator: String
+        let suffixSeparator: String
+        let joinsSentence: Bool
+    }
+    private var transcriptionGeneration = 0
     private var pendingWordEnd = -1
     private var selectionAnchor = -1
     private var editAction: EditAction = .replace
@@ -100,6 +109,7 @@ final class DictationController: ObservableObject {
         let lastReplace: String
         let lastReplaceSet: Bool
         let lastReplaceSource: ReplacementSource?
+        let clipboardContinuation: ClipboardContinuation?
     }
     private var undoHistory: [(before: EditSnapshot, after: String)] = []
 
@@ -173,6 +183,8 @@ final class DictationController: ObservableObject {
         committed = ""
         segment = ""
         segmentInsertionParagraph = nil
+        clipboardContinuation = nil
+        transcriptionGeneration += 1
         text = ""
         words = []
         wordParagraphs = []
@@ -189,6 +201,7 @@ final class DictationController: ObservableObject {
     func shutdown() {
         resumeAfterShortcuts = false
         stopDictation()
+        transcriptionGeneration += 1
         restoreOutput()
         transcriber.close()
     }
@@ -196,6 +209,7 @@ final class DictationController: ObservableObject {
     func pasteAndHide() {
         resumeAfterShortcuts = false
         stopDictation()
+        transcriptionGeneration += 1
         restoreOutput()
         onPasteAndHide?(text)
     }
@@ -203,6 +217,7 @@ final class DictationController: ObservableObject {
     func discardAndHide() {
         resumeAfterShortcuts = false
         stopDictation()
+        transcriptionGeneration += 1
         restoreOutput()
         onHide?()
     }
@@ -247,7 +262,9 @@ final class DictationController: ObservableObject {
         case " ":
             toggleDictation()
         case "v":
-            insertClipboardParagraph()
+            insertClipboard(separateParagraph: false)
+        case "V":
+            insertClipboard(separateParagraph: true)
         case "s":
             startTranscriptSpellCheck()
         case "R":
@@ -312,7 +329,7 @@ final class DictationController: ObservableObject {
 
     func shortcutSections() -> [(title: String, bindings: [String])] {
         [
-            ("General", ["?: show/hide shortcuts (pauses dictation)", "esc: close shortcuts, otherwise discard", "space: pause/resume dictation", "enter: paste result", "q / Q: discard", "ctrl+c: abort", "v: insert clipboard"]),
+            ("General", ["?: show/hide shortcuts (pauses dictation)", "esc: close shortcuts, otherwise discard", "space: pause/resume dictation", "enter: paste result", "q / Q: discard", "ctrl+c: abort", "v: paste a sentence or inline fragment (based on ending punctuation)", "V: insert clipboard as a separate paragraph"]),
             ("Dictation", ["R: restart dictation", "o: new paragraph after current paragraph", "O: continue current paragraph", "s: spell check transcript", "D: edit dictionary"]),
             ("Navigation · while paused", ["arrows: navigate words", "shift+arrows: expand selection", "J: join next paragraph", "S: split paragraph after current word"]),
             ("Editing · while paused", ["c: edit selection", "C: change all matching text", "a: append after", "i / I: insert before", "x: delete selection", "X: delete to sentence end (keep ending punctuation)", "t: cycle capitalization", "u: undo last change", ".: repeat change", ">: repeat change on all matches", "A: add selected word to dictionary"]),
@@ -375,6 +392,12 @@ final class DictationController: ObservableObject {
 
     private func dictationParts() -> (prefix: String, suffix: String) {
         let c = committed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let continuation = clipboardContinuation {
+            let (words, paragraphs) = splitWordsAndParagraphs(c)
+            let insertion = min(continuation.word, words.count)
+            return (buildTextFromWordData(words: Array(words.prefix(insertion)), paragraphs: Array(paragraphs.prefix(insertion))),
+                    buildTextFromWordData(words: Array(words.dropFirst(insertion)), paragraphs: Array(paragraphs.dropFirst(insertion))))
+        }
         guard let insertion = segmentInsertionParagraph else { return (c, "") }
         let paragraphs = c.components(separatedBy: "\n\n").filter {
             !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -384,10 +407,12 @@ final class DictationController: ObservableObject {
     }
 
     private func combineText() -> String {
-        let parts = dictationParts()
         let s = segment.trimmingCharacters(in: .whitespacesAndNewlines)
-        let prefix = [parts.prefix, s].filter { !$0.isEmpty }.joined(separator: segmentSeparator)
-        return [prefix, parts.suffix].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        guard !s.isEmpty else { return committed.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let parts = dictationParts()
+        let continuation = clipboardContinuation?.joinsSentence == true ? clipboardContinuationText(s) : s
+        let prefix = [parts.prefix, continuation].filter { !$0.isEmpty }.joined(separator: segmentSeparator)
+        return [prefix, parts.suffix].filter { !$0.isEmpty }.joined(separator: clipboardContinuation?.suffixSeparator ?? "\n\n")
     }
 
     private func updateDisplay() {
@@ -496,7 +521,8 @@ final class DictationController: ObservableObject {
     func startDictation(continuingParagraph: Bool = false, afterSelectedParagraph: Bool = false) {
         Logger.info("startDictation requested")
         guard canStartDictation else { return }
-        segmentSeparator = continuingParagraph ? " " : "\n\n"
+        if continuingParagraph || afterSelectedParagraph { clipboardContinuation = nil }
+        segmentSeparator = clipboardContinuation?.separator ?? (continuingParagraph ? " " : "\n\n")
         segmentInsertionParagraph = nil
         if continuingParagraph || afterSelectedParagraph,
            wordParagraphs.indices.contains(selectedWord) {
@@ -517,8 +543,13 @@ final class DictationController: ObservableObject {
         serviceMessage = "Starting Whisper..."
         debugMessage = serviceMessage
         clearSelection()
+        transcriptionGeneration += 1
+        let generation = transcriptionGeneration
         transcriber.startTranscribeUpdates { [weak self] value in
-            Task { @MainActor in self?.handleTranscription(value) }
+            Task { @MainActor in
+                guard let self, self.transcriptionGeneration == generation else { return }
+                self.handleTranscription(value)
+            }
         }
         updateDisplay()
     }
@@ -562,6 +593,8 @@ final class DictationController: ObservableObject {
         committed = ""
         segment = ""
         segmentInsertionParagraph = nil
+        clipboardContinuation = nil
+        transcriptionGeneration += 1
         clearSelection()
         updateDisplay()
         guard wasDictating else {
@@ -597,32 +630,64 @@ final class DictationController: ObservableObject {
         startDictation(afterSelectedParagraph: true)
     }
 
-    private func insertClipboardParagraph() {
+    private func insertClipboard(separateParagraph: Bool) {
+        guard !runningStop else { return }
+        let clipboard = NSPasteboard.general.string(forType: .string) ?? ""
+        let normalized = joinParagraphWords(splitWords(clipboard))
+        guard !normalized.isEmpty else { return }
         let before = editSnapshot()
-        defer { recordEdit(before) }
-        let pasteboard = NSPasteboard.general
-        let normalized = joinParagraphWords(splitWords(pasteboard.string(forType: .string) ?? ""))
-        if normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return
-        }
         let wasDictating = dictating
-        if wasDictating {
-            dictating = false
-            serviceMessage = ""
-            debugMessage = "Inserting clipboard..."
-        }
+        let selectedInsertion = words.indices.contains(selectedWord) ? max(selectedWord, selectionEnd) + 1 : words.count
+        // Invalidate queued updates from the old audio before fixing the paste in place.
+        transcriptionGeneration += 1
+        let liveEnd = splitWords(dictationParts().prefix).count + splitWords(segment).count
+        dictating = false
         commitSegment()
-        let trimmedCommitted = committed.trimmingCharacters(in: .whitespacesAndNewlines)
-        committed = trimmedCommitted.isEmpty ? normalized : trimmedCommitted + "\n\n" + normalized
-        segment = ""
-        updateDisplay()
-        guard wasDictating else {
-            return
+        let (existingWords, paragraphs) = splitWordsAndParagraphs(committed)
+        var insertion = wasDictating ? liveEnd : selectedInsertion
+        insertion = min(insertion, existingWords.count)
+        let isSentence = !separateParagraph && clipboardPasteIsSentence(normalized)
+        if isSentence, insertion > 0,
+           let sentence = sentenceWordRange(words: existingWords, paragraphs: paragraphs, containing: insertion - 1) {
+            insertion = sentence.upperBound + 1
         }
+        if separateParagraph, insertion > 0 {
+            let paragraph = paragraphs[insertion - 1]
+            while insertion < paragraphs.count && paragraphs[insertion] == paragraph { insertion += 1 }
+        }
+        var prefix = buildTextFromWordData(words: Array(existingWords.prefix(insertion)), paragraphs: Array(paragraphs.prefix(insertion)))
+        if !separateParagraph {
+            prefix = isSentence ? clipboardSentencePrefix(prefix) : clipboardFragmentPrefix(prefix)
+        }
+        var suffix = buildTextFromWordData(words: Array(existingWords.dropFirst(insertion)), paragraphs: Array(paragraphs.dropFirst(insertion)))
+        let separator = separateParagraph ? "\n\n" : " "
+        let suffixSeparator = separateParagraph || (insertion > 0 && insertion < paragraphs.count && paragraphs[insertion - 1] != paragraphs[insertion]) ? "\n\n" : " "
+        if !separateParagraph && !isSentence && suffixSeparator == " " {
+            suffix = clipboardContinuationText(suffix)
+        }
+        let pastedPrefix = [prefix, normalized].filter { !$0.isEmpty }.joined(separator: separator)
+        let continuationWord = splitWords(pastedPrefix).count
+        committed = [pastedPrefix, suffix].filter { !$0.isEmpty }.joined(separator: suffixSeparator)
+        segment = ""
+        clipboardContinuation = ClipboardContinuation(word: continuationWord,
+                                                     separator: separator, suffixSeparator: suffixSeparator,
+                                                     joinsSentence: !separateParagraph && !isSentence)
+        segmentSeparator = separator
+        updateDisplay()
+        setSelection(continuationWord - 1)
+        recordEdit(before, preserveClipboardContinuation: true)
+        guard wasDictating else { return }
+        runningStop = true
+        recordingActive = false
+        serviceMessage = ""
+        debugMessage = "Inserting clipboard..."
+        let generation = transcriptionGeneration
         let transcriber = transcriber
         DispatchQueue.global(qos: .userInitiated).async {
             transcriber.stopTranscribe()
             DispatchQueue.main.async {
+                self.runningStop = false
+                guard self.transcriptionGeneration == generation else { return }
                 self.startDictation()
             }
         }
@@ -693,7 +758,7 @@ final class DictationController: ObservableObject {
     }
 
     private func commitSegment() {
-        if segmentInsertionParagraph != nil {
+        if segmentInsertionParagraph != nil || clipboardContinuation != nil {
             let prefixWords = splitWords(dictationParts().prefix).count
             let segmentWords = splitWords(segment).count
             setSelection(max(0, prefixWords + segmentWords - 1))
@@ -701,6 +766,7 @@ final class DictationController: ObservableObject {
         committed = combineText()
         segment = ""
         segmentInsertionParagraph = nil
+        clipboardContinuation = nil
     }
 
     private func clearSelection() {
@@ -890,11 +956,12 @@ final class DictationController: ObservableObject {
         EditSnapshot(text: text, selectedWord: selectedWord, selectionStart: selectionStart,
                      selectionEnd: selectionEnd, selectionAnchor: selectionAnchor,
                      lastReplace: lastReplace, lastReplaceSet: lastReplaceSet,
-                     lastReplaceSource: lastReplaceSource)
+                     lastReplaceSource: lastReplaceSource, clipboardContinuation: clipboardContinuation)
     }
 
-    private func recordEdit(_ before: EditSnapshot) {
+    private func recordEdit(_ before: EditSnapshot, preserveClipboardContinuation: Bool = false) {
         guard before.text != text, !dictating, !runningStop else { return }
+        if !preserveClipboardContinuation { clipboardContinuation = nil }
         undoHistory.append((before, text))
         if undoHistory.count > 100 { undoHistory.removeFirst() }
         objectWillChange.send()
@@ -916,6 +983,8 @@ final class DictationController: ObservableObject {
         lastReplace = undo.before.lastReplace
         lastReplaceSet = undo.before.lastReplaceSet
         lastReplaceSource = undo.before.lastReplaceSource
+        clipboardContinuation = undo.before.clipboardContinuation
+        segmentSeparator = clipboardContinuation?.separator ?? "\n\n"
         updateDisplay()
     }
 

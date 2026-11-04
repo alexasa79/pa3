@@ -63,7 +63,7 @@ func cleanupDeletion(words input: [String], paragraphs: [Int], at boundary: Int,
     return (words, normalizeParagraphs(paras))
 }
 
-private func isCleanupAbbreviation(_ word: String) -> Bool {
+func isCleanupAbbreviation(_ word: String) -> Bool {
     let abbreviations: Set<String> = [
         "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "eg", "ie",
         "e.g", "i.e", "a.m", "p.m", "approx", "dept", "fig", "no", "inc", "ltd",
