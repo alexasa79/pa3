@@ -9,11 +9,23 @@ final class TaskNavigationWindow: NSWindow {
     func focusActivePane() {
         guard let model, isVisible, attachedSheet == nil, model.loaded else { return }
         contentView?.layoutSubtreeIfNeeded()
+        if model.isSearchingTasks {
+            focusSearchField()
+            return
+        }
         if model.activePane == .description, model.editorMode != .dictation, let editor = model.editor {
             makeFirstResponder(editor)
         } else if model.activePane != .description, let contentView,
                   let host = paneView(model.activePane, in: contentView) {
             makeFirstResponder(host)
+        }
+    }
+
+    func focusSearchField() {
+        guard isVisible, attachedSheet == nil, let contentView else { return }
+        contentView.layoutSubtreeIfNeeded()
+        if let field = view(identifiedAs: "tasks.search.field", in: contentView) {
+            makeFirstResponder(field)
         }
     }
 
@@ -27,9 +39,13 @@ final class TaskNavigationWindow: NSWindow {
     }
 
     private func paneView(_ pane: TaskPane, in view: NSView) -> NSView? {
-        if view.identifier?.rawValue == "tasks.pane.\(pane.rawValue)" { return view }
+        self.view(identifiedAs: "tasks.pane.\(pane.rawValue)", in: view)
+    }
+
+    private func view(identifiedAs identifier: String, in view: NSView) -> NSView? {
+        if view.identifier?.rawValue == identifier { return view }
         for child in view.subviews {
-            if let found = paneView(pane, in: child) { return found }
+            if let found = self.view(identifiedAs: identifier, in: child) { return found }
         }
         return nil
     }
@@ -86,8 +102,29 @@ final class TaskNavigationWindow: NSWindow {
             case "n":
                 if model.activePane == .tasks { model.addTask() }
                 return true
+            case "f":
+                if model.activePane == .tasks, model.loaded, !model.busy, !model.conflict {
+                    model.beginTaskSearch()
+                    return true
+                }
+                return false
             default: return false
             }
+        }
+        if model.isSearchingTasks {
+            if flags.isEmpty {
+                switch event.keyCode {
+                case 53: model.cancelTaskSearch(); return true
+                case 36, 76: model.commitTaskSearch(); return true
+                case 125: model.moveSelection(1); return true
+                case 126: model.moveSelection(-1); return true
+                default: break
+                }
+            } else if flags == .control {
+                if key == "n" || key == "j" { model.moveSelection(1); return true }
+                if key == "p" || key == "k" { model.moveSelection(-1); return true }
+            }
+            return false
         }
         // Search fields, rename prompts, and the editor's Find bar own their
         // typing and arrows. The modal description itself is routed below.
@@ -121,6 +158,10 @@ final class TaskNavigationWindow: NSWindow {
         case 125: model.moveSelection(1); return true
         case 126: model.moveSelection(-1); return true
         default:
+            if key == "/", model.activePane == .tasks {
+                model.beginTaskSearch()
+                return true
+            }
             if key == "n" {
                 guard model.loaded, !model.busy, !model.conflict else { return true }
                 if model.activePane == .tasks { model.addTask() }

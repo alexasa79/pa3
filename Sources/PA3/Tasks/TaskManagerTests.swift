@@ -180,8 +180,176 @@ func runTaskManagerTests() async -> [String] {
     failures += runTaskEditorParityTests()
     failures += runTaskTextNavigationTests()
     failures += runTaskLineNumberTests()
+    failures += runTaskSearchRankingTests()
     failures += await runTaskNavigationTests()
     failures += await runTaskListScrollingTests()
+    failures += await runTaskSearchInteractionTests()
+    return failures
+}
+
+private func runTaskSearchRankingTests() -> [String] {
+    var failures: [String] = []
+    func check(_ condition: Bool, _ name: String) { if !condition { failures.append("task search: " + name) } }
+    func task(_ id: String, _ body: String) -> PersonalTask { PersonalTask(id: id, projectID: "p", body: body) }
+
+    let sample = [
+        task("unrelated", "Buy groceries\nMilk and eggs"),
+        task("partial", "Fix bathroom door\nReplace hinges"),
+        task("out-of-order", "Kitchen repair: fix faucet"),
+        task("in-order", "Fix the broken kitchen sink"),
+        task("exact-body", "Home repairs\nNeed to fix kitchen sink soon"),
+        task("exact-subject", "Fix kitchen sink\nCall plumber")
+    ]
+
+    let ranked = TaskSearch.filter(sample, query: "fix kitchen")
+    check(ranked.map(\.id) == ["exact-subject", "exact-body", "in-order", "out-of-order", "partial"],
+          "ranks exact subject > exact body > in-order > out-of-order > partial and drops non-matches (got \(ranked.map(\.id)))")
+
+    let emptyQuery = TaskSearch.filter(sample, query: "   ")
+    check(emptyQuery.map(\.id) == sample.map(\.id), "whitespace query preserves original list order")
+
+    let none = TaskSearch.filter(sample, query: "kubernetes")
+    check(none.isEmpty, "non-matching query filters out every task")
+
+    let boundary = [
+        task("substring", "Hotfix deployment"),
+        task("whole", "Fix login flow")
+    ]
+    check(TaskSearch.filter(boundary, query: "fix").map(\.id) == ["whole", "substring"],
+          "whole-word subject match outranks mid-word substring")
+
+    let fuzzy = [
+        task("milk", "Buy milk"),
+        task("kitchen", "Repair kitchen cabinets")
+    ]
+    check(TaskSearch.filter(fuzzy, query: "kchn").map(\.id) == ["kitchen"],
+          "fuzzy subsequence matches compact word abbreviation")
+    check(TaskSearch.filter(fuzzy, query: "kithcen").map(\.id) == ["kitchen"],
+          "single transposition typo still matches")
+
+    let partialCounts = [
+        task("one", "Alpha task"),
+        task("two", "Alpha beta task"),
+        task("three", "Alpha beta gamma task")
+    ]
+    check(TaskSearch.filter(partialCounts, query: "alpha beta delta").map(\.id) == ["two", "three", "one"],
+          "partial matches prefer tasks matching more query words")
+
+    let tagged = [
+        task("reverse", "Auth follow-up for JIRA-412"),
+        task("forward", "JIRA-412 auth timeout #waiting")
+    ]
+    check(TaskSearch.filter(tagged, query: "jira-412 auth").map(\.id) == ["forward", "reverse"],
+          "punctuation-bearing ticket IDs preserve word order accurately")
+    check(TaskSearch.filter(tagged, query: "#waiting").map(\.id) == ["forward"],
+          "hashtag queries match tags in body")
+
+    return failures
+}
+
+@MainActor
+private func runTaskSearchInteractionTests() async -> [String] {
+    var failures: [String] = []
+    func check(_ condition: Bool, _ name: String) { if !condition { failures.append("task search ui: " + name) } }
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("pa3-search-\(UUID().uuidString)")
+    let suite = "PA3Search-\(UUID().uuidString)"
+    let preferences = UserDefaults(suiteName: suite)!
+    defer { try? FileManager.default.removeItem(at: folder); preferences.removePersistentDomain(forName: suite) }
+    let url = folder.appendingPathComponent("pa3.sqlite")
+    let store = TaskStore(url: url)
+    do {
+        let snapshot = try await store.open()
+        let work = snapshot.categories[1].id
+        let projectA = try await store.addProject(name: "Project A", categoryID: work, parentID: nil)
+        let projectB = try await store.addProject(name: "Project B", categoryID: work, parentID: nil)
+        let t1 = try await store.addTask(projectID: projectA, body: "Setup laptop\nInstall tools")
+        let t2 = try await store.addTask(projectID: projectA, body: "Kitchen repair: fix faucet")
+        let t3 = try await store.addTask(projectID: projectA, body: "Fix kitchen sink\nCall plumber")
+        let tOther = try await store.addTask(projectID: projectB, body: "Fix kitchen in project B")
+
+        let controller = DictationController(transcriber: TranscriberService(), preferences: preferences)
+        controller.prepareModels = { false }
+        let model = TaskManagerModel(dictation: controller, databaseURL: url, preferences: preferences)
+        await model.open()
+        let manager = TaskManagerWindow(model: model)
+        guard let window = manager.window as? TaskNavigationWindow else { return failures + ["task search ui: missing window"] }
+        defer { window.orderOut(nil); model.stopMonitoring() }
+        manager.present()
+        window.contentView?.layoutSubtreeIfNeeded()
+        try? await Task.sleep(for: .milliseconds(80))
+
+        func event(_ key: String = "", code: UInt16 = 0, flags: NSEvent.ModifierFlags = []) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+                             windowNumber: window.windowNumber, context: nil, characters: key,
+                             charactersIgnoringModifiers: key, isARepeat: false, keyCode: code)!
+        }
+
+        // / in projects does not open task search.
+        check(!window.handleTaskKey(event("/", code: 44)) && !model.isSearchingTasks,
+              "/ in projects does not open task search")
+
+        // Enter tasks pane and press / to open fuzzy search.
+        check(window.handleTaskKey(event(code: 36)), "Return enters tasks pane")
+        check(model.activePane == .tasks && model.selectedTaskID == t1, "tasks pane starts on first task")
+        check(window.handleTaskKey(event("/", code: 44)), "/ opens task search in tasks pane")
+        check(model.isSearchingTasks, "task search dialog state is active")
+        try? await Task.sleep(for: .milliseconds(80))
+        window.contentView?.layoutSubtreeIfNeeded()
+        let focusedSearch = (window.firstResponder as? NSTextView)?.delegate as? NSView
+        check(focusedSearch?.identifier?.rawValue == "tasks.search.field",
+              "opening search focuses the search field (responder: \(String(describing: window.firstResponder)))")
+
+        // Typing j/k/n/q/? stays in search field and never triggers list/window shortcuts.
+        check(!window.handleTaskKey(event("q", code: 12)) && window.isVisible, "q does not close window while searching")
+        check(!window.handleTaskKey(event("n", code: 45)) && model.tasks.count == 4, "n does not create a task while searching")
+        check(!window.handleTaskKey(event("?", code: 44, flags: .shift)) && !model.showingShortcutHelp, "? does not open help while searching")
+        check(!window.handleTaskKey(event("j", code: 38)) && !window.handleTaskKey(event("k", code: 40)), "j/k go to search text while searching")
+
+        // Fuzzy query narrows to current project only, ranks exact above out-of-order, and auto-selects #1 with zero DB reads.
+        let loadsBefore = await model.databaseLoadCount()
+        model.updateSearch("fix kitchen")
+        check(model.visibleTasks.map(\.id) == [t3, t2] && !model.visibleTasks.contains { $0.id == tOther },
+              "fuzzy search filters current project only and ranks exact before out-of-order")
+        check(model.selectedTaskID == t3, "typing query auto-selects top-ranked match")
+        check(await model.databaseLoadCount() == loadsBefore, "live search performs zero database loads")
+
+        // Down / Control-P step through matches while keeping search open.
+        check(window.handleTaskKey(event(code: 125)) && model.selectedTaskID == t2 && model.isSearchingTasks,
+              "Down selects next fuzzy match while keeping search open")
+        check(window.handleTaskKey(event("p", code: 35, flags: .control)) && model.selectedTaskID == t3 && model.isSearchingTasks,
+              "Control-P selects previous fuzzy match while keeping search open")
+
+        // Return commits selection, clears search, and opens description.
+        check(window.handleTaskKey(event(code: 125)) && model.selectedTaskID == t2, "move to second match before Return")
+        check(window.handleTaskKey(event(code: 36)), "Return commits search")
+        try? await Task.sleep(for: .milliseconds(60))
+        check(!model.isSearchingTasks && model.search.isEmpty && model.selectedTaskID == t2
+              && model.activePane == .description && window.firstResponder === model.editor,
+              "Return opens selected match in description and clears search")
+
+        // Return to tasks, open search via Command-F, verify no-match and Escape cancel restores pre-search task.
+        check(window.handleTaskKey(event(code: 53)), "Escape returns from description to tasks")
+        try? await Task.sleep(for: .milliseconds(60))
+        check(model.activePane == .tasks && model.selectedTaskID == t2, "task t2 remains selected in full list")
+        check(window.handleTaskKey(event("f", code: 3, flags: .command)) && model.isSearchingTasks,
+              "Command-F opens task search in tasks pane")
+        model.updateSearch("zzznomatch")
+        check(model.visibleTasks.isEmpty && model.selectedTaskID == nil, "non-matching query empties visible tasks")
+        check(window.handleTaskKey(event(code: 36)) && model.isSearchingTasks, "Return with zero matches keeps search open")
+        check(window.handleTaskKey(event(code: 53)), "Escape cancels search")
+        try? await Task.sleep(for: .milliseconds(60))
+        check(!model.isSearchingTasks && model.search.isEmpty && model.selectedTaskID == t2
+              && (window.firstResponder as? NSView)?.identifier?.rawValue == "tasks.pane.tasks",
+              "Escape clears search, restores pre-search selection, and focuses tasks pane")
+
+        // Switching projects clears active search cleanly.
+        check(window.handleTaskKey(event("/", code: 44)), "/ opens search before switching projects")
+        model.updateSearch("kitchen")
+        model.selectProject(projectB)
+        check(!model.isSearchingTasks && model.search.isEmpty && model.selectedProjectID == projectB
+              && model.visibleTasks.map(\.id) == [tOther],
+              "switching projects clears active search")
+    } catch { failures.append("task search ui: \(error)") }
     return failures
 }
 

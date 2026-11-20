@@ -222,12 +222,35 @@ struct TaskManagerView: View {
     }
 
     private var tasksPane: some View {
-        VStack(spacing: 0) {
-            HStack { Text(model.selectedProject?.name ?? "Tasks").font(.headline).lineLimit(1); Spacer(); Text("\(model.visibleTasks.count)").foregroundStyle(.secondary) }.padding(12).background(paneHighlight(.tasks))
-            TextField("Search this project", text: $model.search).textFieldStyle(.roundedBorder).padding(.horizontal, 10).padding(.bottom, 8)
+        let filtered = model.visibleTasks
+        let total = model.projectTasks.count
+        let hasQuery = !model.search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text(model.selectedProject?.name ?? "Tasks").font(.headline).lineLimit(1)
+                Spacer()
+                Button {
+                    model.activatePane(.tasks, requestFocus: false)
+                    model.beginTaskSearch()
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(model.isSearchingTasks ? Color.accentColor : .secondary)
+                .help("Search this project (/)")
+                .disabled(model.selectedProjectID == nil)
+                Text(hasQuery ? "\(filtered.count)/\(total)" : "\(filtered.count)")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }.padding(12).background(paneHighlight(.tasks))
+            if model.isSearchingTasks {
+                taskSearchDialog(matchCount: filtered.count, totalCount: total)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 8)
+            }
             ScrollViewReader { proxy in
                 List(selection: Binding(get: { model.selectedTaskID }, set: { model.selectTask($0) })) {
-                    ForEach(model.visibleTasks) { task in
+                    ForEach(filtered) { task in
                         HStack(alignment: .top, spacing: 8) {
                             Button { model.toggleCompletion(task) } label: { Image(systemName: task.metadata.done ? "checkmark.circle.fill" : "circle") }
                                 .buttonStyle(.plain).help(task.metadata.done ? "Reopen task" : "Complete task with #done")
@@ -249,8 +272,11 @@ struct TaskManagerView: View {
                     }
                 }.listStyle(.inset).scrollContentBackground(.hidden)
                     .overlay {
-                        if model.visibleTasks.isEmpty {
-                            Text(model.selectedProjectID == nil ? "Create or select a project." : "No tasks yet. Use New task.")
+                        if filtered.isEmpty {
+                            let message = model.selectedProjectID == nil
+                                ? "Create or select a project."
+                                : (hasQuery ? "No matching tasks." : "No tasks yet. Use New task.")
+                            Text(message)
                                 .font(.callout).foregroundStyle(.secondary).padding()
                         }
                     }
@@ -269,6 +295,48 @@ struct TaskManagerView: View {
             }
             Toggle("Show completed", isOn: $model.showCompleted).font(.system(size: 12)).padding(12)
         }.disabled(model.busy || model.conflict)
+    }
+
+    private func taskSearchDialog(matchCount: Int, totalCount: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("/")
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                TaskSearchField(
+                    text: Binding(get: { model.search }, set: { model.updateSearch($0) }),
+                    onMove: { model.moveSelection($0) },
+                    onCommit: { model.commitTaskSearch() },
+                    onCancel: { model.cancelTaskSearch() }
+                )
+                .frame(height: 18)
+                Button { model.cancelTaskSearch() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Clear search (Esc)")
+            }
+            HStack {
+                Text("↑↓ select · ⏎ open · esc clear")
+                Spacer()
+                Text("\(matchCount) of \(totalCount)")
+                    .monospacedDigit()
+            }
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(nsColor: PaperTheme.paper))
+                .shadow(color: .black.opacity(0.08), radius: 4, y: 2)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color(nsColor: PaperTheme.ink).opacity(0.18), lineWidth: 1)
+        )
     }
 
     private var editorPane: some View {
@@ -381,6 +449,62 @@ private final class TaskPaneHostingView: NSHostingView<AnyView> {
     override var acceptsFirstResponder: Bool { true }
 }
 
+private struct TaskSearchField: NSViewRepresentable {
+    @Binding var text: String
+    var onMove: (Int) -> Void
+    var onCommit: () -> Void
+    var onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.identifier = NSUserInterfaceItemIdentifier("tasks.search.field")
+        field.placeholderString = "Filter tasks…"
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .systemFont(ofSize: 13)
+        field.textColor = PaperTheme.ink
+        field.usesSingleLineMode = true
+        field.cell?.isScrollable = true
+        field.cell?.wraps = false
+        field.delegate = context.coordinator
+        field.stringValue = text
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.parent = self
+        if field.stringValue != text { field.stringValue = text }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: TaskSearchField
+        init(_ parent: TaskSearchField) { self.parent = parent }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            parent.text = field.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            switch selector {
+            case #selector(NSResponder.cancelOperation(_:)):
+                parent.onCancel(); return true
+            case #selector(NSResponder.insertNewline(_:)):
+                parent.onCommit(); return true
+            case #selector(NSResponder.moveDown(_:)):
+                parent.onMove(1); return true
+            case #selector(NSResponder.moveUp(_:)):
+                parent.onMove(-1); return true
+            default:
+                return false
+            }
+        }
+    }
+}
+
 private final class TaskPaneSplitView: NSSplitView {
     private var positioned = false
 
@@ -425,6 +549,12 @@ final class TaskManagerWindow: NSWindowController, NSWindowDelegate {
             Task { @MainActor in
                 await Task.yield()
                 window?.scrollSelectedRowToVisible(in: pane)
+            }
+        }
+        model.onSearchFocusRequested = { [weak window] in
+            Task { @MainActor in
+                await Task.yield()
+                window?.focusSearchField()
             }
         }
         window.delegate = self

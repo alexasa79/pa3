@@ -50,8 +50,9 @@ struct TaskShortcutHelpView: View {
         let taskSections: [(title: String, bindings: [String])] = [
             ("Lists and window", [
                 "?: show / hide shortcuts", "j/k or Up/Down: select a project or task",
+                "/: fuzzy-search tasks in the current project", "Command-F: also opens task search from the task list",
                 "Return or Right: projects → tasks → description", "Left: tasks → projects",
-                "Escape: description in Normal → tasks → projects", "n: new task in tasks, new project in projects",
+                "Escape: close search, or description in Normal → tasks → projects", "n: new task in tasks, new project in projects",
                 "Command-N: also creates a task from the task list",
                 "q / Q: save and close Tasks outside text entry", "Command-Q / W: save and close Tasks, keeping PA3 running"
             ]),

@@ -24,6 +24,7 @@ final class TaskManagerModel: ObservableObject {
     @Published private(set) var conflict = false
     @Published var showCompleted = false
     @Published var search = ""
+    @Published var isSearchingTasks = false
     @Published var showingShortcutHelp = false
     @Published var showingNewProjectPrompt = false
     @Published private(set) var activePane: TaskPane
@@ -35,12 +36,14 @@ final class TaskManagerModel: ObservableObject {
     weak var editor: TaskModalTextView?
     var onFocusRequested: (() -> Void)?
     var onScrollSelectionRequested: ((TaskPane) -> Void)?
+    var onSearchFocusRequested: (() -> Void)?
     var beforeDictation: (() async -> Void)?
     private(set) var databaseURL: URL?
     private var store: TaskStore?
     private var savedBody = ""
     private var displayedTaskID: String?
     private var revealedProjectID: String?
+    private var preSearchTaskID: String?
     private var saveDebounce: Task<Void, Never>?
     private var saving: Task<Bool, Never>?
     private var monitor: Task<Void, Never>?
@@ -73,12 +76,15 @@ final class TaskManagerModel: ObservableObject {
     }
     var selectedTask: PersonalTask? { tasks.first { $0.id == selectedTaskID } }
     var dirty: Bool { draft != savedBody }
-    var visibleTasks: [PersonalTask] {
+    var projectTasks: [PersonalTask] {
         tasks.filter { task in
             task.projectID == selectedProjectID
                 && (showCompleted || !task.metadata.done || task.id == selectedTaskID)
-                && (search.isEmpty || task.body.localizedCaseInsensitiveContains(search))
         }
+    }
+
+    var visibleTasks: [PersonalTask] {
+        TaskSearch.filter(projectTasks, query: search)
     }
 
     var visibleProjects: [TaskProject] {
@@ -92,11 +98,69 @@ final class TaskManagerModel: ObservableObject {
     }
 
     func activatePane(_ pane: TaskPane, requestFocus: Bool = true) {
+        if pane != .tasks, isSearchingTasks {
+            isSearchingTasks = false
+            preSearchTaskID = nil
+            search = ""
+        }
         if activePane != pane {
             activePane = pane
             preferences.set(pane.rawValue, forKey: "tasks.activePane")
         }
         if requestFocus { onFocusRequested?() }
+    }
+
+    func beginTaskSearch() {
+        guard activePane == .tasks, loaded, !busy, !conflict else { return }
+        if !isSearchingTasks {
+            preSearchTaskID = selectedTaskID
+            isSearchingTasks = true
+        }
+        onSearchFocusRequested?()
+    }
+
+    func updateSearch(_ query: String) {
+        guard search != query else { return }
+        search = query
+        let matches = visibleTasks
+        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if let pre = preSearchTaskID, matches.contains(where: { $0.id == pre }) {
+                selectTask(pre)
+            } else if selectedTaskID == nil || !matches.contains(where: { $0.id == selectedTaskID }) {
+                selectTask(matches.first?.id)
+            }
+        } else {
+            selectTask(matches.first?.id)
+        }
+    }
+
+    func commitTaskSearch() {
+        guard isSearchingTasks else { return }
+        let matches = visibleTasks
+        let matched = selectedTaskID.flatMap { id in matches.first { $0.id == id } } ?? matches.first
+        guard let matched else { return }
+        isSearchingTasks = false
+        preSearchTaskID = nil
+        search = ""
+        selectTask(matched.id)
+        activatePane(.description)
+        onScrollSelectionRequested?(.tasks)
+    }
+
+    func cancelTaskSearch() {
+        guard isSearchingTasks || !search.isEmpty else { return }
+        let restore = preSearchTaskID
+        isSearchingTasks = false
+        preSearchTaskID = nil
+        search = ""
+        let remaining = visibleTasks
+        if let restore, remaining.contains(where: { $0.id == restore }) {
+            selectTask(restore)
+        } else if !remaining.contains(where: { $0.id == selectedTaskID }) {
+            selectTask(remaining.first?.id)
+        }
+        activatePane(.tasks)
+        onScrollSelectionRequested?(.tasks)
     }
 
     func enterPane() {
@@ -344,6 +408,11 @@ final class TaskManagerModel: ObservableObject {
     }
 
     private func applyProjectSelection(_ id: String?) {
+        if isSearchingTasks || !search.isEmpty {
+            isSearchingTasks = false
+            preSearchTaskID = nil
+            search = ""
+        }
         selectedProjectID = id
         selectedTaskID = defaultTaskID(for: id)
         revealSelectedProject()
@@ -374,6 +443,8 @@ final class TaskManagerModel: ObservableObject {
     func addTask() {
         guard let project = selectedProjectID else { return }
         perform(after: { [self] in
+            isSearchingTasks = false
+            preSearchTaskID = nil
             search = ""
             editorMode = .insert
             activatePane(.description)
