@@ -17,6 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dictionariesWindow: NSWindow?
     private var downloadWindow: NSWindow?
     private var shortcutSettings: ShortcutSettingsWindowController?
+    private var taskWindow: TaskManagerWindow?
+    private var dictationIsBusy: Bool {
+        controller?.narrationIsBlocked == true || taskWindow?.model.dictation.narrationIsBlocked == true
+    }
     private lazy var shortcuts = GlobalShortcutManager { [weak self] action, binding in
         GlobalHotKey(keyCode: binding.keyCode, modifiers: binding.modifiers, identifier: UInt32(action.rawValue)) {
             DispatchQueue.main.async { [weak self] in
@@ -25,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .dictation: self?.showWindow()
                 case .selection: self?.readSelection()
                 case .screen: self?.readScreenRectangle()
+                case .tasks: self?.showTasks()
                 }
             }
         }
@@ -56,13 +61,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.quit()
         }
         self.controller = controller
+        controller.onOpenTasks = { [weak self] in self?.showTasks() }
+        controller.canAcquireMicrophone = { [weak self] in self?.taskWindow?.model.dictation.narrationIsBlocked != true }
         controller.onOpenDictionaries = { [weak self] in self?.openDictionaries(tab: 0) }
         narration.pronunciationDictionary = { [weak self] in try self?.narrationDictionary.pronunciations() ?? [:] }
         downloads.onPresent = { [weak self] in self?.showModelDownloads() }
         controller.prepareModels = { [weak self] in self?.downloads.ensure(["whisper"]) ?? false }
         narration.prepareModels = { [weak self] in self?.downloads.ensure(TTSWorker.modelIDs) ?? false }
         narration.modelDownloadHealth = { [weak self] in self?.downloads.health ?? [:] }
-        narration.isDictationBusy = { [weak controller] in controller?.narrationIsBlocked ?? false }
+        narration.isDictationBusy = { [weak self] in self?.dictationIsBusy ?? false }
         controller.onDictationWillStart = { [weak self] in self?.cancelNarration() }
         narration.onSelectionFailure = { [weak self] _ in
             self?.showNarrationNotice("Could not finish narration. Select the text and try again.")
@@ -92,6 +99,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         downloads.ensureModels()
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let taskWindow else { return .terminateNow }
+        Task {
+            let saved = await taskWindow.model.prepareToClose()
+            if !saved { taskWindow.present() }
+            sender.reply(toApplicationShouldTerminate: saved)
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         windowFocusRestorer?.stop()
         cancelNarration()
@@ -102,6 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver)
         }
         controller?.shutdown()
+        taskWindow?.model.dictation.shutdown()
         shortcuts.unregister()
         Logger.close()
     }
@@ -119,6 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Start dictation", action: #selector(startFromMenu), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Task manager…", action: #selector(showTasks), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Read selection / Stop", action: #selector(readSelection), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Read screen rectangle / Stop", action: #selector(readScreenRectangle), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Stop narration", action: #selector(stopNarrationFromMenu), keyEquivalent: ""))
@@ -134,6 +153,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showDictionaries() { openDictionaries(tab: 1) }
+
+    @objc private func showTasks() {
+        Logger.info("showTasks requested")
+        controller?.stopDictation()
+        window?.orderOut(nil)
+        if taskWindow == nil {
+            let taskDictation = DictationController(transcriber: TranscriberService())
+            taskDictation.prepareModels = { [weak self] in self?.downloads.ensure(["whisper"]) ?? false }
+            taskDictation.onDictationWillStart = { [weak self] in self?.cancelNarration() }
+            taskDictation.onOpenDictionaries = { [weak self] in self?.openDictionaries(tab: 0) }
+            taskDictation.canAcquireMicrophone = { [weak self] in self?.controller?.narrationIsBlocked != true }
+            taskDictation.globalShortcuts = shortcuts.configuration
+            let model = TaskManagerModel(dictation: taskDictation)
+            model.beforeDictation = { [weak self] in _ = await self?.controller?.finishForDocument() }
+            taskWindow = TaskManagerWindow(model: model)
+        }
+        taskWindow?.present()
+    }
 
     private func openDictionaries(tab: Int) {
         guard let controller else { return }
@@ -253,9 +290,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             shortcutSettings.showWindow(nil)
         } else {
             if controller?.dictating == true { controller?.stopDictation() }
+            taskWindow?.model.dictation.stopDictation()
             let settings = ShortcutSettingsWindowController(shortcuts: shortcuts, error: error) { [weak self] in
                 guard let self else { return }
                 self.controller?.globalShortcuts = self.shortcuts.configuration
+                self.taskWindow?.model.dictation.globalShortcuts = self.shortcuts.configuration
                 self.updateShortcutMenuTitles()
             }
             shortcutSettings = settings
@@ -267,11 +306,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateShortcutMenuTitles() {
         let actions: [(Selector, GlobalShortcutAction)] = [
             (#selector(startFromMenu), .dictation), (#selector(readSelection), .selection),
-            (#selector(readScreenRectangle), .screen)
+            (#selector(readScreenRectangle), .screen), (#selector(showTasks), .tasks)
         ]
         for (selector, action) in actions {
             if let item = statusItem?.menu?.items.first(where: { $0.action == selector }) {
-                let title = action == .dictation ? "Start dictation" : action.title
+                let title: String = switch action {
+                case .dictation: "Start dictation"
+                case .tasks: "Task manager…"
+                default: action.title
+                }
                 item.title = title + "   " + shortcuts.configuration[action].display
             }
         }
@@ -283,7 +326,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             stopNarrationFromMenu()
             return
         }
-        guard controller?.narrationIsBlocked != true else {
+        guard !dictationIsBusy else {
             showNarrationNotice("Stop dictation before narrating a selection.")
             return
         }
@@ -327,7 +370,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             stopNarrationFromMenu()
             return
         }
-        guard controller?.narrationIsBlocked != true else {
+        guard !dictationIsBusy else {
             showNarrationNotice("Stop dictation before reading screen text.")
             return
         }
@@ -438,6 +481,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showWindow() {
+        if taskWindow?.model.editorMode == .dictation {
+            Task { [weak self] in
+                await self?.taskWindow?.model.finishDictation()
+                self?.showWindow()
+            }
+            return
+        }
+        Logger.info("showWindow requested for dictation")
         guard downloads.ensure(["whisper"]) else { return }
         let frontmost = NSWorkspace.shared.frontmostApplication
         if frontmost?.processIdentifier != NSRunningApplication.current.processIdentifier {
@@ -448,6 +499,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             previousApp = lastExternalApp
             previousWindow = lastExternalWindow
         }
+        taskWindow?.window?.orderOut(nil)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         controller?.beginNewSession()
@@ -576,7 +628,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func quit() {
-        controller?.shutdown()
         NSApp.terminate(nil)
     }
 }

@@ -2,6 +2,23 @@ import AppKit
 import AVFoundation
 import SwiftUI
 
+if CommandLine.arguments.contains("--task-manager-test") {
+    let testApp = NSApplication.shared
+    testApp.setActivationPolicy(.accessory)
+    Task { @MainActor in
+        let failures: [String]
+        if CommandLine.arguments.contains("--text-grid-only") { failures = runTaskLineNumberTests() }
+        else if CommandLine.arguments.contains("--editing-only") {
+            failures = runTaskEditorParityTests() + runTaskTextNavigationTests() + runTaskLineNumberTests()
+        }
+        else { failures = await runTaskManagerTests() }
+        failures.forEach { print("FAIL: " + $0) }
+        print(failures.isEmpty ? "task-manager-test: ok" : "task-manager-test: failed")
+        exit(failures.isEmpty ? 0 : 2)
+    }
+    testApp.run()
+}
+
 if CommandLine.arguments.contains("--paste-helper-test") {
     let failures = runPasteHelperTests()
     failures.forEach { print("FAIL: " + $0) }

@@ -18,6 +18,30 @@ Press `u` to undo the last transcript edit, restoring its text and selection. A 
 
 After replacing `foo` with `bar`, `.` replaces the current selection with `bar`, while `>` replaces every remaining matching `foo` with `bar`. Matching is case-sensitive and uses whole tokens or selected phrases, preserving surrounding punctuation and paragraph boundaries. `.` does not change the original rule remembered for `>`. Bulk replacement is one undoable edit; replacement text is not recursively processed during the same command.
 
+## Personal tasks
+
+Press **Control+Option+Command+T** to open the task manager, or choose **Task manager…** from PA3's menu-bar menu. Its shortcut can be changed in **Keyboard shortcuts…**. Opening dictation hides the task window; opening Tasks pauses and hides dictation. The separate task window has a project tree, a task list, and a description editor. Home and Work are the initial categories. Use the project pane's **+** menu to create a project; use **Subproject…** for a child of the selected project. Right-click a project to rename it or move its entire subtree. Click a category's disclosure triangle to collapse its projects. **New category…** adds a category; the gear menu also manages categories. **New task** creates a task in the selected project.
+
+Tasks live in `iCloud Drive/PA3/pa3.sqlite`. PA3 needs iCloud Drive enabled and never falls back to another database silently. `PA3_TASK_DATABASE=/absolute/path/pa3.sqlite` overrides the location for testing. Insert and Dictation keep edits in memory until returning to Normal. Switching tasks or closing the window finishes and saves the active edit first. Normal-mode edits save automatically; Command-S retries a save only in Normal mode. The footer distinguishes unsaved edits, local saves, and iCloud's reported upload status. Connections use rollback journaling and close after coordinated file access. PA3 checks for external changes every four seconds while the task window is open. Use one editing computer at a time and allow uploads to finish before switching computers; whole-file iCloud sync does not merge concurrent edits across devices.
+
+The first line of a description is its subject, rendered in bold in the description and task list. The stored description remains plain text. Due dates, priority, and completion are derived from text, with no duplicate metadata columns:
+
+```text
+Arrange the kitchen repair
+Call the contractor and confirm the parts list.
+#due:2026-11-15 #priority:1
+```
+
+Use priorities 1 through 3, with 1 highest. `#prio:` is also accepted. `#done` or `#status:done` completes a task; the task-list circle adds or removes the completion tag. Unknown tags and exact text formatting are preserved. Invalid dates and priorities show a warning. Completed tasks stay hidden unless **Show completed** is enabled, except that the selected task remains visible while editing.
+
+The window starts with the project list active. Return or Right moves from projects to tasks, then to the selected description. Left moves from tasks back to projects. In the description, Left/Right moves the cursor; Escape from Normal mode returns to the task list. Up/Down and `j`/`k` navigate the active list. `n` creates a task while the task list is active, then focuses its description in Insert mode. In the projects list, `n` opens a name prompt for a new top-level project in the selected project's category, or the first category if no project is selected. **Command-N** remains an alias for creating a task from the task list. Subproject and category creation use mouse controls. **Q** saves and closes only the task window from lists, Normal mode, or Dictation mode. In Insert mode and text fields, q/Q remains text. **Command-Q** and **Command-W** also close the task window. Reopening restores the active pane and selection, including after restarting PA3. The active pane has a highlighted heading.
+
+The editor starts in Normal mode with Veda-style commands. **Type** or `i` enters Insert mode; Escape returns to Normal and keeps the description focused. Escape from Normal returns to the task list. Space in Normal mode, Control-Space in Insert mode, or the microphone starts dictation at the cursor or replaces selected text. To append to the end, use `G`, then `A`, then Control-Space. `G` and `$` put the Normal cursor on the last character; `A` moves after it in Insert mode before dictation begins. Dictation reuses PA3's controller, view, dictionary, and shortcuts. **Done** or Escape finishes dictation and returns to Normal with the description focused. Dictation commands edit only the passage in the current session, preserving the rest of the description. While paused, use arrows and Shift-arrows to select words, `c` to change words, `x` to delete selections, `J`/`S` to join or split paragraphs, and `u` to undo. `o` starts a new paragraph and `O` continues the current one. The session is one undoable edit, and the cursor remains at the end of the inserted passage when dictation finishes. Left/Right retains its text-editing behavior in Insert and Dictation modes. Reopening the window never starts the microphone. Press **?** from Normal mode or either list to toggle the grouped shortcut reference; Escape also closes it and restores the same pane. In Insert mode and text fields, **?** stays ordinary text. In Dictation mode, **?** opens PA3's shared dictation reference and pauses/resumes dictation as usual. The window-header help button also opens the reference.
+
+Both Normal and Insert support Home/End for line boundaries, Control-Left/Right and Option-Left/Right for word navigation, Command-Left/Right for line boundaries, and Control-Home/End or Command-Up/Down for document boundaries. Control-Up/Down and Option-Up/Down move to paragraph boundaries; Page Up/Down moves by a page. Add Shift to extend the selection. Standard Cocoa Control-A/E, Control-B/F, Control-P/N, and Control-V navigation also works in both modes. Navigation keeps the current mode and never changes panes or text.
+
+Before writes, PA3 saves periodic SQLite snapshots in `~/Library/Application Support/PA3/task-backups`, retaining 16 snapshots and creating at most one per 15-minute interval. A stale save keeps the draft in the window and offers **Save draft as new task**. `make task-manager-test` checks storage, conflicts, metadata, document insertion, and modal editing without opening the microphone.
+
 ## Repository layout
 
 - `Sources/`, `Native/`, and `Resources/`: the PA3 macOS app and native speech helper.
@@ -48,7 +72,7 @@ make SIGN_IDENTITY=- app
 
 The app stays resident after paste. Use `Ctrl+Option+Command+P` to show it again, or use the menu-bar waveform icon.
 
-To change the three global shortcuts, right-click PA3's menu-bar icon and choose **Keyboard shortcuts…**. Click a shortcut and press the new combination, then choose **Save**. Include Control, Option, or Command. Escape cancels recording; Cancel discards edits. **Restore defaults** fills in the original combinations for review before saving. PA3 remembers saved shortcuts across launches and reports duplicate or unavailable combinations. Opening settings pauses active dictation.
+To change the four global shortcuts, right-click PA3's menu-bar icon and choose **Keyboard shortcuts…**. Click a shortcut and press the new combination, then choose **Save**. Include Control, Option, or Command. Escape cancels recording; Cancel discards edits. **Restore defaults** fills in the original combinations for review before saving. PA3 remembers saved shortcuts across launches and reports duplicate or unavailable combinations. Opening settings pauses active dictation.
 
 ## Testing
 

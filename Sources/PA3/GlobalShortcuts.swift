@@ -4,13 +4,14 @@ import Carbon
 // These IDs identify actions, rather than key codes. Two actions can use the
 // same physical key with different modifiers without sharing a Carbon event ID.
 enum GlobalShortcutAction: Int, CaseIterable, Codable {
-    case dictation = 1, selection, screen
+    case dictation = 1, selection, screen, tasks
 
     var title: String {
         switch self {
         case .dictation: "Open dictation"
         case .selection: "Read selection / Stop"
         case .screen: "Read screen rectangle / Stop"
+        case .tasks: "Open task manager"
         }
     }
 
@@ -19,6 +20,7 @@ enum GlobalShortcutAction: Int, CaseIterable, Codable {
         case .dictation: kVK_ANSI_P
         case .selection: kVK_ANSI_O
         case .screen: kVK_ANSI_R
+        case .tasks: kVK_ANSI_T
         }
         return GlobalShortcutBinding(keyCode: UInt32(code), modifiers: UInt32(controlKey | optionKey | cmdKey))
     }
@@ -92,6 +94,29 @@ struct GlobalShortcutConfiguration: Codable, Equatable {
     var dictation = GlobalShortcutAction.dictation.defaultBinding
     var selection = GlobalShortcutAction.selection.defaultBinding
     var screen = GlobalShortcutAction.screen.defaultBinding
+    var tasks = GlobalShortcutAction.tasks.defaultBinding
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey { case dictation, selection, screen, tasks }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        dictation = try values.decode(GlobalShortcutBinding.self, forKey: .dictation)
+        selection = try values.decode(GlobalShortcutBinding.self, forKey: .selection)
+        screen = try values.decode(GlobalShortcutBinding.self, forKey: .screen)
+        if let saved = try values.decodeIfPresent(GlobalShortcutBinding.self, forKey: .tasks) {
+            tasks = saved
+        } else {
+            // Preserve existing bindings when upgrading from the three-action format.
+            let existing = Set([dictation, selection, screen])
+            let candidates = [UInt32(controlKey | optionKey | cmdKey),
+                              UInt32(controlKey | optionKey | cmdKey | shiftKey),
+                              UInt32(controlKey | cmdKey), UInt32(optionKey | cmdKey)]
+                .map { GlobalShortcutBinding(keyCode: UInt32(kVK_ANSI_T), modifiers: $0) }
+            tasks = candidates.first { !existing.contains($0) } ?? GlobalShortcutAction.tasks.defaultBinding
+        }
+    }
 
     subscript(action: GlobalShortcutAction) -> GlobalShortcutBinding {
         get {
@@ -99,6 +124,7 @@ struct GlobalShortcutConfiguration: Codable, Equatable {
             case .dictation: dictation
             case .selection: selection
             case .screen: screen
+            case .tasks: tasks
             }
         }
         set {
@@ -106,6 +132,7 @@ struct GlobalShortcutConfiguration: Codable, Equatable {
             case .dictation: dictation = newValue
             case .selection: selection = newValue
             case .screen: screen = newValue
+            case .tasks: tasks = newValue
             }
         }
     }

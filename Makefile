@@ -12,7 +12,7 @@ PA3_MODEL_DIR ?= $(HOME)/Library/Application Support/PA3/models
 CODESIGN_CERT_DAYS ?= 3650
 CODESIGN_P12_PASSWORD ?= pa3-local-codesign
 
-.PHONY: all build native-narrator app icons speech-tools-check speech-setup tts-setup codesign-identity clean run restart test pa3-test extension-test browser-test integration-test extension-install fixtures replay-test narration-test native-stream-test decoder-test transcription-scheduling-test
+.PHONY: all build native-narrator app icons speech-tools-check speech-setup tts-setup codesign-identity clean run restart test pa3-test extension-test browser-test integration-test extension-install fixtures replay-test narration-test native-stream-test decoder-test transcription-scheduling-test task-manager-test
 
 all: app
 
@@ -45,6 +45,11 @@ pa3-test: decoder-test
 	.build/debug/pa3 --paste-helper-test
 	.build/debug/pa3 --narration-recovery-test
 	.build/debug/pa3 --model-download-test
+	.build/debug/pa3 --task-manager-test
+
+task-manager-test:
+	swift build
+	.build/debug/pa3 --task-manager-test
 
 # Deterministic test of preview publication during disputed boundary verification.
 transcription-scheduling-test:

@@ -13,7 +13,7 @@ func runGlobalShortcutsTests() -> [String] {
     let defaults = GlobalShortcutConfiguration()
     check(.load(from: preferences) == defaults, "first launch uses original bindings")
     check(defaults.dictation.display == "⌃⌥⌘P" && defaults.selection.display == "⌃⌥⌘O"
-          && defaults.screen.display == "⌃⌥⌘R", "default shortcut labels")
+          && defaults.screen.display == "⌃⌥⌘R" && defaults.tasks.display == "⌃⌥⌘T", "default shortcut labels")
 
     var proposed = defaults
     proposed.dictation = GlobalShortcutBinding(keyCode: UInt32(kVK_ANSI_P), modifiers: UInt32(controlKey))
@@ -21,9 +21,26 @@ func runGlobalShortcutsTests() -> [String] {
     check(proposed.validationError == nil, "same physical key with different modifiers is valid")
     proposed.save(to: preferences)
     check(.load(from: preferences) == proposed, "custom shortcuts survive reload")
+    func saveLegacy(_ configuration: GlobalShortcutConfiguration) {
+        var object = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(configuration)) as! [String: Any]
+        object.removeValue(forKey: "tasks")
+        preferences.set(try! JSONSerialization.data(withJSONObject: object), forKey: GlobalShortcutConfiguration.preferencesKey)
+    }
+    saveLegacy(proposed)
+    check(.load(from: preferences) == proposed, "upgrading three saved shortcuts preserves custom bindings and adds Tasks")
+    var occupied = proposed
+    occupied.screen = defaults.tasks
+    saveLegacy(occupied)
+    let migrated = GlobalShortcutConfiguration.load(from: preferences)
+    check(migrated.dictation == occupied.dictation && migrated.selection == occupied.selection && migrated.screen == occupied.screen
+          && migrated.tasks != occupied.screen && migrated.validationError == nil,
+          "a legacy T binding is preserved and Tasks receives a free combination")
     var duplicate = proposed
     duplicate.screen = proposed.selection
     check(duplicate.validationError != nil, "duplicate combinations are rejected")
+    var duplicateTasks = proposed
+    duplicateTasks.tasks = proposed.dictation
+    check(duplicateTasks.validationError != nil, "Tasks cannot reuse another action's shortcut")
     duplicate.save(to: preferences)
     check(.load(from: preferences) == defaults, "invalid saved bindings fall back to defaults")
     preferences.set(Data("broken".utf8), forKey: GlobalShortcutConfiguration.preferencesKey)
@@ -38,13 +55,15 @@ func runGlobalShortcutsTests() -> [String] {
     let manager = GlobalShortcutManager(preferences: preferences) { action, binding in
         ShortcutTestRegistration(registry: registry, action: action, binding: binding)
     }
-    check(manager.register() == nil && registry.active.count == 3, "all defaults register")
-    check(manager.apply(proposed) == nil && registry.active.count == 3, "changes register immediately")
+    let actionCount = GlobalShortcutAction.allCases.count
+    check(actionCount == 4, "four independent shortcut actions")
+    check(manager.register() == nil && registry.active.count == actionCount, "all defaults register")
+    check(manager.apply(proposed) == nil && registry.active.count == actionCount, "changes register immediately")
     check(manager.configuration == proposed && .load(from: preferences) == proposed, "successful registration persists")
-    check(manager.apply(duplicate) != nil && registry.active.count == 3, "invalid edits leave bindings registered")
+    check(manager.apply(duplicate) != nil && registry.active.count == actionCount, "invalid edits leave bindings registered")
     var unavailable = proposed
-    unavailable.screen = GlobalShortcutBinding(keyCode: UInt32(kVK_ANSI_X), modifiers: UInt32(cmdKey | controlKey))
-    registry.unavailable = unavailable.screen
+    unavailable.tasks = GlobalShortcutBinding(keyCode: UInt32(kVK_ANSI_X), modifiers: UInt32(cmdKey | controlKey))
+    registry.unavailable = unavailable.tasks
     check(manager.apply(unavailable) != nil, "registration conflict reports an error")
     check(manager.configuration == proposed && .load(from: preferences) == proposed, "failed changes are not saved")
     check(registry.active == Dictionary(uniqueKeysWithValues: GlobalShortcutAction.allCases.map { ($0, proposed[$0]) }),
@@ -54,6 +73,8 @@ func runGlobalShortcutsTests() -> [String] {
     controller.globalShortcuts = proposed
     check(controller.shortcutSections().last?.bindings.first?.hasPrefix("⌃P:") == true,
           "dictation help shows configured shortcuts")
+    check(controller.shortcutSections().last?.bindings.contains("⌃⌥⌘T: open task manager") == true,
+          "dictation help includes the task-manager shortcut")
 
     func event(_ key: UInt16, _ flags: NSEvent.ModifierFlags = []) -> NSEvent {
         NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
@@ -67,11 +88,13 @@ func runGlobalShortcutsTests() -> [String] {
     let settings = ShortcutSettingsWindowController(shortcuts: manager) { saves += 1 }
     let controls = buttons(in: settings.window!.contentView!)
     let record = controls.first { $0.tag == GlobalShortcutAction.dictation.rawValue }!
+    check(controls.contains { $0.tag == GlobalShortcutAction.tasks.rawValue && $0.title == "⌃⌥⌘T" },
+          "settings includes an editable task-manager shortcut")
     record.performClick(nil)
     check(registry.active.isEmpty, "recording suspends existing global shortcuts")
     check(settings.capture(event(35)), "unmodified keys stay inside recorder")
     check(registry.active.isEmpty, "invalid key keeps recording")
-    check(settings.capture(event(53)) && registry.active.count == 3, "Escape cancels recording and restores shortcuts")
+    check(settings.capture(event(53)) && registry.active.count == actionCount, "Escape cancels recording and restores shortcuts")
     record.performClick(nil)
     check(settings.capture(event(7, [.command, .option])), "Command combination is captured")
     check(manager.configuration == proposed, "recording edits only the draft")

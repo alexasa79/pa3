@@ -66,12 +66,16 @@ final class DictationController: ObservableObject {
     var onHide: (() -> Void)?
     var onQuit: (() -> Void)?
     var onDictationWillStart: (() -> Void)?
+    var onOpenTasks: (() -> Void)?
+    /// Embedded editors supply a finish action instead of pasting into another app.
+    var onFinishEmbeddedSession: (() -> Void)?
+    var canAcquireMicrophone: (() -> Bool)?
     var prepareModels: (() -> Bool)?
     var narrationIsBlocked: Bool { dictating || runningStop || muter.isActive || transcriber.captureIsBusy }
 
     private let transcriber: TranscriberService
     private let preferences: UserDefaults
-    private let vocabulary: Vocabulary
+    private var vocabulary: Vocabulary
     private var committed = ""
     private var segment = ""
     private var segmentSeparator = "\n\n"
@@ -92,6 +96,7 @@ final class DictationController: ObservableObject {
     private var editSelectAll = false
     @Published private var runningStop = false
     private var resumeAfterShortcuts = false
+    private var documentFinishing = false
     private var transcriptColumnLimit = 100
     private var wordFrames: [Int: CGRect] = [:]
     private struct ReplacementSource {
@@ -207,6 +212,7 @@ final class DictationController: ObservableObject {
     }
 
     func pasteAndHide() {
+        if let onFinishEmbeddedSession { onFinishEmbeddedSession(); return }
         resumeAfterShortcuts = false
         stopDictation()
         transcriptionGeneration += 1
@@ -215,6 +221,7 @@ final class DictationController: ObservableObject {
     }
 
     func discardAndHide() {
+        if let onFinishEmbeddedSession { onFinishEmbeddedSession(); return }
         resumeAfterShortcuts = false
         stopDictation()
         transcriptionGeneration += 1
@@ -250,6 +257,19 @@ final class DictationController: ObservableObject {
         case (.character, let chars):
             handleCharacter(chars)
         }
+    }
+
+    /// Drain callbacks before an embedding editor changes its destination document.
+    func finishForDocument() async -> String {
+        documentFinishing = true
+        resumeAfterShortcuts = false
+        stopDictation()
+        while runningStop || spellChecking || transcriber.captureIsBusy {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        transcriptionGeneration += 1
+        documentFinishing = false
+        return text
     }
 
     private func handleCharacter(_ chars: String) {
@@ -325,16 +345,17 @@ final class DictationController: ObservableObject {
         startDictation()
     }
 
-    var canStartDictation: Bool { !dictating && !showingShortcuts && !runningStop }
+    var canStartDictation: Bool { !dictating && !showingShortcuts && !runningStop && !documentFinishing }
 
     func shortcutSections() -> [(title: String, bindings: [String])] {
-        [
-            ("General", ["?: show/hide shortcuts (pauses dictation)", "esc: close shortcuts, otherwise discard", "space: pause/resume dictation", "enter: paste result", "q / Q: discard", "ctrl+c: abort", "v: paste a sentence or inline fragment (based on ending punctuation)", "V: insert clipboard as a separate paragraph"]),
+        let embedded = onFinishEmbeddedSession != nil
+        return [
+            ("General", ["?: show/hide shortcuts (pauses dictation)", embedded ? "esc: close shortcuts, otherwise return to Normal" : "esc: close shortcuts, otherwise discard", "space: pause/resume dictation", embedded ? "enter: finish dictation and return to Normal" : "enter: paste result", embedded ? "q / Q: save and close Tasks" : "q / Q: discard", embedded ? "ctrl+c: finish dictation and return to Normal" : "ctrl+c: abort", "v: paste a sentence or inline fragment (based on ending punctuation)", "V: insert clipboard as a separate paragraph"]),
             ("Dictation", ["R: restart dictation", "o: new paragraph after current paragraph", "O: continue current paragraph", "s: spell check transcript", "D: edit dictionary"]),
             ("Navigation · while paused", ["arrows: navigate words", "shift+arrows: expand selection", "J: join next paragraph", "S: split paragraph after current word"]),
             ("Editing · while paused", ["c: edit selection", "C: change all matching text", "a: append after", "i / I: insert before", "x: delete selection", "X: delete to sentence end (keep ending punctuation)", "t: cycle capitalization", "u: undo last change", ".: repeat change", ">: repeat change on all matches", "A: add selected word to dictionary"]),
             ("Inside the text editor", ["enter: apply edit", "esc: cancel edit", "arrows: move cursor", "home/end: jump", "alt+backspace: delete word", "backspace: delete character", "delete: delete ahead", "cmd+a: select all"]),
-            ("From any app", ["\(globalShortcuts.dictation.display): open dictation", "\(globalShortcuts.selection.display): read selection / stop narration", "\(globalShortcuts.screen.display): read screen rectangle / stop narration"])
+            ("From any app", ["\(globalShortcuts.dictation.display): open dictation", "\(globalShortcuts.selection.display): read selection / stop narration", "\(globalShortcuts.screen.display): read screen rectangle / stop narration", "\(globalShortcuts.tasks.display): open task manager"])
         ]
     }
 
@@ -521,6 +542,20 @@ final class DictationController: ObservableObject {
     func startDictation(continuingParagraph: Bool = false, afterSelectedParagraph: Bool = false) {
         Logger.info("startDictation requested")
         guard canStartDictation else { return }
+        guard canAcquireMicrophone?() ?? true else {
+            debugMessage = "Finish dictation in the other PA3 window first."
+            return
+        }
+        // Both hosts use the same dictionary file, including changes made while
+        // this controller was idle in another window.
+        vocabulary = Vocabulary(path: Self.vocabularyPath())
+        vocabularyWords = vocabulary.allWords()
+        transcriber.setVocabulary(vocabularyWords)
+        autoMuteAudio = preferences.bool(forKey: Self.autoMuteAudioKey)
+        if preferences.object(forKey: Self.contextSecondsKey) != nil {
+            contextSeconds = Self.contextSecondsRange.clamped(preferences.integer(forKey: Self.contextSecondsKey))
+            transcriber.setContextSeconds(contextSeconds)
+        }
         if continuingParagraph || afterSelectedParagraph { clipboardContinuation = nil }
         segmentSeparator = clipboardContinuation?.separator ?? (continuingParagraph ? " " : "\n\n")
         segmentInsertionParagraph = nil
@@ -581,7 +616,7 @@ final class DictationController: ObservableObject {
     }
 
     func restartDictation() {
-        guard !showingShortcuts else { return }
+        guard !showingShortcuts, !runningStop, !documentFinishing else { return }
         transcriptionIterations = 0
         undoHistory.removeAll()
         let wasDictating = dictating
@@ -602,16 +637,18 @@ final class DictationController: ObservableObject {
             return
         }
         let transcriber = transcriber
+        runningStop = true
         DispatchQueue.global(qos: .userInitiated).async {
             transcriber.stopTranscribe()
             DispatchQueue.main.async {
-                self.startDictation()
+                self.runningStop = false
+                if !self.documentFinishing { self.startDictation() }
             }
         }
     }
 
     private func startNewParagraph() {
-        guard !showingShortcuts else { return }
+        guard !showingShortcuts, !runningStop, !documentFinishing else { return }
         if dictating {
             dictating = false
             serviceMessage = ""
@@ -619,10 +656,12 @@ final class DictationController: ObservableObject {
             commitSegment()
             updateDisplay()
             let transcriber = transcriber
+            runningStop = true
             DispatchQueue.global(qos: .userInitiated).async {
                 transcriber.stopTranscribe()
                 DispatchQueue.main.async {
-                    self.startDictation(afterSelectedParagraph: true)
+                    self.runningStop = false
+                    if !self.documentFinishing { self.startDictation(afterSelectedParagraph: true) }
                 }
             }
             return

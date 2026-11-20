@@ -3,6 +3,7 @@ import SwiftUI
 
 struct DictationView: View {
     @ObservedObject var controller: DictationController
+    var embedded = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -12,7 +13,19 @@ struct DictationView: View {
             Divider()
             mainContent
             Divider()
-            statusBar
+            if !embedded { statusBar }
+            else {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(controller.characterCount) characters · \(controller.wordCount) words · \(controller.transcriptionIterations) iterations")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                    HStack {
+                    Text(controller.statusDetail.isEmpty ? "Space: pause/resume · o/O: paragraph · ?: shortcuts · Esc: Normal · Q: close Tasks" : controller.statusDetail)
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Shortcuts") { controller.toggleShortcuts() }
+                    }
+                }.padding(8)
+            }
         }
         .background(Color(nsColor: PaperTheme.canvas))
         .foregroundStyle(Color(nsColor: PaperTheme.ink))
@@ -36,6 +49,9 @@ struct DictationView: View {
             Text(controller.status)
                 .font(.system(size: 17, weight: .semibold))
             Spacer()
+            if !embedded, let openTasks = controller.onOpenTasks {
+                Button(action: openTasks) { Label("Tasks", systemImage: "checklist") }
+            }
         }
         .padding(.horizontal, 12)
         .frame(height: 60)
@@ -184,7 +200,21 @@ struct DictationView: View {
         .shadow(color: Color.black.opacity(0.18), radius: 12, x: -3, y: 0)
     }
 
-    private var controls: some View {
+    @ViewBuilder private var controls: some View {
+        if embedded {
+            VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                Button(controller.dictating ? "Pause" : "Resume") {
+                    controller.dictating ? controller.stopDictation() : controller.startDictation()
+                }
+                Button("Dictionary") { controller.openVocabularyEditor() }
+                Toggle("Auto-mute", isOn: $controller.autoMuteAudio).toggleStyle(.button)
+                Spacer()
+                Button("Done") { controller.onFinishEmbeddedSession?() }
+            }
+            HStack { contextControl; Spacer() }
+            }.padding(10).background(Color(nsColor: PaperTheme.cream))
+        } else {
         HStack(spacing: 10) {
             Button {
                 controller.startDictation()
@@ -237,6 +267,7 @@ struct DictationView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(Color(nsColor: PaperTheme.cream))
+        }
     }
 
     /// Minimum window duration before sentence trimming is eligible.

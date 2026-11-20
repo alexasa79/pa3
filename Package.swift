@@ -10,8 +10,10 @@ let package = Package(
         .executable(name: "pa3", targets: ["PA3"])
     ],
     targets: [
+        .systemLibrary(name: "CSQLite", pkgConfig: "sqlite3"),
         .executableTarget(
             name: "PA3",
+            dependencies: ["CSQLite"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("SwiftUI"),
