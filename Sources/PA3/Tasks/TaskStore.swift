@@ -65,6 +65,7 @@ enum TaskDatabaseLocation {
 actor TaskStore {
     let url: URL
     private let backups: URL?
+    private(set) var loadCount = 0
 
     init(url: URL, backups: URL? = nil) {
         self.url = url
@@ -93,7 +94,10 @@ actor TaskStore {
         }
     }
 
-    func load() throws -> TaskSnapshot { try access { try Self.snapshot($0) } }
+    func load() throws -> TaskSnapshot {
+        loadCount += 1
+        return try access { try Self.snapshot($0) }
+    }
     func status() -> String { TaskDatabaseLocation.uploadStatus(url) }
 
     func addCategory(name: String) throws -> String {

@@ -17,10 +17,27 @@ final class TaskNavigationWindow: NSWindow {
         }
     }
 
+    func scrollSelectedRowToVisible(in pane: TaskPane) {
+        guard pane != .description, isVisible, let contentView,
+              let host = paneView(pane, in: contentView),
+              let table = tableView(in: host) else { return }
+        contentView.layoutSubtreeIfNeeded()
+        let row = table.selectedRow
+        if row >= 0 { table.scrollRowToVisible(row) }
+    }
+
     private func paneView(_ pane: TaskPane, in view: NSView) -> NSView? {
         if view.identifier?.rawValue == "tasks.pane.\(pane.rawValue)" { return view }
         for child in view.subviews {
             if let found = paneView(pane, in: child) { return found }
+        }
+        return nil
+    }
+
+    private func tableView(in view: NSView) -> NSTableView? {
+        if let table = view as? NSTableView { return table }
+        for child in view.subviews {
+            if let found = tableView(in: child) { return found }
         }
         return nil
     }

@@ -26,7 +26,7 @@ private struct ProjectTreeRow: View {
     }
 
     private var label: some View {
-        Label(branch.project.name, systemImage: "folder").contextMenu { menu(branch.project) }
+        Label(branch.project.name, systemImage: "folder").id(branch.id).contextMenu { menu(branch.project) }
     }
 }
 
@@ -143,34 +143,48 @@ struct TaskManagerView: View {
                     }
                 } label: { Image(systemName: "plus") }.menuStyle(.borderlessButton).fixedSize().help("New project")
             }.padding(12).background(paneHighlight(.projects))
-            List(selection: Binding(get: { model.selectedProjectID }, set: { model.selectProject($0) })) {
-                ForEach(model.categories) { category in
-                    Section {
-                        if !model.collapsedCategories.contains(category.id) {
-                            ForEach(branches(categoryID: category.id, parentID: nil)) { branch in
-                                ProjectTreeRow(branch: branch, expanded: $model.expandedProjects, menu: { AnyView(projectMenu($0)) })
+            ScrollViewReader { proxy in
+                List(selection: Binding(get: { model.selectedProjectID }, set: { model.selectProject($0) })) {
+                    ForEach(model.categories) { category in
+                        Section {
+                            if !model.collapsedCategories.contains(category.id) {
+                                ForEach(branches(categoryID: category.id, parentID: nil)) { branch in
+                                    ProjectTreeRow(branch: branch, expanded: $model.expandedProjects, menu: { AnyView(projectMenu($0)) })
+                                }
+                                if !model.projects.contains(where: { $0.categoryID == category.id }) {
+                                    Button("Add project…") { prompt("New project", action: .project(categoryID: category.id, parentID: nil)) }
+                                        .foregroundStyle(.secondary).buttonStyle(.borderless)
+                                }
                             }
-                            if !model.projects.contains(where: { $0.categoryID == category.id }) {
-                                Button("Add project…") { prompt("New project", action: .project(categoryID: category.id, parentID: nil)) }
-                                    .foregroundStyle(.secondary).buttonStyle(.borderless)
-                            }
+                        } header: {
+                            Button {
+                                if model.collapsedCategories.contains(category.id) { model.collapsedCategories.remove(category.id) }
+                                else { model.collapsedCategories.insert(category.id) }
+                            } label: {
+                                HStack {
+                                    Image(systemName: model.collapsedCategories.contains(category.id) ? "chevron.right" : "chevron.down")
+                                    Text(category.name)
+                                    Spacer()
+                                }.contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                                .accessibilityLabel(category.name)
+                                .accessibilityValue(model.collapsedCategories.contains(category.id) ? "Collapsed" : "Expanded")
                         }
-                    } header: {
-                        Button {
-                            if model.collapsedCategories.contains(category.id) { model.collapsedCategories.remove(category.id) }
-                            else { model.collapsedCategories.insert(category.id) }
-                        } label: {
-                            HStack {
-                                Image(systemName: model.collapsedCategories.contains(category.id) ? "chevron.right" : "chevron.down")
-                                Text(category.name)
-                                Spacer()
-                            }.contentShape(Rectangle())
-                        }.buttonStyle(.plain)
-                            .accessibilityLabel(category.name)
-                            .accessibilityValue(model.collapsedCategories.contains(category.id) ? "Collapsed" : "Expanded")
+                    }
+                }.listStyle(.sidebar).scrollContentBackground(.hidden)
+                .onChange(of: model.selectedProjectID) { _, id in
+                    if let id {
+                        proxy.scrollTo(id)
+                        model.onScrollSelectionRequested?(.projects)
                     }
                 }
-            }.listStyle(.sidebar).scrollContentBackground(.hidden)
+                .onAppear {
+                    if let id = model.selectedProjectID {
+                        proxy.scrollTo(id)
+                        model.onScrollSelectionRequested?(.projects)
+                    }
+                }
+            }
             HStack {
                 Button("New category…") { prompt("New category", action: .category) }
                 Spacer()
@@ -211,34 +225,48 @@ struct TaskManagerView: View {
         VStack(spacing: 0) {
             HStack { Text(model.selectedProject?.name ?? "Tasks").font(.headline).lineLimit(1); Spacer(); Text("\(model.visibleTasks.count)").foregroundStyle(.secondary) }.padding(12).background(paneHighlight(.tasks))
             TextField("Search this project", text: $model.search).textFieldStyle(.roundedBorder).padding(.horizontal, 10).padding(.bottom, 8)
-            List(selection: Binding(get: { model.selectedTaskID }, set: { model.selectTask($0) })) {
-                ForEach(model.visibleTasks) { task in
-                    HStack(alignment: .top, spacing: 8) {
-                        Button { model.toggleCompletion(task) } label: { Image(systemName: task.metadata.done ? "checkmark.circle.fill" : "circle") }
-                            .buttonStyle(.plain).help(task.metadata.done ? "Reopen task" : "Complete task with #done")
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(task.subject).fontWeight(.bold).lineLimit(2).strikethrough(task.metadata.done)
-                            HStack {
-                                if let due = task.metadata.due { Text(due) }
-                                if let priority = task.metadata.priority { Text("P\(priority)") }
-                            }.font(.system(size: 11)).foregroundStyle(.secondary)
-                        }
-                    }.padding(.vertical, 4).tag(task.id)
-                        .contextMenu {
-                            Menu("Move to project") {
-                                ForEach(model.projects) { project in
-                                    Button(model.projectPath(project)) { model.moveTask(task.id, projectID: project.id) }
+            ScrollViewReader { proxy in
+                List(selection: Binding(get: { model.selectedTaskID }, set: { model.selectTask($0) })) {
+                    ForEach(model.visibleTasks) { task in
+                        HStack(alignment: .top, spacing: 8) {
+                            Button { model.toggleCompletion(task) } label: { Image(systemName: task.metadata.done ? "checkmark.circle.fill" : "circle") }
+                                .buttonStyle(.plain).help(task.metadata.done ? "Reopen task" : "Complete task with #done")
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(task.subject).fontWeight(.bold).lineLimit(2).strikethrough(task.metadata.done)
+                                HStack {
+                                    if let due = task.metadata.due { Text(due) }
+                                    if let priority = task.metadata.priority { Text("P\(priority)") }
+                                }.font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
+                        }.padding(.vertical, 4).tag(task.id).id(task.id)
+                            .contextMenu {
+                                Menu("Move to project") {
+                                    ForEach(model.projects) { project in
+                                        Button(model.projectPath(project)) { model.moveTask(task.id, projectID: project.id) }
+                                    }
                                 }
                             }
-                        }
-                }
-            }.listStyle(.inset).scrollContentBackground(.hidden)
-                .overlay {
-                    if model.visibleTasks.isEmpty {
-                        Text(model.selectedProjectID == nil ? "Create or select a project." : "No tasks yet. Use New task.")
-                            .font(.callout).foregroundStyle(.secondary).padding()
                     }
-                }
+                }.listStyle(.inset).scrollContentBackground(.hidden)
+                    .overlay {
+                        if model.visibleTasks.isEmpty {
+                            Text(model.selectedProjectID == nil ? "Create or select a project." : "No tasks yet. Use New task.")
+                                .font(.callout).foregroundStyle(.secondary).padding()
+                        }
+                    }
+                    .onChange(of: model.selectedTaskID) { _, id in
+                        if let id {
+                            proxy.scrollTo(id)
+                            model.onScrollSelectionRequested?(.tasks)
+                        }
+                    }
+                    .onAppear {
+                        if let id = model.selectedTaskID {
+                            proxy.scrollTo(id)
+                            model.onScrollSelectionRequested?(.tasks)
+                        }
+                    }
+            }
             Toggle("Show completed", isOn: $model.showCompleted).font(.system(size: 12)).padding(12)
         }.disabled(model.busy || model.conflict)
     }
@@ -393,6 +421,12 @@ final class TaskManagerWindow: NSWindowController, NSWindowDelegate {
                 window?.focusActivePane()
             }
         }
+        model.onScrollSelectionRequested = { [weak window] pane in
+            Task { @MainActor in
+                await Task.yield()
+                window?.scrollSelectedRowToVisible(in: pane)
+            }
+        }
         window.delegate = self
         window.center()
     }
@@ -410,7 +444,14 @@ final class TaskManagerWindow: NSWindowController, NSWindowDelegate {
         }
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
-        (window as? TaskNavigationWindow)?.focusActivePane()
+        if let window = window as? TaskNavigationWindow {
+            window.focusActivePane()
+            Task { @MainActor in
+                await Task.yield()
+                window.scrollSelectedRowToVisible(in: .projects)
+                window.scrollSelectedRowToVisible(in: .tasks)
+            }
+        }
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {

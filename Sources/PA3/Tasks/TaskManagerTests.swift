@@ -181,6 +181,165 @@ func runTaskManagerTests() async -> [String] {
     failures += runTaskTextNavigationTests()
     failures += runTaskLineNumberTests()
     failures += await runTaskNavigationTests()
+    failures += await runTaskListScrollingTests()
+    return failures
+}
+
+@MainActor
+private func runTaskListScrollingTests() async -> [String] {
+    var failures: [String] = []
+    func check(_ condition: Bool, _ name: String) { if !condition { failures.append("task scrolling: " + name) } }
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("pa3-scrolling-\(UUID().uuidString)")
+    let suite = "PA3Scrolling-\(UUID().uuidString)"
+    let preferences = UserDefaults(suiteName: suite)!
+    defer { try? FileManager.default.removeItem(at: folder); preferences.removePersistentDomain(forName: suite) }
+    let url = folder.appendingPathComponent("pa3.sqlite")
+    let store = TaskStore(url: url)
+    do {
+        let snapshot = try await store.open()
+        let work = snapshot.categories[1].id
+        var projectIDs: [String] = []
+        for index in 1...40 {
+            projectIDs.append(try await store.addProject(name: "Project \(index)", categoryID: work, parentID: nil))
+        }
+        let nestedProject = try await store.addProject(name: "Nested 36", categoryID: work, parentID: projectIDs[35])
+        let targetProject = projectIDs[0]
+        var taskIDs: [String] = []
+        for index in 1...40 {
+            taskIDs.append(try await store.addTask(projectID: targetProject, body: "Task \(index)\nBody for task \(index)"))
+        }
+        let controller = DictationController(transcriber: TranscriberService(), preferences: preferences)
+        controller.prepareModels = { false }
+        let model = TaskManagerModel(dictation: controller, databaseURL: url, preferences: preferences)
+        await model.open()
+        let manager = TaskManagerWindow(model: model)
+        guard let window = manager.window as? TaskNavigationWindow else { return failures + ["task scrolling: missing window"] }
+        defer { window.orderOut(nil); model.stopMonitoring() }
+        window.setContentSize(NSSize(width: 1240, height: 480))
+        manager.present()
+        window.contentView?.layoutSubtreeIfNeeded()
+        try? await Task.sleep(for: .milliseconds(120))
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        func event(_ key: String = "", code: UInt16 = 0) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                             windowNumber: window.windowNumber, context: nil, characters: key,
+                             charactersIgnoringModifiers: key, isARepeat: false, keyCode: code)!
+        }
+        func findPane(_ pane: TaskPane, in view: NSView?) -> NSView? {
+            guard let view else { return nil }
+            if view.identifier?.rawValue == "tasks.pane.\(pane.rawValue)" { return view }
+            return view.subviews.lazy.compactMap { findPane(pane, in: $0) }.first
+        }
+        func findTable(in view: NSView?) -> NSTableView? {
+            guard let view else { return nil }
+            if let table = view as? NSTableView { return table }
+            return view.subviews.lazy.compactMap { findTable(in: $0) }.first
+        }
+        func selectedRowVisible(in pane: TaskPane) -> (visible: Bool, detail: String) {
+            window.contentView?.layoutSubtreeIfNeeded()
+            guard let host = findPane(pane, in: window.contentView),
+                  let table = findTable(in: host),
+                  let scroll = table.enclosingScrollView else {
+                return (false, "missing table view")
+            }
+            let row = table.selectedRow
+            guard row >= 0 else { return (false, "no selected row (rows: \(table.numberOfRows))") }
+            let rowRect = table.rect(ofRow: row)
+            let visibleRect = scroll.documentVisibleRect
+            let visible = visibleRect.intersects(rowRect) && rowRect.minY >= visibleRect.minY - 1 && rowRect.maxY <= visibleRect.maxY + 1
+            return (visible, "row=\(row) rowRect=\(rowRect) visibleRect=\(visibleRect)")
+        }
+
+        // Rapid project navigation stays strictly in memory with zero DB reloads.
+        let loadsBeforeProjects = await model.databaseLoadCount()
+        for _ in 0..<35 {
+            check(window.handleTaskKey(event("j")), "rapid j in projects")
+            check(!model.busy, "rapid project navigation never sets busy")
+        }
+        check(model.selectedProjectID == projectIDs[35], "35 rapid j steps reach project 36 without dropping keys")
+        check(await model.databaseLoadCount() == loadsBeforeProjects, "project navigation reads from memory with zero database loads")
+        try? await Task.sleep(for: .milliseconds(120))
+        let projectDown = selectedRowVisible(in: .projects)
+        check(projectDown.visible, "projects list auto-scrolls down to selected project (\(projectDown.detail))")
+
+        model.expandedProjects.insert(projectIDs[35])
+        try? await Task.sleep(for: .milliseconds(60))
+        check(window.handleTaskKey(event("j")), "j steps into expanded nested subproject")
+        check(model.selectedProjectID == nestedProject, "nested subproject is selected")
+        try? await Task.sleep(for: .milliseconds(120))
+        let nestedVisible = selectedRowVisible(in: .projects)
+        check(nestedVisible.visible, "projects list auto-scrolls to nested subproject (\(nestedVisible.detail))")
+
+        for _ in 0..<36 {
+            check(window.handleTaskKey(event("k")), "rapid k in projects")
+        }
+        check(model.selectedProjectID == projectIDs[0], "36 rapid k steps return to project 1")
+        check(await model.databaseLoadCount() == loadsBeforeProjects, "upward project navigation performs zero database loads")
+        try? await Task.sleep(for: .milliseconds(120))
+        let projectUp = selectedRowVisible(in: .projects)
+        check(projectUp.visible, "projects list auto-scrolls back up to first project (\(projectUp.detail))")
+
+        // Switch to tasks pane and rapidly navigate through 40 tasks.
+        check(window.handleTaskKey(event(code: 36)), "Return enters tasks pane")
+        check(model.activePane == .tasks && model.selectedTaskID == taskIDs[0], "tasks pane starts on task 1")
+        let loadsBeforeTasks = await model.databaseLoadCount()
+        for _ in 0..<35 {
+            check(window.handleTaskKey(event(code: 125)), "rapid Down in tasks")
+            check(!model.busy, "rapid task navigation never sets busy")
+        }
+        check(model.selectedTaskID == taskIDs[35] && model.draft == "Task 36\nBody for task 36",
+              "35 rapid Down steps reach task 36 and load its description from memory")
+        check(await model.databaseLoadCount() == loadsBeforeTasks, "task navigation reads from memory with zero database loads")
+        try? await Task.sleep(for: .milliseconds(120))
+        let taskDown = selectedRowVisible(in: .tasks)
+        check(taskDown.visible, "tasks list auto-scrolls down to selected task (\(taskDown.detail))")
+
+        for _ in 0..<35 {
+            check(window.handleTaskKey(event(code: 126)), "rapid Up in tasks")
+        }
+        check(model.selectedTaskID == taskIDs[0] && model.draft == "Task 1\nBody for task 1",
+              "35 rapid Up steps return to task 1")
+        check(await model.databaseLoadCount() == loadsBeforeTasks, "upward task navigation performs zero database loads")
+        try? await Task.sleep(for: .milliseconds(120))
+        let taskUp = selectedRowVisible(in: .tasks)
+        check(taskUp.visible, "tasks list auto-scrolls back up to first task (\(taskUp.detail))")
+
+        // Dirty edits still flush before switching tasks.
+        model.editorMode = .insert
+        model.edit("Task 1 edited\nUpdated body")
+        model.selectTask(taskIDs[1])
+        for _ in 0..<100 where model.busy { try? await Task.sleep(for: .milliseconds(10)) }
+        check(model.selectedTaskID == taskIDs[1] && model.draft == "Task 2\nBody for task 2",
+              "switching from a dirty task moves to the requested task after saving")
+        let persisted = try await store.load()
+        check(persisted.tasks.first { $0.id == taskIDs[0] }?.body == "Task 1 edited\nUpdated body",
+              "dirty edit is persisted to SQLite before changing task selection")
+
+        // Reopening with a restored deep selection scrolls the restored task into view.
+        preferences.set(targetProject, forKey: "tasks.selectedProject")
+        preferences.set(taskIDs[35], forKey: "tasks.selectedTask")
+        let restoredModel = TaskManagerModel(dictation: DictationController(transcriber: TranscriberService(), preferences: preferences), databaseURL: url, preferences: preferences)
+        await restoredModel.open()
+        let restoredManager = TaskManagerWindow(model: restoredModel)
+        if let restoredWindow = restoredManager.window as? TaskNavigationWindow {
+            defer { restoredWindow.orderOut(nil); restoredModel.stopMonitoring() }
+            restoredWindow.setContentSize(NSSize(width: 1240, height: 480))
+            restoredManager.present()
+            restoredWindow.contentView?.layoutSubtreeIfNeeded()
+            try? await Task.sleep(for: .milliseconds(150))
+            restoredWindow.contentView?.layoutSubtreeIfNeeded()
+            if let host = findPane(.tasks, in: restoredWindow.contentView),
+               let table = findTable(in: host),
+               let scroll = table.enclosingScrollView,
+               table.selectedRow >= 0 {
+                let rowRect = table.rect(ofRow: table.selectedRow)
+                let visibleRect = scroll.documentVisibleRect
+                let visible = visibleRect.intersects(rowRect) && rowRect.minY >= visibleRect.minY - 1 && rowRect.maxY <= visibleRect.maxY + 1
+                check(visible, "initial open scrolls restored deep task into view (row=\(table.selectedRow) rowRect=\(rowRect) visibleRect=\(visibleRect))")
+            } else { check(false, "restored window has selectable tasks table") }
+        } else { check(false, "restored window exists") }
+    } catch { failures.append("task scrolling: \(error)") }
     return failures
 }
 

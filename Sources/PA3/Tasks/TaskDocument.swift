@@ -15,12 +15,27 @@ struct TaskProject: Identifiable, Equatable, Sendable {
 struct PersonalTask: Identifiable, Equatable, Sendable {
     let id: String
     var projectID: String
-    var body: String
-    var subject: String {
+    var body: String {
+        didSet {
+            subject = Self.makeSubject(from: body)
+            metadata = TaskMetadata(body)
+        }
+    }
+    private(set) var subject: String
+    private(set) var metadata: TaskMetadata
+
+    init(id: String, projectID: String, body: String) {
+        self.id = id
+        self.projectID = projectID
+        self.body = body
+        self.subject = Self.makeSubject(from: body)
+        self.metadata = TaskMetadata(body)
+    }
+
+    private static func makeSubject(from body: String) -> String {
         let first = body.components(separatedBy: .newlines).first ?? ""
         return first.trimmingCharacters(in: .whitespaces).isEmpty ? "Untitled task" : first
     }
-    var metadata: TaskMetadata { TaskMetadata(body) }
 }
 
 struct TaskSnapshot: Sendable {
@@ -30,7 +45,7 @@ struct TaskSnapshot: Sendable {
 }
 
 /// Derived values only. The original document is always the source of truth.
-struct TaskMetadata: Equatable {
+struct TaskMetadata: Equatable, Sendable {
     var due: String?
     var priority: String?
     var done = false

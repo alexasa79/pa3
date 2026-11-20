@@ -34,6 +34,7 @@ final class TaskManagerModel: ObservableObject {
     let dictation: DictationController
     weak var editor: TaskModalTextView?
     var onFocusRequested: (() -> Void)?
+    var onScrollSelectionRequested: ((TaskPane) -> Void)?
     var beforeDictation: (() async -> Void)?
     private(set) var databaseURL: URL?
     private var store: TaskStore?
@@ -214,9 +215,15 @@ final class TaskManagerModel: ObservableObject {
         guard let store, !busy, saving == nil, !conflict else { return }
         storageStatus = dirty ? "Unsaved changes" : await store.status()
         guard !dirty, editorMode == .normal else { return }
-        do { install(try await store.load()); errorMessage = "" }
-        catch { errorMessage = error.localizedDescription }
+        do {
+            let snapshot = try await store.load()
+            guard !busy, saving == nil, !conflict, !dirty, editorMode == .normal else { return }
+            install(snapshot)
+            errorMessage = ""
+        } catch { errorMessage = error.localizedDescription }
     }
+
+    func databaseLoadCount() async -> Int { await store?.loadCount ?? 0 }
 
     private func install(_ snapshot: TaskSnapshot) {
         categories = snapshot.categories
@@ -224,18 +231,27 @@ final class TaskManagerModel: ObservableObject {
         tasks = snapshot.tasks
         if !projects.contains(where: { $0.id == selectedProjectID }) { selectedProjectID = projects.first?.id }
         if !tasks.contains(where: { $0.id == selectedTaskID && $0.projectID == selectedProjectID }) {
-            selectedTaskID = tasks.first { $0.projectID == selectedProjectID && !$0.metadata.done }?.id
+            selectedTaskID = defaultTaskID(for: selectedProjectID)
         }
-        if revealedProjectID != selectedProjectID {
-            var parent = selectedProject?.parentID
-            var seen = Set<String>()
-            while let id = parent, seen.insert(id).inserted {
-                expandedProjects.insert(id)
-                parent = projects.first { $0.id == id }?.parentID
-            }
-            revealedProjectID = selectedProjectID
-        }
+        revealSelectedProject()
         loadSelection()
+    }
+
+    private func defaultTaskID(for projectID: String?) -> String? {
+        guard let projectID else { return nil }
+        return tasks.first { $0.projectID == projectID && !$0.metadata.done }?.id
+            ?? (showCompleted ? tasks.first { $0.projectID == projectID }?.id : nil)
+    }
+
+    private func revealSelectedProject() {
+        guard revealedProjectID != selectedProjectID else { return }
+        var parent = selectedProject?.parentID
+        var seen = Set<String>()
+        while let id = parent, seen.insert(id).inserted {
+            expandedProjects.insert(id)
+            parent = projects.first { $0.id == id }?.parentID
+        }
+        revealedProjectID = selectedProjectID
     }
 
     private func loadSelection() {
@@ -243,7 +259,7 @@ final class TaskManagerModel: ObservableObject {
         let changed = displayedTaskID != selectedTaskID || draft != body
         draft = body
         savedBody = draft
-        if changed { editorMode = .normal }
+        if changed, editorMode != .normal { editorMode = .normal }
         displayedTaskID = selectedTaskID
         preferences.set(selectedProjectID, forKey: "tasks.selectedProject")
         preferences.set(selectedTaskID, forKey: "tasks.selectedTask")
@@ -295,17 +311,48 @@ final class TaskManagerModel: ObservableObject {
         return await operation.value
     }
 
+    private var needsSaveBeforeSelectionChange: Bool {
+        dirty || editorMode != .normal || saving != nil
+    }
+
     func selectProject(_ id: String?) {
-        guard id != selectedProjectID else { return }
-        perform { [self] _ in
-            selectedProjectID = id
-            selectedTaskID = nil
+        guard id != selectedProjectID, !busy, !conflict else { return }
+        if needsSaveBeforeSelectionChange {
+            saveAndSelect { [self] in applyProjectSelection(id) }
+        } else {
+            applyProjectSelection(id)
         }
     }
 
     func selectTask(_ id: String?) {
-        guard id != selectedTaskID else { return }
-        perform { [self] _ in selectedTaskID = id }
+        guard id != selectedTaskID, !busy, !conflict else { return }
+        if needsSaveBeforeSelectionChange {
+            saveAndSelect { [self] in applyTaskSelection(id) }
+        } else {
+            applyTaskSelection(id)
+        }
+    }
+
+    private func saveAndSelect(_ apply: @escaping @MainActor () -> Void) {
+        guard !busy, store != nil else { return }
+        busy = true
+        Task { [self] in
+            defer { busy = false }
+            guard await finishEditing() else { return }
+            apply()
+        }
+    }
+
+    private func applyProjectSelection(_ id: String?) {
+        selectedProjectID = id
+        selectedTaskID = defaultTaskID(for: id)
+        revealSelectedProject()
+        loadSelection()
+    }
+
+    private func applyTaskSelection(_ id: String?) {
+        selectedTaskID = id
+        loadSelection()
     }
 
     func addProject(name: String, categoryID: String, parentID: String?) {
