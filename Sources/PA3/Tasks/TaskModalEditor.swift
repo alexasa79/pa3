@@ -56,6 +56,28 @@ struct TaskEditorView: NSViewRepresentable {
 /// composed Unicode characters, exact whitespace, and bidirectional layout.
 @MainActor
 final class TaskModalTextView: NSTextView {
+    private enum RepeatableEdit {
+        enum Motion { case line, word, partialWord, lineEnd }
+        enum InsertKind { case beforeCursor, afterCursor, lineStart, lineEnd, openBelow, openAbove }
+
+        case delete(motion: Motion, count: Int)
+        case change(motion: Motion, count: Int, insertedText: String)
+        case insert(kind: InsertKind, insertedText: String)
+        case deleteChar(count: Int)
+        case paste(after: Bool, count: Int)
+        case join(count: Int)
+    }
+
+    private struct InsertCapture {
+        enum Trigger {
+            case insert(RepeatableEdit.InsertKind)
+            case change(motion: RepeatableEdit.Motion, count: Int)
+        }
+        let trigger: Trigger
+        let prefix: String
+        let suffix: String
+    }
+
     let textGrid = TaskTextGrid()
     private(set) var mode: TaskEditorMode = .normal
     private var documentID: String?
@@ -63,6 +85,9 @@ final class TaskModalTextView: NSTextView {
     private var pendingCount = 1
     private var countText = ""
     private var yank = ""
+    private var lastEdit: RepeatableEdit?
+    private var insertCapture: InsertCapture?
+    private var isReplayingRepeat = false
     private var histories: [String: UndoManager] = [:]
     private var documentTexts: [String: String] = [:]
     private var groupedInsertion = false
@@ -105,6 +130,7 @@ final class TaskModalTextView: NSTextView {
         }
         breakUndoCoalescing()
         mode = next
+        if next != .insert { insertCapture = nil }
         insertionPointColor = next == .insert ? PaperTheme.ink : .clear
         pending = ""; pendingCount = 1; countText = ""
         if next == .insert, undoManager != nil {
@@ -294,12 +320,52 @@ final class TaskModalTextView: NSTextView {
         return true
     }
 
-    func leaveInsertMode(notify: Bool = true) {
-        if mode == .insert { expandDueDateFormulas() }
+    private func beginInsertCapture(_ trigger: InsertCapture.Trigger) {
+        guard !isReplayingRepeat else { return }
+        let source = string as NSString
+        let point = min(selectedRange().location, source.length)
+        insertCapture = InsertCapture(
+            trigger: trigger,
+            prefix: source.substring(to: point),
+            suffix: source.substring(from: point)
+        )
+    }
+
+    private func finishInsertCapture() {
+        guard !isReplayingRepeat, let capture = insertCapture else { return }
+        insertCapture = nil
+        let current = string as NSString
+        let prefixLen = (capture.prefix as NSString).length
+        let suffixLen = (capture.suffix as NSString).length
+        guard current.length >= prefixLen + suffixLen,
+              current.substring(to: prefixLen) == capture.prefix,
+              current.substring(from: current.length - suffixLen) == capture.suffix else {
+            return
+        }
+        let inserted = current.substring(with: NSRange(location: prefixLen, length: current.length - prefixLen - suffixLen))
+        switch capture.trigger {
+        case .insert(let kind):
+            if !inserted.isEmpty || kind == .openBelow || kind == .openAbove {
+                lastEdit = .insert(kind: kind, insertedText: inserted)
+            }
+        case .change(let motion, let count):
+            lastEdit = .change(motion: motion, count: count, insertedText: inserted)
+        }
+    }
+
+    private func stepBackWithinLine() {
         let source = string as NSString
         let point = selectedRange().location
-        if mode == .insert, point > TaskEditorText.line(source, at: point).range.location {
+        if point > TaskEditorText.line(source, at: point).range.location {
             setSelectedRange(NSRange(location: source.rangeOfComposedCharacterSequence(at: point - 1).location, length: 0))
+        }
+    }
+
+    func leaveInsertMode(notify: Bool = true) {
+        if mode == .insert {
+            expandDueDateFormulas()
+            finishInsertCapture()
+            stepBackWithinLine()
         }
         setMode(.normal, notify: notify)
     }
@@ -373,6 +439,143 @@ final class TaskModalTextView: NSTextView {
         }
     }
 
+    private func executeOperator(_ operation: String, motion: RepeatableEdit.Motion, count: Int, enterInsert: Bool = true) {
+        let source = string as NSString
+        let point = min(selectedRange().location, source.length)
+        var range: NSRange?
+        var lineSelection: (range: NSRange, contentEnd: Int)?
+        switch motion {
+        case .line:
+            let lines = TaskEditorText.lines(source, at: point, count: count)
+            lineSelection = lines
+            if operation == "d" { range = TaskEditorText.deletionRange(source, lines: lines) }
+            else if operation == "c" { range = NSRange(location: lines.range.location, length: lines.contentEnd - lines.range.location) }
+            else { range = lines.range }
+        case .word:
+            range = TaskEditorText.words(source, at: point, count: count, whole: true, trailingSpace: operation != "c")
+        case .partialWord:
+            range = TaskEditorText.words(source, at: point, count: count, whole: false, trailingSpace: false)
+        case .lineEnd:
+            range = NSRange(location: point, length: lineEnd(point) - point)
+        }
+        guard let range else { return }
+        let copied = source.substring(with: lineSelection?.range ?? range)
+        if !copied.isEmpty || (operation == "y" && lineSelection != nil) {
+            yank = copied
+            if operation == "y", let lines = lineSelection, lines.contentEnd == NSMaxRange(lines.range) {
+                yank += "\n" // yy remains linewise even on the last line.
+            }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(yank, forType: .string)
+        }
+        guard operation != "y" else { return }
+        let logicalStart = lineSelection?.range.location ?? range.location
+        let previousLine = logicalStart > 0
+            ? TaskEditorText.line(source, at: logicalStart - 1).range.location : 0
+        let removedPrecedingNewline = range.location < logicalStart
+        if operation == "c", enterInsert { setMode(.insert) }
+        if range.length > 0 { replace(range, with: "") }
+        if operation == "c" {
+            if enterInsert { beginInsertCapture(.change(motion: motion, count: count)) }
+        } else if operation == "d" {
+            if motion == .line {
+                let target = removedPrecedingNewline ? previousLine : logicalStart
+                setSelectedRange(NSRange(location: min(target, (string as NSString).length), length: 0))
+            } else {
+                clampNormalCursor()
+            }
+            if !isReplayingRepeat, range.length > 0 {
+                lastEdit = .delete(motion: motion, count: count)
+            }
+            scrollRangeToVisible(selectedRange())
+        }
+    }
+
+    private func openLine(below: Bool, enterInsert: Bool) {
+        let source = string as NSString
+        let point = min(selectedRange().location, source.length)
+        let start = source.lineRange(for: NSRange(location: point, length: 0)).location
+        let position = below ? lineEnd(point) : start
+        let indent = below ? TaskEditorText.indentation(source, at: point)
+            : (start > 0 ? TaskEditorText.indentation(source, at: start - 1) : "")
+        if enterInsert { setMode(.insert) }
+        replace(NSRange(location: position, length: 0), with: below ? "\n" + indent : indent + "\n")
+        if !below { setSelectedRange(NSRange(location: start + (indent as NSString).length, length: 0)) }
+        if enterInsert { beginInsertCapture(.insert(below ? .openBelow : .openAbove)) }
+    }
+
+    private func deleteCharacters(count: Int) {
+        let source = string as NSString
+        let point = min(selectedRange().location, source.length)
+        if selectedRange().length > 0 {
+            replace(selectedRange(), with: "")
+            if !isReplayingRepeat { lastEdit = .deleteChar(count: count) }
+        } else if point < source.length {
+            var range = source.rangeOfComposedCharacterSequence(at: point)
+            for _ in 1..<count where NSMaxRange(range) < source.length {
+                range = NSUnionRange(range, source.rangeOfComposedCharacterSequence(at: NSMaxRange(range)))
+            }
+            replace(range, with: "")
+            if !isReplayingRepeat { lastEdit = .deleteChar(count: count) }
+        }
+    }
+
+    private func replayLastEdit(explicitCount: Int?) {
+        guard let edit = lastEdit else { return }
+        isReplayingRepeat = true
+        defer { isReplayingRepeat = false }
+        let ownGroup = undoManager?.groupingLevel == 0
+        if ownGroup { undoManager?.beginUndoGrouping() }
+        defer { if ownGroup { undoManager?.endUndoGrouping() } }
+        switch edit {
+        case .delete(let motion, let recordedCount):
+            executeOperator("d", motion: motion, count: explicitCount ?? recordedCount)
+        case .change(let motion, let recordedCount, let insertedText):
+            executeOperator("c", motion: motion, count: explicitCount ?? recordedCount, enterInsert: false)
+            if !insertedText.isEmpty {
+                replace(selectedRange(), with: insertedText)
+                stepBackWithinLine()
+            } else {
+                clampNormalCursor()
+            }
+        case .insert(let kind, let insertedText):
+            let repetitions = explicitCount ?? 1
+            for _ in 0..<repetitions {
+                let source = string as NSString
+                let point = min(selectedRange().location, source.length)
+                switch kind {
+                case .beforeCursor: break
+                case .afterCursor:
+                    if point < lineEnd(point) {
+                        setSelectedRange(NSRange(location: NSMaxRange(source.rangeOfComposedCharacterSequence(at: point)), length: 0))
+                    }
+                case .lineStart:
+                    setSelectedRange(NSRange(location: TaskEditorText.line(source, at: point).range.location, length: 0))
+                case .lineEnd:
+                    setSelectedRange(NSRange(location: lineEnd(point), length: 0))
+                case .openBelow:
+                    openLine(below: true, enterInsert: false)
+                case .openAbove:
+                    openLine(below: false, enterInsert: false)
+                }
+                if !insertedText.isEmpty {
+                    replace(selectedRange(), with: insertedText)
+                }
+            }
+            if !insertedText.isEmpty {
+                stepBackWithinLine()
+            } else {
+                clampNormalCursor()
+            }
+        case .deleteChar(let recordedCount):
+            deleteCharacters(count: explicitCount ?? recordedCount)
+        case .paste(let after, let recordedCount):
+            pasteModal(after: after, count: explicitCount ?? recordedCount)
+        case .join(let recordedCount):
+            joinLines(count: explicitCount ?? recordedCount)
+        }
+    }
+
     override func keyDown(with event: NSEvent) {
         guard isEditable else { return }
         if handleNavigation(event) { return }
@@ -416,68 +619,43 @@ final class TaskModalTextView: NSTextView {
             countText = String((countText + key).prefix(3))
             return
         }
-        let count = max(1, Int(countText) ?? 1) * (pending.isEmpty ? 1 : pendingCount)
+        let explicitCount = Int(countText)
+        let count = max(1, explicitCount ?? 1) * (pending.isEmpty ? 1 : pendingCount)
         let source = string as NSString
         let point = min(selectedRange().location, source.length)
         if !pending.isEmpty {
             let operation = pending
             pending = ""; pendingCount = 1; countText = ""
             if operation == "g" { if key == "g" { moveToBeginningOfDocument(nil) }; return }
-            var range: NSRange?
-            var lineSelection: (range: NSRange, contentEnd: Int)?
-            if key == operation {
-                let lines = TaskEditorText.lines(source, at: point, count: count)
-                lineSelection = lines
-                if operation == "d" { range = TaskEditorText.deletionRange(source, lines: lines) }
-                else if operation == "c" { range = NSRange(location: lines.range.location, length: lines.contentEnd - lines.range.location) }
-                else { range = lines.range }
-            } else if key == "w" || key == "W" {
-                range = TaskEditorText.words(source, at: point, count: count, whole: key == "w",
-                                             trailingSpace: key == "w" && operation != "c")
-            } else if key == "$" { range = NSRange(location: point, length: lineEnd(point) - point) }
-            if let range {
-                yank = source.substring(with: lineSelection?.range ?? range)
-                if operation == "y", let lines = lineSelection, lines.contentEnd == NSMaxRange(lines.range) {
-                    yank += "\n" // yy remains linewise even on the last line.
-                }
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(yank, forType: .string)
-                if operation != "y" {
-                    let logicalStart = lineSelection?.range.location ?? range.location
-                    let previousLine = logicalStart > 0
-                        ? TaskEditorText.line(source, at: logicalStart - 1).range.location : 0
-                    let removedPrecedingNewline = range.location < logicalStart
-                    if operation == "c" { setMode(.insert) }
-                    if range.length > 0 { replace(range, with: "") }
-                    if operation == "d" {
-                        if key == "d" {
-                            let target = removedPrecedingNewline ? previousLine : logicalStart
-                            setSelectedRange(NSRange(location: min(target, (string as NSString).length), length: 0))
-                        } else {
-                            clampNormalCursor()
-                        }
-                        scrollRangeToVisible(selectedRange())
-                    }
-                }
+            let motion: RepeatableEdit.Motion? = switch key {
+            case operation: .line
+            case "w": .word
+            case "W": .partialWord
+            case "$": .lineEnd
+            default: nil
             }
+            if let motion { executeOperator(operation, motion: motion, count: count) }
             return
         }
         switch key {
         case " ": onDictation?()
-        case "i": setMode(.insert)
+        case "i":
+            setMode(.insert)
+            beginInsertCapture(.insert(.beforeCursor))
         case "a":
             if point < lineEnd(point) { setSelectedRange(NSRange(location: NSMaxRange(source.rangeOfComposedCharacterSequence(at: point)), length: 0)) }
             setMode(.insert)
-        case "I": setSelectedRange(NSRange(location: TaskEditorText.line(source, at: point).range.location, length: 0)); setMode(.insert)
-        case "A": setSelectedRange(NSRange(location: lineEnd(point), length: 0)); setMode(.insert)
-        case "o", "O":
-            let start = source.lineRange(for: NSRange(location: point, length: 0)).location
-            let position = key == "o" ? lineEnd(point) : start
-            let indent = key == "o" ? TaskEditorText.indentation(source, at: point)
-                : (start > 0 ? TaskEditorText.indentation(source, at: start - 1) : "")
+            beginInsertCapture(.insert(.afterCursor))
+        case "I":
+            setSelectedRange(NSRange(location: TaskEditorText.line(source, at: point).range.location, length: 0))
             setMode(.insert)
-            replace(NSRange(location: position, length: 0), with: key == "o" ? "\n" + indent : indent + "\n")
-            if key == "O" { setSelectedRange(NSRange(location: start + (indent as NSString).length, length: 0)) }
+            beginInsertCapture(.insert(.lineStart))
+        case "A":
+            setSelectedRange(NSRange(location: lineEnd(point), length: 0))
+            setMode(.insert)
+            beginInsertCapture(.insert(.lineEnd))
+        case "o", "O":
+            openLine(below: key == "o", enterInsert: true)
         case "h", "\u{f702}": for _ in 0..<count { moveNormalHorizontally(forward: false) }
         case "l", "\u{f703}": for _ in 0..<count { moveNormalHorizontally(forward: true) }
         case "j", "\u{f701}": for _ in 0..<count { moveDown(nil) }
@@ -498,26 +676,18 @@ final class TaskModalTextView: NSTextView {
             if last.range.length == 0, last.range.location > 0 { last = TaskEditorText.line(source, at: last.range.location - 1) }
             setSelectedRange(NSRange(location: TaskEditorText.lastCharacter(source, at: last.range.location), length: 0))
         case "d", "c", "y": pending = key; pendingCount = count; countText = ""
-        case "D", "C":
-            if key == "C" { setMode(.insert) }
-            let length = lineEnd(point) - point
-            if length > 0 {
-                replace(NSRange(location: point, length: length), with: "")
-            }
-            if key == "D" { clampNormalCursor() }
-        case "x":
-            if selectedRange().length > 0 { replace(selectedRange(), with: "") }
-            else if point < source.length {
-                var range = source.rangeOfComposedCharacterSequence(at: point)
-                for _ in 1..<count where NSMaxRange(range) < source.length {
-                    range = NSUnionRange(range, source.rangeOfComposedCharacterSequence(at: NSMaxRange(range)))
-                }
-                replace(range, with: "")
-            }
-        case "p", "P": pasteModal(after: key == "p", count: count)
+        case "D": executeOperator("d", motion: .lineEnd, count: 1)
+        case "C": executeOperator("c", motion: .lineEnd, count: 1)
+        case "x": deleteCharacters(count: count)
+        case "p", "P":
+            pasteModal(after: key == "p", count: count)
+            if !isReplayingRepeat { lastEdit = .paste(after: key == "p", count: count) }
+        case ".": replayLastEdit(explicitCount: explicitCount)
         case "u": for _ in 0..<count { undoManager?.undo() }
         case "U": for _ in 0..<count { undoManager?.redo() }
-        case "J": joinLines(count: count)
+        case "J":
+            joinLines(count: count)
+            if !isReplayingRepeat { lastEdit = .join(count: count) }
         case "/":
             let sender = NSMenuItem()
             sender.tag = Int(NSFindPanelAction.showFindPanel.rawValue)

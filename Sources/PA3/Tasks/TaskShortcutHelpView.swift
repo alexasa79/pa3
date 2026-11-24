@@ -78,7 +78,7 @@ struct TaskShortcutHelpView: View {
                 "dW / cW: delete / change from the cursor to word end",
                 "d$ / c$ / y$: delete / change / copy to line end", "p / P: paste after / before; whole-line copies paste as lines",
                 "G, A, Control-Space: append dictation at the end",
-                "J: join lines", "u / U / Control-R: undo / redo / redo", "/ or Command-F: find text",
+                "J: join lines", ".: repeat the last change", "u / U / Control-R: undo / redo / redo", "/ or Command-F: find text",
                 "Command-S: retry saving in Normal mode"
             ]),
             ("Description · Insert mode", [

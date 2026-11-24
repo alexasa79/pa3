@@ -189,5 +189,75 @@ func runTaskEditorParityTests() -> [String] {
     check(editor.selectedRange().location == 2, "plain Normal Left does not cross a logical line boundary")
     show("abc"); editor.setSelectedRange(NSRange(location: 0, length: 2)); press("\u{f703}", code: 124)
     check(editor.selectedRange().location == 2, "native Right collapses an explicit selection")
+
+    // Repeat last change (.) across deletes, changes, inserts, counts, and documents.
+    let fresh = TaskModalTextView(frame: NSRect(x: 0, y: 0, width: 320, height: 500))
+    fresh.isRichText = false; fresh.allowsUndo = true
+    fresh.display(documentID: "repeat-empty", body: "Hello World")
+    fresh.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                         windowNumber: 0, context: nil, characters: ".", charactersIgnoringModifiers: ".",
+                                         isARepeat: false, keyCode: 47)!)
+    check(fresh.string == "Hello World", ". with no prior edit leaves text untouched")
+
+    show("one\ntwo\nthree\nfour", at: 0)
+    keys("dd."); text("three\nfour", ". repeats dd")
+    press("u"); text("two\nthree\nfour", "repeated dd undoes in one step")
+
+    show("1 2 3 4 5 6 7 8 9 10 11 12 13", at: 0)
+    keys("2d3w."); text("13", ". preserves multiplied operator count (2d3w -> 6 words)")
+
+    show("word1 word2 word3 word4", at: 0)
+    keys("dw"); keys("2."); text("word4", "explicit count on . overrides recorded count")
+
+    show("Line 1 text\nLine 2 text\nLine 3 text", at: 5)
+    keys("D"); editor.setSelectedRange(NSRange(location: 11, length: 0)); keys(".")
+    text("Line \nLine \nLine 3 text", ". repeats D across lines")
+
+    show("abcdef", at: 0)
+    keys("2x."); text("ef", ". repeats counted x")
+
+    show("Hello World", at: 5)
+    press("i"); editor.insertText(",", replacementRange: editor.selectedRange()); escape()
+    text("Hello, World", "initial insert records repeatable text")
+    keys("$."); text("Hello, Worl,d", ". repeats i insertion at new cursor")
+
+    // Repeat insert across documents (like Veda's repeat across buffers).
+    show("Buffer2", at: 6)
+    keys("."); text("Buffer,2", ". repeats last edit across tasks")
+
+    show("one\ntwo", at: 0)
+    press("A"); editor.insertText("!", replacementRange: editor.selectedRange()); escape()
+    keys("j."); text("one!\ntwo!", ". repeats A append at end of next line")
+
+    show("one\ntwo", at: 0)
+    press("I"); editor.insertText("- ", replacementRange: editor.selectedRange()); escape()
+    keys("j."); text("- one\n- two", ". repeats I insert at start of next line")
+
+    show("  first\n    second", at: 2)
+    press("o"); editor.insertText("item", replacementRange: editor.selectedRange()); escape()
+    text("  first\n  item\n    second", "initial o with text")
+    editor.setSelectedRange(NSRange(location: 19, length: 0)) // on "    second"
+    keys("."); text("  first\n  item\n    second\n    item", ". repeats o carrying target line indentation")
+
+    show("alpha beta gamma", at: 0)
+    keys("cw"); editor.insertText("X", replacementRange: editor.selectedRange()); escape()
+    text("X beta gamma", "initial cw replacement")
+    keys("w."); text("X X gamma", ". repeats cw with replacement text")
+    press("u"); text("X beta gamma", "repeated cw undoes in one step")
+
+    show("one\ntwo\nthree", at: 0)
+    keys("cc"); editor.insertText("NEW", replacementRange: editor.selectedRange()); escape()
+    keys("j."); text("NEW\nNEW\nthree", ". repeats cc with replacement text")
+
+    show("a\nb\nc", at: 0)
+    keys("J."); text("a b c", ". repeats J join")
+
+    show("AB", at: 0); copy("x")
+    keys("p."); text("AxxB", ". repeats p")
+
+    show("ABCD", at: 0)
+    keys("x"); keys("yy"); keys(".")
+    text("CD", "yy does not clobber the repeatable last change")
+
     return failures
 }

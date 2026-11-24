@@ -38,8 +38,8 @@ PA3 now groups a change command and its typed replacement into one undo step. Th
 
 | Area | Veda | PA3 today | Suggested priority |
 | --- | --- | --- | --- |
-| Repeat last change | `.` repeats the operation, inserted text, and count. | Missing. Undo/redo is not a substitute. | High |
-| Registers and clipboard | Named registers and the delete register, including `'dp`; deletes need not overwrite the system clipboard. | No register prefix parser. Operator deletes/changes still share the clipboard with yanks; `x` and `D` do not populate a consistent delete register. | High |
+| Repeat last change | `.` repeats the operation, inserted text, and count. | Supported for `dd`/`dw`/`dW`/`d$`/`D`, `cc`/`cw`/`cW`/`c$`/`C` + text, `i`/`a`/`I`/`A`/`o`/`O` + text, `x`, `p`/`P`, and `J`, with counts and single-step undo. | Done |
+| Registers and clipboard | Named registers and the delete register, including `'dp`; deletes need not overwrite the system clipboard. | Deliberate PA3 choice: as a local macOS editor, deletes cut directly into the system clipboard so `dd` → `p` works out of the box. | Retained |
 | Visual selection | `v` / `V`, selection operators, visual indentation and case conversion. | Native Shift-selection and Command-C/X/V; `x` and paste handle explicit selections. No Veda visual modes. | High |
 | Text objects and operator motions | `iw` / `aw`, bracket objects, arguments, blocks, functions, whole-buffer objects; character and line motions after an operator. | Only doubled line operators, `w`, `W`, and `$` are parsed. For example, `diw`, `dA`, and `d` + Down are not implemented. | High |
 | Character search | `f` / `t` and their operator forms. | Missing. | Medium |
