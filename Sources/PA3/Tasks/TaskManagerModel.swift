@@ -209,6 +209,9 @@ final class TaskManagerModel: ObservableObject {
 
     func changeEditorMode(_ mode: TaskEditorMode) {
         let previous = editorMode
+        if previous == .insert, mode == .normal {
+            expandDueFormulas()
+        }
         editorMode = mode
         if previous == .insert, mode == .normal {
             saveDebounce?.cancel()
@@ -219,8 +222,18 @@ final class TaskManagerModel: ObservableObject {
         }
     }
 
+    private func expandDueFormulas() {
+        if let editor {
+            editor.expandDueDateFormulas()
+        } else {
+            let expanded = TaskMetadata.expandingDueFormulas(in: draft).text
+            if expanded != draft { edit(expanded) }
+        }
+    }
+
     private func finishEditing() async -> Bool {
         await finishDictation()
+        if editorMode == .insert { expandDueFormulas() }
         editor?.setMode(.normal, notify: false)
         editorMode = .normal
         return await flush()
@@ -541,10 +554,11 @@ final class TaskManagerModel: ObservableObject {
         let operation = Task { [self] in
             let text = await dictation.finishForDocument()
             let result = insertion.result(for: text)
-            edit(result.body)
+            let expanded = TaskMetadata.expandingDueFormulas(in: result.body, cursorLocation: result.cursorLocation)
+            edit(expanded.text)
             self.insertion = nil
             editorMode = .normal
-            editor?.finishDictation(original: insertion.original, body: result.body, cursorLocation: result.cursorLocation)
+            editor?.finishDictation(original: insertion.original, body: expanded.text, cursorLocation: expanded.cursorLocation)
             editor?.window?.makeFirstResponder(editor)
             if save { _ = await flush() }
             else { saveDebounce?.cancel(); saveDebounce = nil }

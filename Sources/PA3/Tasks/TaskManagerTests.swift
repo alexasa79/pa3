@@ -192,9 +192,168 @@ func runTaskManagerTests() async -> [String] {
     failures += runTaskTextNavigationTests()
     failures += runTaskLineNumberTests()
     failures += runTaskSearchRankingTests()
+    failures += runTaskDueDateTests()
+    failures += runTaskTagPrecedenceTests()
     failures += await runTaskNavigationTests()
     failures += await runTaskListScrollingTests()
     failures += await runTaskSearchInteractionTests()
+    return failures
+}
+
+private func runTaskTagPrecedenceTests() -> [String] {
+    var failures: [String] = []
+    func check(_ condition: Bool, _ name: String) { if !condition { failures.append("task tag precedence: " + name) } }
+
+    var utc = Calendar(identifier: .gregorian)
+    utc.timeZone = TimeZone(secondsFromGMT: 0)!
+    let nov23 = utc.date(from: DateComponents(year: 2026, month: 11, day: 23, hour: 12))!
+
+    // Multiple priority tags across lines and aliases: last tag wins.
+    let multiPriorityDoc = """
+    Ship release
+    Initial estimate #priority:4
+    Escalated during standup #prio:p2
+    Blocker now #pri:0
+    """
+    check(TaskMetadata(multiPriorityDoc, referenceDate: nov23, calendar: utc).priority == 0,
+          "last priority tag wins across lines and aliases (#priority -> #prio -> #pri)")
+    let reversedPriorityDoc = """
+    Ship release
+    #pri:0
+    #prio:p2
+    #priority:4
+    """
+    check(TaskMetadata(reversedPriorityDoc, referenceDate: nov23, calendar: utc).priority == 4,
+          "last priority tag wins even when lower priority comes later")
+
+    // Multiple due date tags across lines and formats: last tag wins.
+    let multiDueDoc = """
+    Ship release
+    Original #due:2026-11-10
+    Slipped #due:12/05/2026
+    Latest #due:+2w3d
+    """
+    check(TaskMetadata(multiDueDoc, referenceDate: nov23, calendar: utc).due == "2026-12-10",
+          "last due tag wins across lines and formats (ISO -> MM/DD/YYYY -> formula)")
+    let reversedDueDoc = """
+    Ship release
+    #due:+2w3d
+    #due:12/05/2026
+    #due:2026-11-10
+    """
+    check(TaskMetadata(reversedDueDoc, referenceDate: nov23, calendar: utc).due == "2026-11-10",
+          "last due tag wins when earlier date appears later in the document")
+
+    // Multiple priority and due tags on the same line.
+    let sameLine = TaskMetadata("Triage #pri:5 #due:2026-11-01 #prio:p1 #due:tomorrow", referenceDate: nov23, calendar: utc)
+    check(sameLine.priority == 1 && sameLine.due == "2026-11-24",
+          "last priority and due tags win on the same line")
+
+    // Invalid trailing tags do not clobber an earlier valid tag.
+    let trailingInvalid = TaskMetadata("#pri:2 #pri:9 #due:2026-11-23 #due:2026-02-30", referenceDate: nov23, calendar: utc)
+    check(trailingInvalid.priority == 2 && trailingInvalid.due == "2026-11-23",
+          "last valid tag is preserved when a later tag is invalid")
+
+    // Multiple status/#done tags: last tag wins.
+    check(!TaskMetadata("Task\n#done\n#status:open", referenceDate: nov23, calendar: utc).done,
+          "#status:open after #done reopens the task")
+    check(TaskMetadata("Task\n#status:open\n#done", referenceDate: nov23, calendar: utc).done,
+          "#done after #status:open marks the task done")
+    check(!TaskMetadata("Task\n#status:done\n#status:open", referenceDate: nov23, calendar: utc).done,
+          "#status:open after #status:done takes precedence")
+
+    // Appending newer tags to a PersonalTask updates its cached metadata.
+    var task = PersonalTask(id: "t", projectID: "p", body: "Follow up\n#pri:3 #due:2026-11-20")
+    check(task.metadata.priority == 3 && task.metadata.due == "2026-11-20", "initial task metadata")
+    task.body += "\nUpdate: #prio:p1 #due:12/15/2026"
+    check(task.metadata.priority == 1 && task.metadata.due == "2026-12-15",
+          "appended priority and due tags override earlier tags on PersonalTask")
+
+    return failures
+}
+
+@MainActor
+private func runTaskDueDateTests() -> [String] {
+    var failures: [String] = []
+    func check(_ condition: Bool, _ name: String) { if !condition { failures.append("task due dates: " + name) } }
+
+    var utc = Calendar(identifier: .gregorian)
+    utc.timeZone = TimeZone(secondsFromGMT: 0)!
+    let nov23 = utc.date(from: DateComponents(year: 2026, month: 11, day: 23, hour: 12))!
+    let jan31 = utc.date(from: DateComponents(year: 2026, month: 1, day: 31, hour: 12))!
+
+    // Plain dates: ISO YYYY-MM-DD and month/day/year forms.
+    check(TaskMetadata("#due:2026-11-23", referenceDate: nov23, calendar: utc).due == "2026-11-23", "ISO YYYY-MM-DD")
+    check(TaskMetadata("#due:11/23/2026", referenceDate: nov23, calendar: utc).due == "2026-11-23", "MM/DD/YYYY")
+    check(TaskMetadata("#due:3/5/2026", referenceDate: nov23, calendar: utc).due == "2026-03-05", "M/D/YYYY zero-padded")
+    check(TaskMetadata("#due:12-5-2026", referenceDate: nov23, calendar: utc).due == "2026-12-05", "M-D-YYYY")
+    check(TaskMetadata("#due:02/29/2028", referenceDate: nov23, calendar: utc).due == "2028-02-29", "leap day MM/DD/YYYY")
+    check(TaskMetadata("#due:02/30/2026", referenceDate: nov23, calendar: utc).due == nil
+          && !TaskMetadata("#due:02/30/2026", referenceDate: nov23, calendar: utc).warnings.isEmpty, "reject invalid MM/DD/YYYY")
+
+    // Keywords and relative formulas resolve cleanly without warnings.
+    let expectedFormulas: [(String, Date, String)] = [
+        ("today", nov23, "2026-11-23"),
+        ("TODAY", nov23, "2026-11-23"),
+        ("tomorrow", nov23, "2026-11-24"),
+        ("Tomorrow", nov23, "2026-11-24"),
+        ("today+1w", nov23, "2026-11-30"),
+        ("+1w", nov23, "2026-11-30"),
+        ("+3d", nov23, "2026-11-26"),
+        ("+2w3d", nov23, "2026-12-10"),
+        ("today+2w3d", nov23, "2026-12-10"),
+        ("tomorrow+1w", nov23, "2026-12-01"),
+        ("+1m", nov23, "2026-12-23"),
+        ("+1m2w3d", nov23, "2027-01-09"),
+        ("+2w+3d", nov23, "2026-12-10"),
+        ("+1m", jan31, "2026-02-28")
+    ]
+    for (formula, ref, expected) in expectedFormulas {
+        let parsed = TaskMetadata("#due:\(formula)", referenceDate: ref, calendar: utc)
+        check(parsed.due == expected && parsed.warnings.isEmpty, "formula #due:\(formula) -> \(expected) (got \(String(describing: parsed.due)))")
+    }
+
+    for invalid in ["+", "+3", "+w", "today+", "today+1w+", "+1y", "nextweek"] {
+        let parsed = TaskMetadata("#due:\(invalid)", referenceDate: nov23, calendar: utc)
+        check(parsed.due == nil && !parsed.warnings.isEmpty, "reject invalid due formula #due:\(invalid)")
+    }
+
+    // Text expansion replaces keywords/formulas while preserving punctuation and leaving plain dates alone.
+    let mixed = "Finish report #due:tomorrow. Follow up (#due:+2w3d) and keep #due:12/05/2026"
+    let expanded = TaskMetadata.expandingDueFormulas(in: mixed, cursorLocation: (mixed as NSString).length, referenceDate: nov23, calendar: utc)
+    check(expanded.text == "Finish report #due:2026-11-24. Follow up (#due:2026-12-10) and keep #due:12/05/2026",
+          "expandingDueFormulas replaces formulas, preserves punctuation, and leaves plain dates intact (got: \(expanded.text))")
+    check(expanded.cursorLocation == (expanded.text as NSString).length, "cursor tracks replacement length delta")
+
+    // Leaving Insert mode in TaskModalTextView replaces relative due formulas and stays one undo step.
+    let editor = TaskModalTextView(frame: NSRect(x: 0, y: 0, width: 500, height: 300))
+    editor.isRichText = false
+    editor.allowsUndo = true
+    let expectedToday = TaskMetadata.parseDueFormula("today")!
+    let expectedMixed = TaskMetadata.parseDueFormula("+2w3d")!
+    editor.display(documentID: "due-expand", body: "Ship feature")
+    editor.setSelectedRange(NSRange(location: 12, length: 0))
+    editor.setMode(.insert)
+    editor.insertText(" #due:today", replacementRange: editor.selectedRange())
+    check(editor.string == "Ship feature #due:today", "formula is not rewritten while still in Insert mode")
+    editor.leaveInsertMode()
+    check(editor.string == "Ship feature #due:\(expectedToday)" && editor.mode == .normal,
+          "leaving Insert mode replaces #due:today with today's YYYY-MM-DD date (got: \(editor.string))")
+    check(editor.selectedRange().location == (editor.string as NSString).length - 1,
+          "cursor lands on last character of expanded date after Escape from Insert")
+    editor.undoManager?.undo()
+    check(editor.string == "Ship feature", "Insert typing and due-formula expansion undo together in one step")
+
+    editor.setSelectedRange(NSRange(location: 12, length: 0))
+    editor.setMode(.insert)
+    editor.insertText(" #due:+2w3d", replacementRange: editor.selectedRange())
+    editor.isEditable = false // Simulate busy state during finishEditing/close.
+    check(editor.expandDueDateFormulas(), "expansion still succeeds when editor is temporarily busy")
+    editor.isEditable = true
+    editor.setMode(.normal)
+    check(editor.string == "Ship feature #due:\(expectedMixed)",
+          "mixed formula +2w3d expands cleanly (got: \(editor.string))")
+
     return failures
 }
 
@@ -494,6 +653,19 @@ private func runTaskListScrollingTests() async -> [String] {
         let persisted = try await store.load()
         check(persisted.tasks.first { $0.id == taskIDs[0] }?.body == "Task 1 edited\nUpdated body",
               "dirty edit is persisted to SQLite before changing task selection")
+
+        // Exiting Insert mode expands due formulas before persisting to SQLite.
+        let expectedTomorrow = TaskMetadata.parseDueFormula("tomorrow")!
+        let expectedPlusWeek = TaskMetadata.parseDueFormula("today+1w")!
+        model.activatePane(.description)
+        model.editor?.setMode(.insert)
+        model.editor?.insertText(" #due:tomorrow #due:today+1w", replacementRange: NSRange(location: (model.draft as NSString).length, length: 0))
+        model.escapeDescription()
+        _ = await model.flush()
+        let persistedFormula = try await store.load().tasks.first { $0.id == taskIDs[1] }?.body
+        check(persistedFormula == "Task 2\nBody for task 2 #due:\(expectedTomorrow) #due:\(expectedPlusWeek)",
+              "exiting Insert persists concrete dates instead of keywords/formulas (got: \(String(describing: persistedFormula)))")
+        model.activatePane(.tasks)
 
         // Reopening with a restored deep selection scrolls the restored task into view.
         preferences.set(targetProject, forKey: "tasks.selectedProject")

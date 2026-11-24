@@ -254,7 +254,39 @@ final class TaskModalTextView: NSTextView {
         didChangeText()
     }
 
+    @discardableResult
+    func expandDueDateFormulas(referenceDate: Date = Date(), calendar: Calendar = .current) -> Bool {
+        let replacements = TaskMetadata.dueFormulaReplacements(in: string, referenceDate: referenceDate, calendar: calendar)
+        guard !replacements.isEmpty else { return false }
+        let editable = isEditable
+        isEditable = true
+        defer { isEditable = editable }
+        let originalSelection = selectedRange()
+        var cursor = originalSelection.location
+        let ownGroup = undoManager?.groupingLevel == 0
+        if ownGroup { undoManager?.beginUndoGrouping() }
+        defer { if ownGroup { undoManager?.endUndoGrouping() } }
+        var changed = false
+        for item in replacements.reversed() {
+            guard shouldChangeText(in: item.range, replacementString: item.replacement) else { continue }
+            textStorage?.replaceCharacters(in: item.range, with: item.replacement)
+            changed = true
+            let delta = (item.replacement as NSString).length - item.range.length
+            if cursor >= NSMaxRange(item.range) {
+                cursor += delta
+            } else if cursor > item.range.location {
+                cursor = item.range.location + (item.replacement as NSString).length
+            }
+        }
+        guard changed else { return false }
+        let clamped = min(max(0, cursor), (string as NSString).length)
+        setSelectedRange(NSRange(location: clamped, length: 0))
+        didChangeText()
+        return true
+    }
+
     func leaveInsertMode(notify: Bool = true) {
+        if mode == .insert { expandDueDateFormulas() }
         let source = string as NSString
         let point = selectedRange().location
         if mode == .insert, point > TaskEditorText.line(source, at: point).range.location {

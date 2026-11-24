@@ -362,9 +362,6 @@ struct TaskManagerView: View {
                     ContentUnavailableView("Select a task", systemImage: "text.alignleft", description: Text("The first line of its description becomes the subject."))
                 }
             }
-            if let warning = TaskMetadata(model.draft).warnings.first {
-                Text(warning).font(.system(size: 11)).foregroundStyle(.orange).padding(8)
-            }
         }
     }
 
