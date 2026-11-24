@@ -57,9 +57,32 @@ func runTaskEditorParityTests() -> [String] {
         press("u"); text(body, "whole-line deletion undoes as one edit")
         press("U"); text(expected, "whole-line deletion redoes without a phantom line")
     }
-    show("one\ntwo\nthree\nfour\nfive", at: 19)
-    keys("dd"); check(editor.textGrid.lineStarts.count == 4, "the reported five-line task becomes four lines")
-    keys("dd"); check(editor.textGrid.lineStarts.count == 3, "repeated dd reduces the actual line count")
+    show("one\ntwo\nthree\nfour\nfive", at: 14) // line 4 ("four")
+    keys("dd")
+    text("one\ntwo\nthree\nfive", "dd on interior line 4 deletes line 4")
+    check(editor.selectedRange().location == 14, "dd on interior line 4 stays on line 4 ('five'), got \(editor.selectedRange().location)")
+    keys("dd")
+    text("one\ntwo\nthree", "dd on new final line 4 deletes line 4")
+    check(editor.selectedRange().location == 8, "dd on final line moves up to line 3 ('three'), got \(editor.selectedRange().location)")
+
+    // Escape cancels pending operator/count without executing or leaking count.
+    show("abcdef", at: 0)
+    keys("d3"); escape(); press("x")
+    text("bcdef", "Escape cancels pending operator and infix count")
+
+    // Normal-mode cursor clamping after dw, dW, d$, D, and whitespace-only J.
+    show("Hello world", at: 6); keys("dw")
+    text("Hello ", "dw at end of line deletes last word")
+    check(editor.selectedRange().location == 5, "dw clamps Normal cursor to last character, got \(editor.selectedRange().location)")
+    show("Hello world", at: 6); keys("d$")
+    text("Hello ", "d$ deletes to end of line")
+    check(editor.selectedRange().location == 5, "d$ clamps Normal cursor to last character, got \(editor.selectedRange().location)")
+    show("one\n   ", at: 0); press("J")
+    text("one", "J onto whitespace-only line removes blank tail")
+    check(editor.selectedRange().location == 2, "J onto whitespace-only line clamps cursor to last character, got \(editor.selectedRange().location)")
+    show("keep", at: 0); press("x"); show("", at: 0); press("D")
+    check(editor.undoManager?.canUndo == false, "D on an empty line does not record a no-op undo step")
+
     show("a\nb\nc\nd\ne\nf\ng")
     keys("2d3d"); text("g", "prefix and infix counts multiply")
 

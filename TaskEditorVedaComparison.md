@@ -30,7 +30,7 @@ The scope is editing one task description. PA3 keeps AppKit text storage, Unicod
 | `u` / `U` | Counted undo/redo is repeated by Veda's command dispatcher. | Ignored counts. | Supports counted undo/redo. |
 | Unimplemented Option chords | A modified command is distinct from its plain key. | Could interpret an unsupported Option-U as undo. | Unbound Option chords are ignored in Normal mode; supported Option navigation remains native. |
 
-`dd` continues to put the cursor on the line above, as explicitly requested for PA3. This differs from Veda's ordinary interior-line deletion, which selects the following surviving line.
+`dd` now matches Veda's cursor placement: deleting an interior line stays on the same line number (the following surviving line, column 0), and deleting the final line moves up to the new last line (column 0). Pressing `Escape` in Normal mode while a pending operator or count (`d`, `c`, `y`, `g`, `3`, `d3`) is active cancels it instead of leaving the description pane. `dw` / `dW` / `d$` and whitespace-only `J` also clamp the Normal cursor to the last surviving character of the line.
 
 PA3 now groups a change command and its typed replacement into one undo step. This is an atomic-edit improvement, not an assertion of identical Veda history: Veda's single-cursor change paths can record the initial deletion before starting the Insert session. Veda also groups some counted edits as separate repeated history entries; PA3 groups counted paste, deletion, and joins into one action.
 

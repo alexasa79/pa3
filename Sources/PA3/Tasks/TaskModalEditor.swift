@@ -285,6 +285,15 @@ final class TaskModalTextView: NSTextView {
         return true
     }
 
+    var hasPendingCommand: Bool { !pending.isEmpty || !countText.isEmpty }
+
+    @discardableResult
+    func cancelPendingCommand() -> Bool {
+        guard hasPendingCommand else { return false }
+        pending = ""; pendingCount = 1; countText = ""
+        return true
+    }
+
     func leaveInsertMode(notify: Bool = true) {
         if mode == .insert { expandDueDateFormulas() }
         let source = string as NSString
@@ -360,6 +369,7 @@ final class TaskModalTextView: NSTextView {
             let needsSpace = row.contentEnd > row.range.location && source.character(at: row.contentEnd - 1) != 32
                 && content < following.contentEnd
             replace(NSRange(location: row.contentEnd, length: content - row.contentEnd), with: needsSpace ? " " : "")
+            if content == following.contentEnd { clampNormalCursor() }
         }
     }
 
@@ -371,7 +381,11 @@ final class TaskModalTextView: NSTextView {
             super.keyDown(with: event)
             return
         }
-        if event.keyCode == 53, !hasMarkedText() { leaveInsertMode(); return }
+        if event.keyCode == 53, !hasMarkedText() {
+            if mode == .normal, cancelPendingCommand() { return }
+            leaveInsertMode()
+            return
+        }
         if event.modifierFlags.contains(.control), event.keyCode == 49 {
             onDictation?(); return
         }
@@ -432,10 +446,16 @@ final class TaskModalTextView: NSTextView {
                     let logicalStart = lineSelection?.range.location ?? range.location
                     let previousLine = logicalStart > 0
                         ? TaskEditorText.line(source, at: logicalStart - 1).range.location : 0
+                    let removedPrecedingNewline = range.location < logicalStart
                     if operation == "c" { setMode(.insert) }
-                    replace(range, with: "")
-                    if operation == "d", key == "d" {
-                        setSelectedRange(NSRange(location: min(previousLine, (string as NSString).length), length: 0))
+                    if range.length > 0 { replace(range, with: "") }
+                    if operation == "d" {
+                        if key == "d" {
+                            let target = removedPrecedingNewline ? previousLine : logicalStart
+                            setSelectedRange(NSRange(location: min(target, (string as NSString).length), length: 0))
+                        } else {
+                            clampNormalCursor()
+                        }
                         scrollRangeToVisible(selectedRange())
                     }
                 }
@@ -480,7 +500,10 @@ final class TaskModalTextView: NSTextView {
         case "d", "c", "y": pending = key; pendingCount = count; countText = ""
         case "D", "C":
             if key == "C" { setMode(.insert) }
-            replace(NSRange(location: point, length: lineEnd(point) - point), with: "")
+            let length = lineEnd(point) - point
+            if length > 0 {
+                replace(NSRange(location: point, length: length), with: "")
+            }
             if key == "D" { clampNormalCursor() }
         case "x":
             if selectedRange().length > 0 { replace(selectedRange(), with: "") }

@@ -1092,14 +1092,15 @@ private func runTaskModalEditorTests() -> [String] {
     press("", code: 53); press("u")
     check(editor.string == "Subject" && bold(at: 0), "subject styling does not add a separate undo step")
     let lineDeletions: [(name: String, body: String, point: Int, count: Int, result: String, cursor: Int)] = [
-        ("middle", "Title\nAbove\nDelete\nBelow", 14, 1, "Title\nAbove\nBelow", 6),
+        ("middle", "Title\nAbove\nDelete\nBelow", 14, 1, "Title\nAbove\nBelow", 12),
         ("last", "Title\nAbove\nDelete", 14, 1, "Title\nAbove", 6),
         ("first", "Delete\nBelow", 3, 1, "Below", 0),
         ("only", "Delete", 3, 1, "", 0),
         ("empty", "", 0, 1, "", 0),
-        ("blank", "Title\nAbove\n\nBelow", 12, 1, "Title\nAbove\nBelow", 6),
-        ("counted", "Title\nAbove\nDelete\nDelete too\nBelow", 14, 2, "Title\nAbove\nBelow", 6),
-        ("Unicode CRLF", "Title\r\n👨‍👩‍👧‍👦\r\nDelete\r\nBelow", 24, 1, "Title\r\n👨‍👩‍👧‍👦\r\nBelow", 7)
+        ("blank", "Title\nAbove\n\nBelow", 12, 1, "Title\nAbove\nBelow", 12),
+        ("counted", "Title\nAbove\nDelete\nDelete too\nBelow", 14, 2, "Title\nAbove\nBelow", 12),
+        ("counted-last", "Title\nAbove\nDelete\nDelete too", 14, 2, "Title\nAbove", 6),
+        ("Unicode CRLF", "Title\r\n👨‍👩‍👧‍👦\r\nDelete\r\nBelow", 24, 1, "Title\r\n👨‍👩‍👧‍👦\r\nBelow", 20)
     ]
     for test in lineDeletions {
         editor.display(documentID: "dd-" + test.name, body: test.body)
@@ -1107,7 +1108,7 @@ private func runTaskModalEditorTests() -> [String] {
         if test.count > 1 { press(String(test.count)) }
         press("d"); press("d")
         check(editor.string == test.result && editor.selectedRange() == NSRange(location: test.cursor, length: 0)
-              && editor.mode == .normal, "dd moves to the previous line: " + test.name)
+              && editor.mode == .normal, "dd matches Veda cursor placement: " + test.name + " (got \(editor.selectedRange().location), expected \(test.cursor))")
         press("u")
         check(editor.string == test.body, "dd remains one undoable edit: " + test.name)
     }

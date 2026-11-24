@@ -144,6 +144,7 @@ final class TaskNavigationWindow: NSWindow {
         if model.activePane == .description {
             if event.keyCode == 53 {
                 if model.editor?.hasMarkedText() == true { return false }
+                if model.editorMode == .normal, model.editor?.cancelPendingCommand() == true { return true }
                 model.escapeDescription()
                 return true
             }

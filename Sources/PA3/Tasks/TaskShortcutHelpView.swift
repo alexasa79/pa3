@@ -73,7 +73,7 @@ struct TaskShortcutHelpView: View {
                 "h/j/k/l or arrows: move the cursor", "w/b: next / previous word; W/B also split at underscores", "0 / $: beginning / last character of logical line",
                 "gg / G: beginning / end of description", "number + motion: repeat a movement or edit",
                 "x / D / C: delete character / delete to line end / change to line end",
-                "dd: delete a line and move to the previous line", "cc / yy: change / copy a line",
+                "dd: delete a line", "cc / yy: change / copy a line",
                 "dw / cw: delete / change the whole word under the cursor",
                 "dW / cW: delete / change from the cursor to word end",
                 "d$ / c$ / y$: delete / change / copy to line end", "p / P: paste after / before; whole-line copies paste as lines",
