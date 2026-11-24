@@ -47,19 +47,22 @@ struct TaskSnapshot: Sendable {
 /// Derived values only. The original document is always the source of truth.
 struct TaskMetadata: Equatable, Sendable {
     var due: String?
-    var priority: String?
+    var priority: Int?
     var done = false
     var warnings: [String] = []
 
-    private static let tags = try! NSRegularExpression(pattern: #"(?<![\p{L}\p{N}_])#(due|priority|prio|status):([^\s#]+)|(?<![\p{L}\p{N}_])#done\b"#)
+    private static let tags = try! NSRegularExpression(
+        pattern: #"(?<![\p{L}\p{N}_])#(due|priority|prio|pri|status):([^\s#]+)|(?<![\p{L}\p{N}_])#done\b"#,
+        options: [.caseInsensitive]
+    )
 
     init(_ text: String) {
         let source = text as NSString
         var seen = Set<String>()
         for match in Self.tags.matches(in: text, range: NSRange(location: 0, length: source.length)) {
             if match.range(at: 1).location == NSNotFound { done = true; continue }
-            var key = source.substring(with: match.range(at: 1))
-            if key == "prio" { key = "priority" }
+            var key = source.substring(with: match.range(at: 1)).lowercased()
+            if key == "prio" || key == "pri" { key = "priority" }
             let value = source.substring(with: match.range(at: 2))
                 .trimmingCharacters(in: CharacterSet(charactersIn: ".,;!?)]}"))
             if !seen.insert(key).inserted { warnings.append("Multiple #\(key) tags; the last valid value is used.") }
@@ -68,15 +71,23 @@ struct TaskMetadata: Equatable, Sendable {
                 if Self.validDate(value) { due = value }
                 else { warnings.append("Use #due:YYYY-MM-DD, for example #due:2026-11-15.") }
             case "priority":
-                if ["1", "2", "3"].contains(value) { priority = value }
-                else { warnings.append("Use #priority:1, #priority:2, or #priority:3. Priority 1 is highest.") }
+                if let level = Self.parsePriority(value) { priority = level }
+                else { warnings.append("Use #pri:, #prio:, or #priority: with 0–5 or p0–p5. Priority 0 is highest.") }
             case "status":
-                if value == "done" { done = true }
-                else if value == "open" { done = false }
-                else if value != "open" { warnings.append("Use #status:open or #status:done.") }
+                let status = value.lowercased()
+                if status == "done" { done = true }
+                else if status == "open" { done = false }
+                else { warnings.append("Use #status:open or #status:done.") }
             default: break
             }
         }
+    }
+
+    private static func parsePriority(_ value: String) -> Int? {
+        let lowered = value.lowercased()
+        let digits: Substring = lowered.hasPrefix("p") ? lowered.dropFirst() : lowered[...]
+        guard digits.count == 1, let digit = digits.first, digit >= "0", digit <= "5" else { return nil }
+        return Int(String(digit))
     }
 
     private static func validDate(_ value: String) -> Bool {
@@ -95,7 +106,7 @@ struct TaskMetadata: Equatable, Sendable {
             return text + (text.isEmpty || text.hasSuffix("\n") ? "" : "\n") + "#done"
         }
         let source = text as NSString
-        let expression = try! NSRegularExpression(pattern: #"(?<![\p{L}\p{N}_])#(?:done\b|status:done\b)"#)
+        let expression = try! NSRegularExpression(pattern: #"(?<![\p{L}\p{N}_])#(?:done\b|status:done\b)"#, options: [.caseInsensitive])
         return expression.stringByReplacingMatches(in: text, range: NSRange(location: 0, length: source.length), withTemplate: "")
     }
 }

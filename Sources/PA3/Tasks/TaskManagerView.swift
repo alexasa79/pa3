@@ -256,9 +256,9 @@ struct TaskManagerView: View {
                                 .buttonStyle(.plain).help(task.metadata.done ? "Reopen task" : "Complete task with #done")
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(task.subject).fontWeight(.bold).lineLimit(2).strikethrough(task.metadata.done)
-                                HStack {
+                                HStack(spacing: 6) {
+                                    if let priority = task.metadata.priority { priorityBadge(priority) }
                                     if let due = task.metadata.due { Text(due) }
-                                    if let priority = task.metadata.priority { Text("P\(priority)") }
                                 }.font(.system(size: 11)).foregroundStyle(.secondary)
                             }
                         }.padding(.vertical, 4).tag(task.id).id(task.id)
@@ -393,6 +393,21 @@ struct TaskManagerView: View {
 
     private func paneHighlight(_ pane: TaskPane) -> Color {
         model.activePane == pane ? Color.accentColor.opacity(0.12) : .clear
+    }
+
+    private func priorityBadge(_ priority: Int) -> some View {
+        let tint: Color = switch priority {
+        case 0: .red
+        case 1: .orange
+        case 2: .blue
+        default: .secondary
+        }
+        return Text("P\(priority)")
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
     }
 }
 

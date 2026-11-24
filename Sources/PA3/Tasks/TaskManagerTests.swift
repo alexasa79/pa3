@@ -151,10 +151,21 @@ func runTaskManagerTests() async -> [String] {
     } catch { failures.append("tasks: unexpected storage error: \(error)") }
 
     let metadata = TaskMetadata("Subject\n#due:2026-02-28, #priority:2 #unknown:value")
-    check(metadata.due == "2026-02-28" && metadata.priority == "2" && metadata.warnings.isEmpty, "parse tags anywhere in the body")
+    check(metadata.due == "2026-02-28" && metadata.priority == 2 && metadata.warnings.isEmpty, "parse tags anywhere in the body")
     check(TaskMetadata("#due:2026-02-30").due == nil && !TaskMetadata("#due:2026-02-30").warnings.isEmpty, "reject invalid calendar dates")
     check(TaskMetadata("#due:2028-02-29").due == "2028-02-29", "accept leap day")
-    check(TaskMetadata("#priority:9").priority == nil, "reject invalid priority")
+    for level in 0...5 {
+        check(TaskMetadata("#pri:\(level)").priority == level && TaskMetadata("#pri:\(level)").warnings.isEmpty, "accept #pri:\(level)")
+        check(TaskMetadata("#prio:p\(level)").priority == level && TaskMetadata("#prio:p\(level)").warnings.isEmpty, "accept #prio:p\(level)")
+        check(TaskMetadata("#priority:P\(level)").priority == level && TaskMetadata("#priority:P\(level)").warnings.isEmpty, "accept #priority:P\(level)")
+    }
+    check(TaskMetadata("#PRI:p0.").priority == 0 && TaskMetadata("#PRI:p0.").warnings.isEmpty, "accept case-insensitive #PRI:p0 with trailing punctuation")
+    let duplicatePriority = TaskMetadata("#pri:4 #prio:p1")
+    check(duplicatePriority.priority == 1 && !duplicatePriority.warnings.isEmpty, "multiple priority tags across aliases use last valid value and warn")
+    for invalid in ["#priority:6", "#pri:p6", "#prio:-1", "#priority:p", "#pri:pp1", "#prio:01", "#priority:9"] {
+        let parsed = TaskMetadata(invalid)
+        check(parsed.priority == nil && !parsed.warnings.isEmpty, "reject invalid priority \(invalid)")
+    }
     check(TaskMetadata("#due:2026-01-01 #due:2026-01-02").due == "2026-01-02", "duplicate tag rule is deterministic")
     check(TaskMetadata("Subject\n#done").done && TaskMetadata("#status:done").done, "completion lives in text")
     let completed = TaskMetadata.togglingCompletion(in: "Subject\n#due:2026-11-15 #unknown:x")

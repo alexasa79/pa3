@@ -31,7 +31,7 @@ struct TaskShortcutHelpView: View {
                         Text("Saving and text tags").font(.headline)
                         Text("Insert and Dictation keep edits in memory. Returning to Normal saves. Switching tasks or closing the window finishes and saves first. Normal-mode edits save automatically.")
                         Text("The first line is the subject. Metadata stays in the text:")
-                        Text("#due:2026-11-15   #priority:1   #done")
+                        Text("#due:2026-11-15   #pri:p1   #prio:2   #priority:0   #done")
                             .font(.system(size: 12, design: .monospaced))
                         Text("In the projects list, n creates a project in the selected project's category. Subprojects and categories use the mouse controls.")
                     }.font(.system(size: 13)).foregroundStyle(.secondary)
