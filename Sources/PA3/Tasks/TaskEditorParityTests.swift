@@ -259,5 +259,51 @@ func runTaskEditorParityTests() -> [String] {
     keys("x"); keys("yy"); keys(".")
     text("CD", "yy does not clobber the repeatable last change")
 
+    // Indentation: always 4 spaces (Tab, Shift-Tab, Return/o/O tab expansion, >>, <<, and . repeat).
+    show("int main() {", at: 12)
+    press("i")
+    press("\r", code: 36)
+    press("\t", code: 48)
+    editor.insertText("if (ok) {", replacementRange: editor.selectedRange())
+    press("\r", code: 36)
+    press("\t", code: 48)
+    editor.insertText("return 0;", replacementRange: editor.selectedRange())
+    escape()
+    text("int main() {\n    if (ok) {\n        return 0;",
+         "Tab in Insert mode inserts 4 spaces (never tabs) and Return carries 4-space indentation")
+    check(!editor.string.contains("\t"), "Tab indentation produces spaces only, never tab characters")
+
+    show("        return 0;", at: 10)
+    press("i")
+    press("\t", code: 48, flags: .shift)
+    text("    return 0;", "Shift-Tab in Insert mode removes 4 leading spaces")
+    check(editor.selectedRange().location == 6, "Shift-Tab keeps caret aligned after unindenting")
+    press("\t", code: 48, flags: .shift)
+    text("return 0;", "second Shift-Tab unindents to column 0")
+    press("\t", code: 48, flags: .shift)
+    text("return 0;", "Shift-Tab at column 0 is a safe no-op")
+    escape()
+
+    show("\tint x;", at: 6)
+    press("o"); editor.insertText("int y;", replacementRange: editor.selectedRange()); escape()
+    text("\tint x;\n    int y;", "o expands legacy tab indentation to 4 spaces")
+
+    show("one\ntwo\nthree", at: 0)
+    keys(">>")
+    text("    one\ntwo\nthree", ">> indents line by 4 spaces")
+    check(editor.selectedRange().location == 4, ">> places cursor on first non-whitespace character")
+    keys(".")
+    text("        one\ntwo\nthree", ". repeats >>")
+    keys("<<")
+    text("    one\ntwo\nthree", "<< unindents line by 4 spaces")
+    keys(".")
+    text("one\ntwo\nthree", ". repeats <<")
+    keys("2>>")
+    text("    one\n    two\nthree", "2>> indents two lines by 4 spaces")
+    press("u")
+    text("one\ntwo\nthree", "2>> undoes in one step")
+    press("\t", code: 48)
+    text("one\ntwo\nthree", "Tab in Normal mode leaves text untouched")
+
     return failures
 }

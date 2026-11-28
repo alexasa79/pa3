@@ -4,6 +4,7 @@ import Foundation
 enum MarkdownTokenKind: Equatable, Sendable {
     case codeFence
     case codeBlock
+    case codeSyntax(CodeTokenKind)
     case heading(Int)
     case horizontalRule
     case blockquote
@@ -37,52 +38,91 @@ enum TaskMarkdownHighlighter {
     private struct FenceState {
         let char: UInt16
         let length: Int
+        let language: CodeLanguage?
+        let openLineIndex: Int
+    }
+
+    private struct FencedBlock {
+        let startLine: Int
+        let endLine: Int // inclusive content line index
+        let language: CodeLanguage
     }
 
     static func tokens(in text: String, highlightTaskTags: Bool = true) -> [MarkdownToken] {
+        analyze(in: text, highlightTaskTags: highlightTaskTags).tokens
+    }
+
+    private static func analyze(in text: String, highlightTaskTags: Bool) -> (tokens: [MarkdownToken], highlightedCodeRanges: [NSRange]) {
         let units = Array(text.utf16)
-        guard !units.isEmpty else { return [] }
+        guard !units.isEmpty else { return ([], []) }
 
         let lines = splitLines(units)
         var tokens: [MarkdownToken] = []
         var protectedForTags: [NSRange] = []
 
-        // First pass: detect fenced code blocks and table separator rows.
+        // First pass: detect fenced code blocks (with language) and table separator rows.
         var inCodeBlock = Array(repeating: false, count: lines.count)
         var isCodeFenceLine = Array(repeating: false, count: lines.count)
         var isTableSeparator = Array(repeating: false, count: lines.count)
+        var highlightedBlocks: [FencedBlock] = []
         var fence: FenceState?
 
         for (index, line) in lines.enumerated() {
             if let active = fence {
                 if isClosingFence(units, line: line, fence: active) {
                     isCodeFenceLine[index] = true
+                    if let language = active.language, active.openLineIndex + 1 <= index - 1 {
+                        highlightedBlocks.append(FencedBlock(
+                            startLine: active.openLineIndex + 1,
+                            endLine: index - 1,
+                            language: language
+                        ))
+                    }
                     fence = nil
                 } else {
                     inCodeBlock[index] = true
                 }
-            } else if let opened = openingFence(units, line: line) {
+            } else if let opened = openingFence(units, line: line, lineIndex: index) {
                 isCodeFenceLine[index] = true
                 fence = opened
             } else if isTableSeparatorLine(units, line: line) {
                 isTableSeparator[index] = true
             }
         }
+        if let active = fence, let language = active.language, active.openLineIndex + 1 <= lines.count - 1 {
+            highlightedBlocks.append(FencedBlock(
+                startLine: active.openLineIndex + 1,
+                endLine: lines.count - 1,
+                language: language
+            ))
+        }
 
-        // Pre-pass: detect multi-line links within contiguous prose paragraphs
-        // (never crossing blank lines, fenced code blocks, headings, HRs, or table separators).
+        // Pre-pass: detect multi-line links and multi-line emphasis within contiguous prose paragraphs.
         var isProseLine = Array(repeating: false, count: lines.count)
+        var isEmphasisContinuationLine = Array(repeating: false, count: lines.count)
         for (index, line) in lines.enumerated() {
             if !isCodeFenceLine[index], !inCodeBlock[index], !isTableSeparator[index],
                line.start < line.end,
                matchHeading(units, line: line) == nil,
                !isHorizontalRule(units, line: line) {
                 isProseLine[index] = true
+                if matchBlockquote(units, line: line) == nil,
+                   matchListMarker(units, start: line.start, end: line.end) == nil,
+                   !isTableContentLine(units, line: line, adjacentToSeparator: false) {
+                    isEmphasisContinuationLine[index] = true
+                }
             }
         }
         let multiLineLinkRanges = scanMultiLineLinks(
             units, lines: lines, isProseLine: isProseLine,
             tokens: &tokens, protectedForTags: &protectedForTags
+        )
+        let multiLineEmphasisRanges = scanMultiLineEmphasis(
+            units, lines: lines,
+            isProseLine: isProseLine,
+            isContinuationLine: isEmphasisContinuationLine,
+            multiLineLinkRanges: multiLineLinkRanges,
+            tokens: &tokens
         )
 
         // Second pass: emit block and inline tokens.
@@ -130,6 +170,10 @@ enum TaskMarkdownHighlighter {
                 let hit = NSIntersectionRange(range, lineRange)
                 return hit.length > 0 ? hit : nil
             }
+            let lineEmphasisProtected = multiLineEmphasisRanges.compactMap { range -> NSRange? in
+                let hit = NSIntersectionRange(range, lineRange)
+                return hit.length > 0 ? hit : nil
+            }
 
             if let quoteContentStart = matchBlockquote(units, line: line) {
                 tokens.append(MarkdownToken(range: lineRange, kind: .blockquote))
@@ -144,7 +188,8 @@ enum TaskMarkdownHighlighter {
                     }
                     if contentStart < line.end {
                         scanInline(units, start: contentStart, end: line.end,
-                                   preProtected: linePreProtected, tokens: &tokens, protectedForTags: &protectedForTags)
+                                   preProtected: linePreProtected, emphasisProtected: lineEmphasisProtected,
+                                   tokens: &tokens, protectedForTags: &protectedForTags)
                     }
                 }
                 continue
@@ -154,7 +199,8 @@ enum TaskMarkdownHighlighter {
                 || (index + 1 < lines.count && isTableSeparator[index + 1])
             if isTableContentLine(units, line: line, adjacentToSeparator: adjacentSeparator) {
                 let protected = scanInline(units, start: line.start, end: line.end,
-                                           preProtected: linePreProtected, tokens: &tokens, protectedForTags: &protectedForTags)
+                                           preProtected: linePreProtected, emphasisProtected: lineEmphasisProtected,
+                                           tokens: &tokens, protectedForTags: &protectedForTags)
                 emitTableBorders(units, start: line.start, end: line.end, protected: protected, tokens: &tokens)
                 continue
             }
@@ -169,7 +215,21 @@ enum TaskMarkdownHighlighter {
             }
             if contentStart < line.end {
                 scanInline(units, start: contentStart, end: line.end,
-                           preProtected: linePreProtected, tokens: &tokens, protectedForTags: &protectedForTags)
+                           preProtected: linePreProtected, emphasisProtected: lineEmphasisProtected,
+                           tokens: &tokens, protectedForTags: &protectedForTags)
+            }
+        }
+
+        // Tokenize syntax inside language-labeled fenced code blocks.
+        var highlightedCodeRanges: [NSRange] = []
+        for block in highlightedBlocks {
+            let blockStart = lines[block.startLine].start
+            let blockEnd = lines[block.endLine].end
+            guard blockStart < blockEnd else { continue }
+            let blockRange = NSRange(location: blockStart, length: blockEnd - blockStart)
+            highlightedCodeRanges.append(blockRange)
+            for codeToken in TaskCodeHighlighter.tokenize(units, range: blockRange, language: block.language) {
+                tokens.append(MarkdownToken(range: codeToken.range, kind: .codeSyntax(codeToken.kind)))
             }
         }
 
@@ -181,7 +241,7 @@ enum TaskMarkdownHighlighter {
             }
         }
 
-        return tokens
+        return (tokens, highlightedCodeRanges)
     }
 
     @MainActor
@@ -204,7 +264,9 @@ enum TaskMarkdownHighlighter {
         textView.textContainerInset = NSSize(width: 0, height: textGrid.rowHeight)
         textView.defaultParagraphStyle = paragraph
 
-        let tokens = tokens(in: text, highlightTaskTags: highlightTaskTags)
+        let analysis = analyze(in: text, highlightTaskTags: highlightTaskTags)
+        let tokens = analysis.tokens
+        let highlightedCodeRanges = analysis.highlightedCodeRanges
 
         let history = textView.undoManager
         let registering = history?.isUndoRegistrationEnabled == true
@@ -235,9 +297,10 @@ enum TaskMarkdownHighlighter {
                         .backgroundColor: PaperTheme.Syntax.codeBackground
                     ], range: token.range)
                 case .codeBlock:
+                    let hasLanguage = highlightedCodeRanges.contains { NSIntersectionRange($0, token.range).length > 0 }
                     storage.addAttributes([
                         .font: regular,
-                        .foregroundColor: PaperTheme.Syntax.code,
+                        .foregroundColor: hasLanguage ? PaperTheme.ink : PaperTheme.Syntax.code,
                         .backgroundColor: PaperTheme.Syntax.codeBackground
                     ], range: token.range)
                 case .heading(let level):
@@ -286,9 +349,17 @@ enum TaskMarkdownHighlighter {
                 }
             }
 
-            // Layer 3: inline code, links, images, and syntax delimiters.
+            // Layer 3: inline code, fenced code syntax, links, images, and syntax delimiters.
             for token in tokens {
                 switch token.kind {
+                case .codeSyntax(let codeKind):
+                    var attrs: [NSAttributedString.Key: Any] = [.foregroundColor: codeColor(for: codeKind)]
+                    if codeKind == .comment {
+                        attrs[.obliqueness] = obliqueness
+                    } else if codeKind == .keyword {
+                        attrs[.font] = bold
+                    }
+                    storage.addAttributes(attrs, range: token.range)
                 case .inlineCode:
                     storage.removeAttribute(.obliqueness, range: token.range)
                     storage.addAttributes([
@@ -355,6 +426,20 @@ enum TaskMarkdownHighlighter {
         }
     }
 
+    private static func codeColor(for kind: CodeTokenKind) -> NSColor {
+        switch kind {
+        case .keyword: return PaperTheme.Syntax.codeKeyword
+        case .type: return PaperTheme.Syntax.codeType
+        case .string: return PaperTheme.Syntax.codeString
+        case .number: return PaperTheme.Syntax.codeNumber
+        case .comment: return PaperTheme.Syntax.codeComment
+        case .function: return PaperTheme.Syntax.codeFunction
+        case .variable: return PaperTheme.Syntax.codeVariable
+        case .constant: return PaperTheme.Syntax.codeConstant
+        case .preprocessor: return PaperTheme.Syntax.codePreprocessor
+        }
+    }
+
     // MARK: - Line Splitting & Block Matchers
 
     private static let asciiSpace: UInt16 = 0x20
@@ -405,7 +490,7 @@ enum TaskMarkdownHighlighter {
         return i
     }
 
-    private static func openingFence(_ units: [UInt16], line: Line) -> FenceState? {
+    private static func openingFence(_ units: [UInt16], line: Line, lineIndex: Int) -> FenceState? {
         let i = skipUpToThreeSpaces(units, from: line.start, end: line.end)
         guard i < line.end else { return nil }
         let ch = units[i]
@@ -419,7 +504,9 @@ enum TaskMarkdownHighlighter {
                 return nil
             }
         }
-        return FenceState(char: ch, length: count)
+        let info = j < line.end ? String(utf16CodeUnits: Array(units[j..<line.end]), count: line.end - j) : ""
+        let language = CodeLanguage.forFenceLabel(info)
+        return FenceState(char: ch, length: count, language: language, openLineIndex: lineIndex)
     }
 
     private static func isClosingFence(_ units: [UInt16], line: Line, fence: FenceState) -> Bool {
@@ -657,9 +744,126 @@ enum TaskMarkdownHighlighter {
         }
     }
 
+    private static func scanMultiLineEmphasis(_ units: [UInt16], lines: [Line],
+                                              isProseLine: [Bool], isContinuationLine: [Bool],
+                                              multiLineLinkRanges: [NSRange],
+                                              tokens: inout [MarkdownToken]) -> [NSRange] {
+        var multiRanges: [NSRange] = []
+        var lineIndex = 0
+        while lineIndex < lines.count {
+            guard isProseLine[lineIndex] else { lineIndex += 1; continue }
+            var paraLast = lineIndex
+            while paraLast + 1 < lines.count && isContinuationLine[paraLast + 1] { paraLast += 1 }
+            if paraLast > lineIndex {
+                let firstLine = lines[lineIndex]
+                var paraStart = firstLine.start
+                if let quoteStart = matchBlockquote(units, line: firstLine) {
+                    paraStart = quoteStart
+                }
+                if let list = matchListMarker(units, start: paraStart, end: firstLine.end) {
+                    paraStart = list.contentStart
+                }
+                let paraEnd = lines[paraLast].end
+                if paraStart < paraEnd {
+                    let paraRange = NSRange(location: paraStart, length: paraEnd - paraStart)
+                    var protected = multiLineLinkRanges.filter { NSIntersectionRange($0, paraRange).length > 0 }
+                    // Collect inline code spans and single-line links/URLs across this paragraph so emphasis skips them.
+                    var p = paraStart
+                    while p < paraEnd {
+                        if let skip = protected.first(where: { p >= $0.location && p < NSMaxRange($0) }) {
+                            p = NSMaxRange(skip)
+                            continue
+                        }
+                        let u = units[p]
+                        if u == asciiBackslash, p + 1 < paraEnd, isASCIIPunctuation(units[p + 1]) {
+                            protected.append(NSRange(location: p, length: 2))
+                            p += 2
+                            continue
+                        }
+                        if u == asciiBacktick {
+                            var runEnd = p
+                            while runEnd < paraEnd && units[runEnd] == asciiBacktick { runEnd += 1 }
+                            let runLen = runEnd - p
+                            if let close = findClosingBackticks(units, from: runEnd, end: paraEnd, length: runLen) {
+                                protected.append(NSRange(location: p, length: (close + runLen) - p))
+                                p = close + runLen
+                                continue
+                            }
+                            p = runEnd
+                            continue
+                        }
+                        if u == asciiBang, p + 1 < paraEnd, units[p + 1] == asciiLBracket,
+                           let link = matchMarkdownLink(units, openBracket: p + 1, end: paraEnd, allowNewlinesInLabel: false) {
+                            protected.append(NSRange(location: p, length: link.end - p))
+                            p = link.end
+                            continue
+                        }
+                        if u == asciiLBracket,
+                           let link = matchMarkdownLink(units, openBracket: p, end: paraEnd, allowNewlinesInLabel: false) {
+                            protected.append(NSRange(location: p, length: link.end - p))
+                            p = link.end
+                            continue
+                        }
+                        if (u == 0x68 || u == 0x48), let urlEnd = matchBareURL(units, start: p, lineStart: paraStart, end: paraEnd) {
+                            protected.append(NSRange(location: p, length: urlEnd - p))
+                            p = urlEnd
+                            continue
+                        }
+                        p += 1
+                    }
+
+                    var candidateTokens: [MarkdownToken] = []
+                    scanEmphasisAndStrikethrough(units, start: paraStart, end: paraEnd,
+                                                 protected: protected, tokens: &candidateTokens)
+                    var multiContainers: [NSRange] = []
+                    for tok in candidateTokens {
+                        let start = tok.range.location
+                        let end = NSMaxRange(tok.range)
+                        var spansNewline = false
+                        for k in start..<end where units[k] == asciiLF {
+                            spansNewline = true
+                            break
+                        }
+                        if spansNewline {
+                            emitEmphasisSegments(units, start: start, end: end, kind: tok.kind, tokens: &tokens)
+                            multiContainers.append(tok.range)
+                            multiRanges.append(tok.range)
+                        } else if multiContainers.contains(where: { tok.range.location >= $0.location && NSMaxRange(tok.range) <= NSMaxRange($0) }) {
+                            tokens.append(tok)
+                        }
+                    }
+                }
+            }
+            lineIndex = paraLast + 1
+        }
+        return multiRanges
+    }
+
+    private static func emitEmphasisSegments(_ units: [UInt16], start: Int, end: Int,
+                                             kind: MarkdownTokenKind, tokens: inout [MarkdownToken]) {
+        var segStart = start
+        var i = start
+        while i < end {
+            if units[i] == asciiLF || units[i] == asciiCR {
+                if i > segStart {
+                    tokens.append(MarkdownToken(range: NSRange(location: segStart, length: i - segStart), kind: kind))
+                }
+                i += 1
+                while i < end && (units[i] == asciiLF || units[i] == asciiCR) { i += 1 }
+                segStart = i
+            } else {
+                i += 1
+            }
+        }
+        if end > segStart {
+            tokens.append(MarkdownToken(range: NSRange(location: segStart, length: end - segStart), kind: kind))
+        }
+    }
+
     @discardableResult
     private static func scanInline(_ units: [UInt16], start: Int, end: Int,
                                    preProtected: [NSRange] = [],
+                                   emphasisProtected: [NSRange] = [],
                                    tokens: inout [MarkdownToken],
                                    protectedForTags: inout [NSRange]) -> [NSRange] {
         var protected = preProtected
@@ -743,8 +947,9 @@ enum TaskMarkdownHighlighter {
             i += 1
         }
 
-        // Phase B: strikethrough and emphasis, skipping protected spans.
-        scanEmphasisAndStrikethrough(units, start: start, end: end, protected: protected, tokens: &tokens)
+        // Phase B: strikethrough and emphasis, skipping protected spans (and already-matched multi-line emphasis).
+        scanEmphasisAndStrikethrough(units, start: start, end: end,
+                                     protected: protected + emphasisProtected, tokens: &tokens)
         return protected
     }
 
@@ -867,7 +1072,9 @@ enum TaskMarkdownHighlighter {
     }
 
     private static func scanEmphasisAndStrikethrough(_ units: [UInt16], start: Int, end: Int,
-                                                     protected: [NSRange], tokens: inout [MarkdownToken]) {
+                                                     protected: [NSRange], tokens: inout [MarkdownToken],
+                                                     excludedKind: MarkdownTokenKind? = nil,
+                                                     depth: Int = 0) {
         func protectedEnd(at pos: Int) -> Int? {
             for range in protected where pos >= range.location && pos < NSMaxRange(range) {
                 return NSMaxRange(range)
@@ -881,11 +1088,16 @@ enum TaskMarkdownHighlighter {
             let u = units[i]
 
             // Strikethrough ~~text~~
-            if u == asciiTilde, i + 1 < end, units[i + 1] == asciiTilde {
+            if excludedKind != .strikethrough, u == asciiTilde, i + 1 < end, units[i + 1] == asciiTilde {
                 let runEnd = delimiterRunEnd(units, from: i, end: end, char: asciiTilde)
                 if runEnd - i == 2, runEnd < end, !isWhitespace(units, at: runEnd) {
                     if let close = findClosingTildes(units, from: runEnd, end: end, protected: protected) {
                         tokens.append(MarkdownToken(range: NSRange(location: i, length: (close + 2) - i), kind: .strikethrough))
+                        if depth < 2 && close > runEnd {
+                            scanEmphasisAndStrikethrough(units, start: runEnd, end: close,
+                                                         protected: protected, tokens: &tokens,
+                                                         excludedKind: .strikethrough, depth: depth + 1)
+                        }
                         i = close + 2
                         continue
                     }
@@ -898,12 +1110,17 @@ enum TaskMarkdownHighlighter {
             if u == asciiStar || u == asciiUnderscore {
                 let runEnd = delimiterRunEnd(units, from: i, end: end, char: u)
                 let runLen = runEnd - i
-                if runLen >= 1 && runLen <= 3,
+                let kind: MarkdownTokenKind = runLen == 3 ? .boldItalic : (runLen == 2 ? .bold : .italic)
+                if runLen >= 1 && runLen <= 3, kind != excludedKind,
                    canOpenEmphasis(units, openStart: i, openEnd: runEnd, delimiter: u, lineStart: start, lineEnd: end),
                    let closeStart = findClosingEmphasis(units, from: runEnd, end: end, delimiter: u, length: runLen,
                                                         lineStart: start, protected: protected) {
-                    let kind: MarkdownTokenKind = runLen == 3 ? .boldItalic : (runLen == 2 ? .bold : .italic)
                     tokens.append(MarkdownToken(range: NSRange(location: i, length: (closeStart + runLen) - i), kind: kind))
+                    if depth < 2 && kind != .boldItalic && closeStart > runEnd {
+                        scanEmphasisAndStrikethrough(units, start: runEnd, end: closeStart,
+                                                     protected: protected, tokens: &tokens,
+                                                     excludedKind: kind, depth: depth + 1)
+                    }
                     i = closeStart + runLen
                     continue
                 }

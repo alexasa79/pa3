@@ -30,6 +30,15 @@ enum PaperTheme {
         static let tagDone = adaptive(0x2E6F52, 0x8CD1A4)
         static let tagOpen = adaptive(0x65645B, 0xBCB8AD)
         static let tagBackground = adaptive(0xEFE8DA, 0x31342E)
+        static let codeKeyword = adaptive(0x7A2E8A, 0xC99BFF)
+        static let codeType = adaptive(0x1D6F6E, 0x76D4C6)
+        static let codeString = adaptive(0x3A6B2C, 0xA8D47C)
+        static let codeNumber = adaptive(0xA64B17, 0xF0A875)
+        static let codeComment = adaptive(0x7B786D, 0x8F8C80)
+        static let codeFunction = adaptive(0x22588A, 0x7EC0F2)
+        static let codeVariable = adaptive(0x8A561E, 0xE6C87A)
+        static let codeConstant = adaptive(0x9E2F3B, 0xF28B94)
+        static let codePreprocessor = adaptive(0x8B3A62, 0xE295B8)
     }
 
     private static func adaptive(_ light: UInt32, _ dark: UInt32) -> NSColor {

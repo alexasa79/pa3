@@ -49,11 +49,15 @@ enum TaskEditorText {
         return point > row.range.location ? text.rangeOfComposedCharacterSequence(at: point - 1).location : point
     }
 
+    static let indentWidth = 4
+    static let indentUnit = String(repeating: " ", count: indentWidth)
+
     static func indentation(_ text: NSString, at point: Int) -> String {
         let row = line(text, at: point)
         var end = row.range.location
         while end < row.contentEnd, [9, 32].contains(text.character(at: end)) { end += 1 }
-        return text.substring(with: NSRange(location: row.range.location, length: end - row.range.location))
+        let raw = text.substring(with: NSRange(location: row.range.location, length: end - row.range.location))
+        return raw.replacingOccurrences(of: "\t", with: indentUnit)
     }
 
     static func kind(_ text: NSString, at point: Int, underscore: Bool = true) -> Int {

@@ -126,5 +126,16 @@ func runTaskLineNumberTests() -> [String] {
     editor.finishDictation(original: editor.string, body: "Subject\nBody\nDictated", cursorLocation: 21)
     check(grid.lineStarts.count == 3 && editor.selectedRange().location == 21,
           "finishing dictation refreshes numbers and preserves its final cursor")
+    show("tab-stops", "Title\n\tprintf();\n    printf();")
+    if let layout = editor.layoutManager, let container = editor.textContainer {
+        layout.ensureLayout(for: container)
+        let source = editor.string as NSString
+        let tabP = source.range(of: "printf();").location
+        let spaceP = source.range(of: "printf();", options: [], range: NSRange(location: tabP + 1, length: source.length - tabP - 1)).location
+        let tabX = layout.location(forGlyphAt: layout.glyphIndexForCharacter(at: tabP)).x
+        let spaceX = layout.location(forGlyphAt: layout.glyphIndexForCharacter(at: spaceP)).x
+        check(abs(tabX - spaceX) < 0.5,
+              "even pasted literal tabs align to the exact 4-space grid (tabX=\(tabX), spaceX=\(spaceX))")
+    }
     return failures
 }

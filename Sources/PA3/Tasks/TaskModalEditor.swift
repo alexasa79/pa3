@@ -68,6 +68,7 @@ final class TaskModalTextView: NSTextView {
         case deleteChar(count: Int)
         case paste(after: Bool, count: Int)
         case join(count: Int)
+        case indent(increase: Bool, count: Int)
     }
 
     private struct InsertCapture {
@@ -554,7 +555,88 @@ final class TaskModalTextView: NSTextView {
             pasteModal(after: after, count: explicitCount ?? recordedCount)
         case .join(let recordedCount):
             joinLines(count: explicitCount ?? recordedCount)
+        case .indent(let increase, let recordedCount):
+            indentLines(increase: increase, count: explicitCount ?? recordedCount)
         }
+    }
+
+    override func insertTab(_ sender: Any?) {
+        guard isEditable, mode == .insert else { return }
+        replace(selectedRange(), with: TaskEditorText.indentUnit)
+    }
+
+    override func insertBacktab(_ sender: Any?) {
+        guard isEditable, mode == .insert else { return }
+        unindentCurrentLineInInsert()
+    }
+
+    private func unindentCurrentLineInInsert() {
+        let source = string as NSString
+        let caret = min(selectedRange().location, source.length)
+        let row = TaskEditorText.line(source, at: caret)
+        let removeCount = leadingIndentRemovalCount(source, lineStart: row.range.location, contentEnd: row.contentEnd)
+        guard removeCount > 0 else { return }
+        let newCaret = max(row.range.location, caret - removeCount)
+        replace(NSRange(location: row.range.location, length: removeCount), with: "")
+        setSelectedRange(NSRange(location: newCaret, length: 0))
+    }
+
+    private func leadingIndentRemovalCount(_ source: NSString, lineStart: Int, contentEnd: Int) -> Int {
+        guard lineStart < contentEnd else { return 0 }
+        if source.character(at: lineStart) == 9 { return 1 }
+        var spaces = 0
+        while lineStart + spaces < contentEnd && spaces < TaskEditorText.indentWidth && source.character(at: lineStart + spaces) == 32 {
+            spaces += 1
+        }
+        return spaces
+    }
+
+    private func indentLines(increase: Bool, count: Int) {
+        let source = string as NSString
+        let point = min(selectedRange().location, source.length)
+        let lines = TaskEditorText.lines(source, at: point, count: count)
+        let blockStart = lines.range.location
+        let blockEnd = NSMaxRange(lines.range)
+
+        var pieces: [String] = []
+        var cursor = blockStart
+        var lineCount = 0
+        while cursor < blockEnd || (cursor == blockStart && blockStart == blockEnd) {
+            let row = TaskEditorText.line(source, at: cursor)
+            let contentRange = NSRange(location: row.range.location, length: row.contentEnd - row.range.location)
+            let terminatorRange = NSRange(location: row.contentEnd, length: NSMaxRange(row.range) - row.contentEnd)
+            let content = source.substring(with: contentRange)
+            let terminator = source.substring(with: terminatorRange)
+            if increase {
+                let shouldIndent = !content.isEmpty || count == 1
+                pieces.append((shouldIndent ? TaskEditorText.indentUnit : "") + content + terminator)
+            } else {
+                let remove = leadingIndentRemovalCount(source, lineStart: row.range.location, contentEnd: row.contentEnd)
+                let trimmed = source.substring(with: NSRange(location: row.range.location + remove,
+                                                             length: row.contentEnd - (row.range.location + remove)))
+                pieces.append(trimmed + terminator)
+            }
+            lineCount += 1
+            let next = NSMaxRange(row.range)
+            if next <= cursor { break }
+            cursor = next
+            if lineCount >= count { break }
+        }
+
+        let replacement = pieces.joined()
+        if replacement != source.substring(with: lines.range) {
+            replace(lines.range, with: replacement)
+        }
+        let updated = string as NSString
+        let firstRow = TaskEditorText.line(updated, at: min(blockStart, updated.length))
+        var firstNonWS = firstRow.range.location
+        while firstNonWS < firstRow.contentEnd && [9, 32].contains(updated.character(at: firstNonWS)) {
+            firstNonWS += 1
+        }
+        let target = firstNonWS < firstRow.contentEnd
+            ? firstNonWS
+            : TaskEditorText.lastCharacter(updated, at: firstRow.range.location)
+        setSelectedRange(NSRange(location: target, length: 0))
     }
 
     override func keyDown(with event: NSEvent) {
@@ -574,12 +656,22 @@ final class TaskModalTextView: NSTextView {
             onDictation?(); return
         }
         if mode == .insert || hasMarkedText() {
-            if mode == .insert, !hasMarkedText(), [36, 76].contains(event.keyCode) {
-                let indent = TaskEditorText.indentation(string as NSString, at: selectedRange().location)
-                replace(selectedRange(), with: "\n" + indent)
-            } else { super.keyDown(with: event) }
+            if mode == .insert, !hasMarkedText() {
+                if [36, 76].contains(event.keyCode) {
+                    let indent = TaskEditorText.indentation(string as NSString, at: selectedRange().location)
+                    replace(selectedRange(), with: "\n" + indent)
+                    return
+                }
+                if event.keyCode == 48 {
+                    if event.modifierFlags.contains(.shift) { unindentCurrentLineInInsert() }
+                    else { replace(selectedRange(), with: TaskEditorText.indentUnit) }
+                    return
+                }
+            }
+            super.keyDown(with: event)
             return
         }
+        if event.keyCode == 48 { return }
         let key = event.charactersIgnoringModifiers ?? ""
         if event.modifierFlags.contains(.control) {
             if key == "r" {
@@ -608,6 +700,13 @@ final class TaskModalTextView: NSTextView {
             let operation = pending
             pending = ""; pendingCount = 1; countText = ""
             if operation == "g" { if key == "g" { moveToBeginningOfDocument(nil) }; return }
+            if operation == ">" || operation == "<" {
+                if key == operation {
+                    indentLines(increase: operation == ">", count: count)
+                    if !isReplayingRepeat { lastEdit = .indent(increase: operation == ">", count: count) }
+                }
+                return
+            }
             let motion: RepeatableEdit.Motion? = switch key {
             case operation: .line
             case "w": .word
@@ -656,7 +755,7 @@ final class TaskModalTextView: NSTextView {
             var last = TaskEditorText.line(source, at: source.length)
             if last.range.length == 0, last.range.location > 0 { last = TaskEditorText.line(source, at: last.range.location - 1) }
             setSelectedRange(NSRange(location: TaskEditorText.lastCharacter(source, at: last.range.location), length: 0))
-        case "d", "c", "y": pending = key; pendingCount = count; countText = ""
+        case "d", "c", "y", ">", "<": pending = key; pendingCount = count; countText = ""
         case "D": executeOperator("d", motion: .lineEnd, count: 1)
         case "C": executeOperator("c", motion: .lineEnd, count: 1)
         case "x": deleteCharacters(count: count)

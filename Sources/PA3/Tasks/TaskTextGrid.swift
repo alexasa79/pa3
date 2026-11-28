@@ -21,7 +21,11 @@ final class TaskTextGrid: NSObject, @preconcurrency NSLayoutManagerDelegate {
         style.paragraphSpacingBefore = 0
         style.firstLineHeadIndent = textStartX
         style.headIndent = textStartX
-        style.defaultTabInterval = cellWidth * 4
+        let step = cellWidth * 4
+        style.tabStops = (1...32).map {
+            NSTextTab(textAlignment: .left, location: textStartX + CGFloat($0) * step)
+        }
+        style.defaultTabInterval = step
         return style
     }
 
