@@ -13,7 +13,8 @@ func runGlobalShortcutsTests() -> [String] {
     let defaults = GlobalShortcutConfiguration()
     check(.load(from: preferences) == defaults, "first launch uses original bindings")
     check(defaults.dictation.display == "⌃⌥⌘P" && defaults.selection.display == "⌃⌥⌘O"
-          && defaults.screen.display == "⌃⌥⌘R" && defaults.tasks.display == "⌃⌥⌘T", "default shortcut labels")
+          && defaults.screen.display == "⌃⌥⌘R" && defaults.tasks.display == "⌃⌥⌘T"
+          && defaults.notes.display == "⌃⌥⌘N", "default shortcut labels")
 
     var proposed = defaults
     proposed.dictation = GlobalShortcutBinding(keyCode: UInt32(kVK_ANSI_P), modifiers: UInt32(controlKey))
@@ -21,26 +22,39 @@ func runGlobalShortcutsTests() -> [String] {
     check(proposed.validationError == nil, "same physical key with different modifiers is valid")
     proposed.save(to: preferences)
     check(.load(from: preferences) == proposed, "custom shortcuts survive reload")
-    func saveLegacy(_ configuration: GlobalShortcutConfiguration) {
+    func saveLegacy(_ configuration: GlobalShortcutConfiguration, removing keys: [String]) {
         var object = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(configuration)) as! [String: Any]
-        object.removeValue(forKey: "tasks")
+        for key in keys { object.removeValue(forKey: key) }
         preferences.set(try! JSONSerialization.data(withJSONObject: object), forKey: GlobalShortcutConfiguration.preferencesKey)
     }
-    saveLegacy(proposed)
-    check(.load(from: preferences) == proposed, "upgrading three saved shortcuts preserves custom bindings and adds Tasks")
+    saveLegacy(proposed, removing: ["tasks", "notes"])
+    check(.load(from: preferences) == proposed, "upgrading three saved shortcuts preserves custom bindings and adds Tasks and Notes")
+    saveLegacy(proposed, removing: ["notes"])
+    check(.load(from: preferences) == proposed, "upgrading four saved shortcuts preserves custom bindings and adds Notes")
     var occupied = proposed
     occupied.screen = defaults.tasks
-    saveLegacy(occupied)
+    saveLegacy(occupied, removing: ["tasks", "notes"])
     let migrated = GlobalShortcutConfiguration.load(from: preferences)
     check(migrated.dictation == occupied.dictation && migrated.selection == occupied.selection && migrated.screen == occupied.screen
           && migrated.tasks != occupied.screen && migrated.validationError == nil,
           "a legacy T binding is preserved and Tasks receives a free combination")
+    var occupiedNotes = proposed
+    occupiedNotes.screen = defaults.notes
+    saveLegacy(occupiedNotes, removing: ["notes"])
+    let migratedNotes = GlobalShortcutConfiguration.load(from: preferences)
+    check(migratedNotes.dictation == occupiedNotes.dictation && migratedNotes.selection == occupiedNotes.selection
+          && migratedNotes.screen == occupiedNotes.screen && migratedNotes.tasks == occupiedNotes.tasks
+          && migratedNotes.notes != occupiedNotes.screen && migratedNotes.validationError == nil,
+          "a legacy N binding is preserved and Notes receives a free combination")
     var duplicate = proposed
     duplicate.screen = proposed.selection
     check(duplicate.validationError != nil, "duplicate combinations are rejected")
     var duplicateTasks = proposed
     duplicateTasks.tasks = proposed.dictation
     check(duplicateTasks.validationError != nil, "Tasks cannot reuse another action's shortcut")
+    var duplicateNotes = proposed
+    duplicateNotes.notes = proposed.tasks
+    check(duplicateNotes.validationError != nil, "Notes cannot reuse another action's shortcut")
     duplicate.save(to: preferences)
     check(.load(from: preferences) == defaults, "invalid saved bindings fall back to defaults")
     preferences.set(Data("broken".utf8), forKey: GlobalShortcutConfiguration.preferencesKey)
@@ -56,7 +70,7 @@ func runGlobalShortcutsTests() -> [String] {
         ShortcutTestRegistration(registry: registry, action: action, binding: binding)
     }
     let actionCount = GlobalShortcutAction.allCases.count
-    check(actionCount == 4, "four independent shortcut actions")
+    check(actionCount == 5, "five independent shortcut actions")
     check(manager.register() == nil && registry.active.count == actionCount, "all defaults register")
     check(manager.apply(proposed) == nil && registry.active.count == actionCount, "changes register immediately")
     check(manager.configuration == proposed && .load(from: preferences) == proposed, "successful registration persists")
@@ -75,6 +89,8 @@ func runGlobalShortcutsTests() -> [String] {
           "dictation help shows configured shortcuts")
     check(controller.shortcutSections().last?.bindings.contains("⌃⌥⌘T: open task manager") == true,
           "dictation help includes the task-manager shortcut")
+    check(controller.shortcutSections().last?.bindings.contains("⌃⌥⌘N: open note manager") == true,
+          "dictation help includes the note-manager shortcut")
 
     func event(_ key: UInt16, _ flags: NSEvent.ModifierFlags = []) -> NSEvent {
         NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
@@ -90,6 +106,8 @@ func runGlobalShortcutsTests() -> [String] {
     let record = controls.first { $0.tag == GlobalShortcutAction.dictation.rawValue }!
     check(controls.contains { $0.tag == GlobalShortcutAction.tasks.rawValue && $0.title == "⌃⌥⌘T" },
           "settings includes an editable task-manager shortcut")
+    check(controls.contains { $0.tag == GlobalShortcutAction.notes.rawValue && $0.title == "⌃⌥⌘N" },
+          "settings includes an editable note-manager shortcut")
     record.performClick(nil)
     check(registry.active.isEmpty, "recording suspends existing global shortcuts")
     check(settings.capture(event(35)), "unmodified keys stay inside recorder")

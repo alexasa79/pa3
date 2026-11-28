@@ -6,6 +6,7 @@ enum TaskPane: String, CaseIterable { case projects, tasks, description }
 
 @MainActor
 final class TaskManagerModel: ObservableObject {
+    let kind: WorkspaceKind
     @Published private(set) var categories: [TaskCategory] = []
     @Published private(set) var projects: [TaskProject] = []
     @Published private(set) var tasks: [PersonalTask] = []
@@ -19,7 +20,7 @@ final class TaskManagerModel: ObservableObject {
     }
     @Published private(set) var busy = false
     @Published private(set) var loaded = false
-    @Published private(set) var storageStatus = "Opening task database…"
+    @Published private(set) var storageStatus = ""
     @Published private(set) var errorMessage = ""
     @Published private(set) var conflict = false
     @Published var showCompleted = false
@@ -30,7 +31,7 @@ final class TaskManagerModel: ObservableObject {
     @Published private(set) var activePane: TaskPane
     @Published var expandedProjects: Set<String> = []
     @Published var collapsedCategories: Set<String> {
-        didSet { preferences.set(Array(collapsedCategories), forKey: "tasks.collapsedCategories") }
+        didSet { preferences.set(Array(collapsedCategories), forKey: prefKey("collapsedCategories")) }
     }
     let dictation: DictationController
     weak var editor: TaskModalTextView?
@@ -39,7 +40,7 @@ final class TaskManagerModel: ObservableObject {
     var onSearchFocusRequested: (() -> Void)?
     var beforeDictation: (() async -> Void)?
     private(set) var databaseURL: URL?
-    private var store: TaskStore?
+    private var store: (any TaskWorkspaceStore)?
     private var savedBody = ""
     private var displayedTaskID: String?
     private var revealedProjectID: String?
@@ -52,23 +53,33 @@ final class TaskManagerModel: ObservableObject {
     private var endingDictation: Task<Void, Never>?
     private let preferences: UserDefaults
 
-    init(dictation: DictationController, databaseURL: URL? = nil, preferences: UserDefaults = .standard) {
+    init(kind: WorkspaceKind = .tasks, dictation: DictationController, databaseURL: URL? = nil,
+         store: (any TaskWorkspaceStore)? = nil, preferences: UserDefaults = .standard) {
+        self.kind = kind
         self.dictation = dictation
         self.preferences = preferences
-        activePane = preferences.string(forKey: "tasks.activePane").flatMap(TaskPane.init(rawValue:)) ?? .projects
-        collapsedCategories = Set(preferences.stringArray(forKey: "tasks.collapsedCategories") ?? [])
-        if let databaseURL {
+        self.storageStatus = kind == .tasks ? "Opening task database…" : "Opening notes folder…"
+        let prefix = kind.preferencesPrefix
+        activePane = preferences.string(forKey: "\(prefix).activePane").flatMap(TaskPane.init(rawValue:)) ?? .projects
+        collapsedCategories = Set(preferences.stringArray(forKey: "\(prefix).collapsedCategories") ?? [])
+        if let store {
+            self.store = store
+            self.databaseURL = store.locationURL
+        } else if let databaseURL {
             self.databaseURL = databaseURL
-            store = TaskStore(url: databaseURL)
+            self.store = kind == .tasks ? TaskStore(url: databaseURL) : NoteDirectoryStore(rootURL: databaseURL)
         }
-        selectedProjectID = preferences.string(forKey: "tasks.selectedProject")
-        selectedTaskID = preferences.string(forKey: "tasks.selectedTask")
+        selectedProjectID = preferences.string(forKey: "\(prefix).selectedProject")
+        selectedTaskID = preferences.string(forKey: "\(prefix).selectedTask")
         dictation.onFinishEmbeddedSession = { [weak self] in Task { await self?.finishDictation() } }
+        dictation.onDiscardEmbeddedSession = { [weak self] in Task { await self?.finishDictation(discard: true) } }
         textSubscription = dictation.$text.dropFirst().sink { [weak self] text in
             guard let self, self.editorMode == .dictation, let insertion = self.insertion else { return }
             self.edit(insertion.applying(text))
         }
     }
+
+    private func prefKey(_ suffix: String) -> String { "\(kind.preferencesPrefix).\(suffix)" }
 
     var selectedProject: TaskProject? { projects.first { $0.id == selectedProjectID } }
     var newProjectCategory: TaskCategory? {
@@ -79,7 +90,7 @@ final class TaskManagerModel: ObservableObject {
     var projectTasks: [PersonalTask] {
         tasks.filter { task in
             task.projectID == selectedProjectID
-                && (showCompleted || !task.metadata.done || task.id == selectedTaskID)
+                && (!kind.supportsTaskMetadata || showCompleted || !task.metadata.done || task.id == selectedTaskID)
         }
     }
 
@@ -105,7 +116,7 @@ final class TaskManagerModel: ObservableObject {
         }
         if activePane != pane {
             activePane = pane
-            preferences.set(pane.rawValue, forKey: "tasks.activePane")
+            preferences.set(pane.rawValue, forKey: prefKey("activePane"))
         }
         if requestFocus { onFocusRequested?() }
     }
@@ -223,6 +234,7 @@ final class TaskManagerModel: ObservableObject {
     }
 
     private func expandDueFormulas() {
+        guard kind.supportsTaskMetadata else { return }
         if let editor {
             editor.expandDueDateFormulas()
         } else {
@@ -271,36 +283,61 @@ final class TaskManagerModel: ObservableObject {
         defer { busy = false }
         do {
             if store == nil {
-                let url = try TaskDatabaseLocation.resolve()
-                databaseURL = url
-                store = TaskStore(url: url, backups: userDataDirectory().appendingPathComponent("task-backups", isDirectory: true))
+                switch kind {
+                case .tasks:
+                    let url = try TaskDatabaseLocation.resolve()
+                    databaseURL = url
+                    store = TaskStore(url: url, backups: userDataDirectory().appendingPathComponent("task-backups", isDirectory: true))
+                case .notes:
+                    let url = try NoteDirectoryLocation.resolve()
+                    databaseURL = url
+                    store = NoteDirectoryStore(rootURL: url)
+                }
             }
             guard let store else { return }
             install(try await store.open())
             loaded = true
             onFocusRequested?()
             errorMessage = ""
-            storageStatus = await store.status()
-            Logger.info("Task database opened: \(databaseURL?.path ?? "")")
+            storageStatus = await store.status(selectedItemID: selectedTaskID)
+            Logger.info("\(kind.headerTitle) storage opened: \(databaseURL?.path ?? "")")
         } catch {
-            errorMessage = error.localizedDescription
-            storageStatus = "Task database unavailable"
+            errorMessage = describeError(error)
+            storageStatus = kind == .tasks ? "Task database unavailable" : "Notes folder unavailable"
         }
     }
 
     func refresh() async {
         guard let store, !busy, saving == nil, !conflict else { return }
-        storageStatus = dirty ? "Unsaved changes" : await store.status()
+        storageStatus = dirty ? "Unsaved changes" : await store.status(selectedItemID: selectedTaskID)
         guard !dirty, editorMode == .normal else { return }
         do {
             let snapshot = try await store.load()
             guard !busy, saving == nil, !conflict, !dirty, editorMode == .normal else { return }
             install(snapshot)
             errorMessage = ""
-        } catch { errorMessage = error.localizedDescription }
+        } catch { errorMessage = describeError(error) }
+    }
+
+    func revealStorageInFinder() {
+        guard let store else { return }
+        let itemID = selectedTaskID
+        let projectID = selectedProjectID
+        Task {
+            let url = await store.revealURL(selectedItemID: itemID, selectedProjectID: projectID)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
     }
 
     func databaseLoadCount() async -> Int { await store?.loadCount ?? 0 }
+
+    private func describeError(_ error: Error) -> String {
+        if case TaskStoreError.conflict = error { return kind.conflictMessage }
+        if case TaskStoreError.downloading = error {
+            return kind == .tasks ? "Downloading the task database from iCloud…" : "Downloading notes from iCloud…"
+        }
+        return error.localizedDescription
+    }
 
     private func install(_ snapshot: TaskSnapshot) {
         categories = snapshot.categories
@@ -316,6 +353,9 @@ final class TaskManagerModel: ObservableObject {
 
     private func defaultTaskID(for projectID: String?) -> String? {
         guard let projectID else { return nil }
+        if !kind.supportsTaskMetadata {
+            return tasks.first { $0.projectID == projectID }?.id
+        }
         return tasks.first { $0.projectID == projectID && !$0.metadata.done }?.id
             ?? (showCompleted ? tasks.first { $0.projectID == projectID }?.id : nil)
     }
@@ -338,8 +378,8 @@ final class TaskManagerModel: ObservableObject {
         savedBody = draft
         if changed, editorMode != .normal { editorMode = .normal }
         displayedTaskID = selectedTaskID
-        preferences.set(selectedProjectID, forKey: "tasks.selectedProject")
-        preferences.set(selectedTaskID, forKey: "tasks.selectedTask")
+        preferences.set(selectedProjectID, forKey: prefKey("selectedProject"))
+        preferences.set(selectedTaskID, forKey: prefKey("selectedTask"))
     }
 
     func edit(_ body: String) {
@@ -373,11 +413,11 @@ final class TaskManagerModel: ObservableObject {
                     try await store.saveTask(id, body: body, expectedBody: expected)
                     savedBody = body
                     errorMessage = ""
-                    let status = await store.status()
+                    let status = await store.status(selectedItemID: id)
                     storageStatus = dirty ? "Unsaved changes" : status
                 } catch {
                     if case TaskStoreError.conflict = error { conflict = true }
-                    errorMessage = error.localizedDescription
+                    errorMessage = describeError(error)
                     storageStatus = "Draft kept in this window · save failed"
                     return false
                 }
@@ -447,11 +487,45 @@ final class TaskManagerModel: ObservableObject {
         }
     }
     func addCategory(name: String) { perform { _ = try await $0.addCategory(name: name) } }
-    func renameCategory(_ id: String, name: String) { perform { try await $0.renameCategory(id, name: name) } }
-    func renameProject(_ id: String, name: String) { perform { try await $0.renameProject(id, name: name) } }
-    func moveProject(_ id: String, parentID: String?, categoryID: String) { perform { try await $0.moveProject(id, to: parentID, categoryID: categoryID) } }
+    func renameCategory(_ id: String, name: String) {
+        perform { [self] store in
+            let updated = try await store.renameCategory(id, name: name)
+            remapPathPrefix(from: id, to: updated)
+        }
+    }
+    func renameProject(_ id: String, name: String) {
+        perform { [self] store in
+            let updated = try await store.renameProject(id, name: name)
+            remapPathPrefix(from: id, to: updated)
+        }
+    }
+    func moveProject(_ id: String, parentID: String?, categoryID: String) {
+        perform { [self] store in
+            let updated = try await store.moveProject(id, to: parentID, categoryID: categoryID)
+            remapPathPrefix(from: id, to: updated)
+        }
+    }
     func deleteProject(_ id: String) { perform { try await $0.deleteEmptyProject(id) } }
-    func moveTask(_ id: String, projectID: String) { perform { try await $0.moveTask(id, projectID: projectID) } }
+    func moveTask(_ id: String, projectID: String) {
+        perform { [self] store in
+            let updated = try await store.moveTask(id, projectID: projectID)
+            if selectedTaskID == id { selectedTaskID = updated }
+        }
+    }
+
+    private func remapPathPrefix(from oldPrefix: String, to newPrefix: String) {
+        guard oldPrefix != newPrefix else { return }
+        func remap(_ value: String) -> String {
+            if value == oldPrefix { return newPrefix }
+            if value.hasPrefix(oldPrefix + "/") { return newPrefix + value.dropFirst(oldPrefix.count) }
+            return value
+        }
+        if let project = selectedProjectID { selectedProjectID = remap(project) }
+        if let task = selectedTaskID { selectedTaskID = remap(task) }
+        if let revealed = revealedProjectID { revealedProjectID = remap(revealed) }
+        expandedProjects = Set(expandedProjects.map(remap))
+        collapsedCategories = Set(collapsedCategories.map(remap))
+    }
 
     func addTask() {
         guard let project = selectedProjectID else { return }
@@ -461,7 +535,7 @@ final class TaskManagerModel: ObservableObject {
             search = ""
             editorMode = .insert
             activatePane(.description)
-        }) { [self] store in selectedTaskID = try await store.addTask(projectID: project) }
+        }) { [self] store in selectedTaskID = try await store.addTask(projectID: project, body: "") }
     }
 
     func deleteTask() {
@@ -473,6 +547,7 @@ final class TaskManagerModel: ObservableObject {
     }
 
     func toggleCompletion(_ task: PersonalTask) {
+        guard kind.supportsTaskMetadata else { return }
         perform { [self] store in
             let current = tasks.first { $0.id == task.id } ?? task
             try await store.saveTask(current.id, body: TaskMetadata.togglingCompletion(in: current.body), expectedBody: current.body)
@@ -481,7 +556,7 @@ final class TaskManagerModel: ObservableObject {
 
     /// Selection and structural changes are serialized after the current draft
     /// has saved. A failed save never changes the editing destination.
-    private func perform(after: (@MainActor () -> Void)? = nil, _ operation: @escaping @MainActor (TaskStore) async throws -> Void) {
+    private func perform(after: (@MainActor () -> Void)? = nil, _ operation: @escaping @MainActor (any TaskWorkspaceStore) async throws -> Void) {
         guard !busy, let store else { return }
         busy = true
         Task { [self] in
@@ -491,9 +566,9 @@ final class TaskManagerModel: ObservableObject {
                 try await operation(store)
                 install(try await store.load())
                 after?()
-                storageStatus = await store.status()
+                storageStatus = await store.status(selectedItemID: selectedTaskID)
                 errorMessage = ""
-            } catch { errorMessage = error.localizedDescription }
+            } catch { errorMessage = describeError(error) }
         }
     }
 
@@ -509,8 +584,8 @@ final class TaskManagerModel: ObservableObject {
                 conflict = false
                 install(try await store.load())
                 errorMessage = ""
-                storageStatus = await store.status()
-            } catch { errorMessage = error.localizedDescription }
+                storageStatus = await store.status(selectedItemID: selectedTaskID)
+            } catch { errorMessage = describeError(error) }
         }
     }
 
@@ -527,8 +602,8 @@ final class TaskManagerModel: ObservableObject {
                 conflict = false
                 install(snapshot)
                 errorMessage = ""
-                storageStatus = await store.status()
-            } catch { errorMessage = error.localizedDescription }
+                storageStatus = await store.status(selectedItemID: selectedTaskID)
+            } catch { errorMessage = describeError(error) }
         }
     }
 
@@ -548,20 +623,35 @@ final class TaskManagerModel: ObservableObject {
         }
     }
 
-    func finishDictation(save: Bool = true) async {
+    func finishDictation(save: Bool = true, discard: Bool = false) async {
         if let endingDictation { await endingDictation.value; return }
         guard editorMode == .dictation, let insertion else { return }
         let operation = Task { [self] in
             let text = await dictation.finishForDocument()
-            let result = insertion.result(for: text)
-            let expanded = TaskMetadata.expandingDueFormulas(in: result.body, cursorLocation: result.cursorLocation)
-            edit(expanded.text)
+            let finalResult: (text: String, cursorLocation: Int)
+            if discard {
+                finalResult = (insertion.original, insertion.range.location)
+            } else {
+                let result = insertion.result(for: text)
+                finalResult = kind.supportsTaskMetadata
+                    ? TaskMetadata.expandingDueFormulas(in: result.body, cursorLocation: result.cursorLocation)
+                    : (result.body, result.cursorLocation)
+            }
+            edit(finalResult.text)
             self.insertion = nil
             editorMode = .normal
-            editor?.finishDictation(original: insertion.original, body: expanded.text, cursorLocation: expanded.cursorLocation)
+            editor?.finishDictation(original: insertion.original, body: finalResult.text, cursorLocation: finalResult.cursorLocation)
             editor?.window?.makeFirstResponder(editor)
-            if save { _ = await flush() }
-            else { saveDebounce?.cancel(); saveDebounce = nil }
+            onFocusRequested?()
+            if save {
+                _ = await flush()
+                if !dirty, let store {
+                    storageStatus = await store.status(selectedItemID: selectedTaskID)
+                }
+            } else {
+                saveDebounce?.cancel()
+                saveDebounce = nil
+            }
             endingDictation = nil
         }
         endingDictation = operation

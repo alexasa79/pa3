@@ -1,6 +1,52 @@
 import CSQLite
 import Foundation
 
+enum WorkspaceKind: String, Sendable {
+    case tasks
+    case notes
+
+    var windowTitle: String { self == .tasks ? "PA3 Tasks" : "PA3 Notes" }
+    var frameAutosaveName: String { self == .tasks ? "PA3Tasks" : "PA3Notes" }
+    var preferencesPrefix: String { rawValue }
+    var headerTitle: String { self == .tasks ? "Tasks" : "Notes" }
+    var headerIcon: String { self == .tasks ? "checklist" : "doc.text" }
+    var itemSingular: String { self == .tasks ? "task" : "note" }
+    var itemPlural: String { self == .tasks ? "tasks" : "notes" }
+    var newItemButtonTitle: String { self == .tasks ? "New task" : "New note" }
+    var sectionSingular: String { self == .tasks ? "category" : "section" }
+    var sectionPlural: String { self == .tasks ? "categories" : "sections" }
+    var newSectionTitle: String { self == .tasks ? "New category" : "New section" }
+    var renameSectionTitle: String { self == .tasks ? "Rename category" : "Rename section" }
+    var untitledTitle: String { self == .tasks ? "Untitled task" : "Untitled note" }
+    var editorHeading: String { self == .tasks ? "Description" : "Note" }
+    var showStorageButtonTitle: String { self == .tasks ? "Show database" : "Show in Finder" }
+    var supportsTaskMetadata: Bool { self == .tasks }
+    var conflictMessage: String {
+        self == .tasks
+            ? "This task changed outside this window. Your draft has been kept. Reload or save it as a separate task."
+            : "This note changed outside this window. Your draft has been kept. Reload or save it as a separate note."
+    }
+}
+
+protocol TaskWorkspaceStore: Sendable {
+    var locationURL: URL { get }
+    var loadCount: Int { get async }
+    func open() async throws -> TaskSnapshot
+    func load() async throws -> TaskSnapshot
+    func status(selectedItemID: String?) async -> String
+    func revealURL(selectedItemID: String?, selectedProjectID: String?) async -> URL
+    func addCategory(name: String) async throws -> String
+    func renameCategory(_ id: String, name: String) async throws -> String
+    func addProject(name: String, categoryID: String, parentID: String?) async throws -> String
+    func renameProject(_ id: String, name: String) async throws -> String
+    func moveProject(_ id: String, to parentID: String?, categoryID: String) async throws -> String
+    func deleteEmptyProject(_ id: String) async throws
+    func addTask(projectID: String, body: String) async throws -> String
+    func saveTask(_ id: String, body: String, expectedBody: String) async throws
+    func moveTask(_ id: String, projectID: String) async throws -> String
+    func deleteTask(_ id: String, expectedBody: String) async throws
+}
+
 enum TaskStoreError: LocalizedError {
     case message(String)
     case downloading
@@ -62,8 +108,9 @@ enum TaskDatabaseLocation {
 
 /// All SQLite work runs off the UI actor. Connections are closed before file
 /// coordination ends, so iCloud never replaces a file with an open connection.
-actor TaskStore {
+actor TaskStore: TaskWorkspaceStore {
     let url: URL
+    nonisolated var locationURL: URL { url }
     private let backups: URL?
     private(set) var loadCount = 0
 
@@ -99,6 +146,8 @@ actor TaskStore {
         return try access { try Self.snapshot($0) }
     }
     func status() -> String { TaskDatabaseLocation.uploadStatus(url) }
+    func status(selectedItemID: String?) -> String { status() }
+    func revealURL(selectedItemID: String?, selectedProjectID: String?) -> URL { url }
 
     func addCategory(name: String) throws -> String {
         let name = try Self.validName(name)
@@ -109,9 +158,11 @@ actor TaskStore {
         }
     }
 
-    func renameCategory(_ id: String, name: String) throws {
+    @discardableResult
+    func renameCategory(_ id: String, name: String) throws -> String {
         let name = try Self.validName(name)
         try mutate { try $0.execute("UPDATE categories SET name = ? WHERE id = ?", [name, id]) }
+        return id
     }
 
     func addProject(name: String, categoryID: String, parentID: String?) throws -> String {
@@ -128,12 +179,15 @@ actor TaskStore {
         }
     }
 
-    func renameProject(_ id: String, name: String) throws {
+    @discardableResult
+    func renameProject(_ id: String, name: String) throws -> String {
         let name = try Self.validName(name)
         try mutate { try $0.execute("UPDATE projects SET name = ? WHERE id = ?", [name, id]) }
+        return id
     }
 
-    func moveProject(_ id: String, to parentID: String?, categoryID: String) throws {
+    @discardableResult
+    func moveProject(_ id: String, to parentID: String?, categoryID: String) throws -> String {
         try mutate { db in
             let descendants = try db.rows("WITH RECURSIVE tree(id) AS (SELECT id FROM projects WHERE id = ? UNION ALL SELECT p.id FROM projects p JOIN tree t ON p.parent_id = t.id) SELECT id FROM tree", [id]).compactMap { $0["id"] }
             guard !descendants.isEmpty else { throw TaskStoreError.message("The project no longer exists.") }
@@ -146,6 +200,7 @@ actor TaskStore {
             try db.execute("UPDATE projects SET parent_id = ? WHERE id = ?", [parentID, id])
             for descendant in descendants { try db.execute("UPDATE projects SET category_id = ? WHERE id = ?", [categoryID, descendant]) }
         }
+        return id
     }
 
     func deleteEmptyProject(_ id: String) throws {
@@ -174,8 +229,10 @@ actor TaskStore {
         }
     }
 
-    func moveTask(_ id: String, projectID: String) throws {
+    @discardableResult
+    func moveTask(_ id: String, projectID: String) throws -> String {
         try mutate { try $0.execute("UPDATE tasks SET project_id = ? WHERE id = ?", [projectID, id]) }
+        return id
     }
 
     func deleteTask(_ id: String, expectedBody: String) throws {

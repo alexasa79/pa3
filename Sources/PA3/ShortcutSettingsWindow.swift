@@ -13,7 +13,7 @@ final class ShortcutSettingsWindowController: NSWindowController, NSWindowDelega
         self.shortcuts = shortcuts
         self.onSave = onSave
         draft = shortcuts.configuration
-        let window = ShortcutRecordingWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 390),
+        let window = ShortcutRecordingWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 435),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         super.init(window: window)
         window.title = "PA3 Keyboard shortcuts"

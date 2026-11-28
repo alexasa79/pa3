@@ -19,7 +19,7 @@ struct DictationView: View {
                     Text("\(controller.characterCount) characters · \(controller.wordCount) words · \(controller.transcriptionIterations) iterations")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                     HStack {
-                    Text(controller.statusDetail.isEmpty ? "Space: pause/resume · o/O: paragraph · ?: shortcuts · Esc: Normal · Q: close Tasks" : controller.statusDetail)
+                    Text(controller.statusDetail.isEmpty ? "Space: pause/resume · o/O: paragraph · ?: shortcuts · Esc/Enter: finish · q: discard" : controller.statusDetail)
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                     Spacer()
                     Button("Shortcuts") { controller.toggleShortcuts() }
@@ -51,6 +51,9 @@ struct DictationView: View {
             Spacer()
             if !embedded, let openTasks = controller.onOpenTasks {
                 Button(action: openTasks) { Label("Tasks", systemImage: "checklist") }
+            }
+            if !embedded, let openNotes = controller.onOpenNotes {
+                Button(action: openNotes) { Label("Notes", systemImage: "doc.text") }
             }
         }
         .padding(.horizontal, 12)

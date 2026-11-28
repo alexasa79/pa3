@@ -36,7 +36,8 @@ struct TaskEditorView: NSViewRepresentable {
         editor.onMode = { [weak model] mode in model?.changeEditorMode(mode) }
         editor.onDictation = { [weak model] in model?.beginDictation() }
         editor.onSave = { [weak model] in Task { await model?.flush() } }
-        editor.setAccessibilityLabel("Task description")
+        editor.expandsDueFormulas = model.kind.supportsTaskMetadata
+        editor.setAccessibilityLabel(model.kind == .tasks ? "Task description" : "Note")
         scroll.documentView = editor
         model.editor = editor
         return scroll
@@ -95,6 +96,7 @@ final class TaskModalTextView: NSTextView {
     var onMode: ((TaskEditorMode) -> Void)?
     var onDictation: (() -> Void)?
     var onSave: (() -> Void)?
+    var expandsDueFormulas = true
     override var undoManager: UndoManager? { documentID.flatMap { histories[$0] } }
 
     func display(documentID id: String?, body: String) {
@@ -363,7 +365,7 @@ final class TaskModalTextView: NSTextView {
 
     func leaveInsertMode(notify: Bool = true) {
         if mode == .insert {
-            expandDueDateFormulas()
+            if expandsDueFormulas { expandDueDateFormulas() }
             finishInsertCapture()
             stepBackWithinLine()
         }

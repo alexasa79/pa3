@@ -67,8 +67,10 @@ final class DictationController: ObservableObject {
     var onQuit: (() -> Void)?
     var onDictationWillStart: (() -> Void)?
     var onOpenTasks: (() -> Void)?
-    /// Embedded editors supply a finish action instead of pasting into another app.
+    var onOpenNotes: (() -> Void)?
+    /// Embedded editors supply finish/discard actions instead of pasting into another app.
     var onFinishEmbeddedSession: (() -> Void)?
+    var onDiscardEmbeddedSession: (() -> Void)?
     var canAcquireMicrophone: (() -> Bool)?
     var prepareModels: (() -> Bool)?
     var narrationIsBlocked: Bool { dictating || runningStop || muter.isActive || transcriber.captureIsBusy }
@@ -221,6 +223,7 @@ final class DictationController: ObservableObject {
     }
 
     func discardAndHide() {
+        if let onDiscardEmbeddedSession { onDiscardEmbeddedSession(); return }
         if let onFinishEmbeddedSession { onFinishEmbeddedSession(); return }
         resumeAfterShortcuts = false
         stopDictation()
@@ -350,12 +353,12 @@ final class DictationController: ObservableObject {
     func shortcutSections() -> [(title: String, bindings: [String])] {
         let embedded = onFinishEmbeddedSession != nil
         return [
-            ("General", ["?: show/hide shortcuts (pauses dictation)", embedded ? "esc: close shortcuts, otherwise return to Normal" : "esc: close shortcuts, otherwise discard", "space: pause/resume dictation", embedded ? "enter: finish dictation and return to Normal" : "enter: paste result", embedded ? "q / Q: save and close Tasks" : "q / Q: discard", embedded ? "ctrl+c: finish dictation and return to Normal" : "ctrl+c: abort", "v: paste a sentence or inline fragment (based on ending punctuation)", "V: insert clipboard as a separate paragraph"]),
+            ("General", ["?: show/hide shortcuts (pauses dictation)", embedded ? "esc: close shortcuts, otherwise finish dictation and return to Normal" : "esc: close shortcuts, otherwise discard", "space: pause/resume dictation", embedded ? "enter: finish dictation and return to Normal" : "enter: paste result", embedded ? "q / Q: discard dictation and return to Normal" : "q / Q: discard", embedded ? "ctrl+c: discard dictation and return to Normal" : "ctrl+c: abort", "v: paste a sentence or inline fragment (based on ending punctuation)", "V: insert clipboard as a separate paragraph"]),
             ("Dictation", ["R: restart dictation", "o: new paragraph after current paragraph", "O: continue current paragraph", "s: spell check transcript", "D: edit dictionary"]),
             ("Navigation · while paused", ["arrows: navigate words", "shift+arrows: expand selection", "J: join next paragraph", "S: split paragraph after current word"]),
             ("Editing · while paused", ["c: edit selection", "C: change all matching text", "a: append after", "i / I: insert before", "x: delete selection", "X: delete to sentence end (keep ending punctuation)", "t: cycle capitalization", "u: undo last change", ".: repeat change", ">: repeat change on all matches", "A: add selected word to dictionary"]),
             ("Inside the text editor", ["enter: apply edit", "esc: cancel edit", "arrows: move cursor", "home/end: jump", "alt+backspace: delete word", "backspace: delete character", "delete: delete ahead", "cmd+a: select all"]),
-            ("From any app", ["\(globalShortcuts.dictation.display): open dictation", "\(globalShortcuts.selection.display): read selection / stop narration", "\(globalShortcuts.screen.display): read screen rectangle / stop narration", "\(globalShortcuts.tasks.display): open task manager"])
+            ("From any app", ["\(globalShortcuts.dictation.display): open dictation", "\(globalShortcuts.selection.display): read selection / stop narration", "\(globalShortcuts.screen.display): read screen rectangle / stop narration", "\(globalShortcuts.tasks.display): open task manager", "\(globalShortcuts.notes.display): open note manager"])
         ]
     }
 

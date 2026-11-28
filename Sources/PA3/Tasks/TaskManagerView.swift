@@ -55,9 +55,10 @@ struct TaskManagerView: View {
                 TaskPanes(projects: AnyView(projectsPane), tasks: AnyView(tasksPane), editor: AnyView(editorPane))
             } else {
                 ContentUnavailableView {
-                    Label("Task database", systemImage: "icloud")
+                    Label(model.kind == .tasks ? "Task database" : "Notes folder", systemImage: "icloud")
                 } description: {
-                    Text(model.errorMessage.isEmpty ? "Opening iCloud Drive/PA3/pa3.sqlite…" : model.errorMessage)
+                    let defaultMessage = model.kind == .tasks ? "Opening iCloud Drive/PA3/pa3.sqlite…" : "Opening iCloud Drive/PA3…"
+                    Text(model.errorMessage.isEmpty ? defaultMessage : model.errorMessage)
                 } actions: {
                     Button("Retry") { Task { await model.open() } }.disabled(model.busy)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -69,8 +70,8 @@ struct TaskManagerView: View {
                 Text(model.storageStatus).lineLimit(1).help(model.storageStatus)
                 Spacer()
                 if model.busy { ProgressView().controlSize(.small) }
-                Button("Show database") {
-                    if let url = model.databaseURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                Button(model.kind.showStorageButtonTitle) {
+                    model.revealStorageInFinder()
                 }.buttonStyle(.plain).disabled(model.databaseURL == nil)
             }
             .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.vertical, 8)
@@ -83,11 +84,13 @@ struct TaskManagerView: View {
             Button("Cancel", role: .cancel) {}
             Button("Save") { saveName() }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        .alert("Delete this task?", isPresented: $showingDelete) {
+        .alert("Delete this \(model.kind.itemSingular)?", isPresented: $showingDelete) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) { model.deleteTask() }
-        } message: { Text(model.selectedTask?.subject ?? "") }
-        .alert("New project in \(model.newProjectCategory?.name ?? "category")", isPresented: $model.showingNewProjectPrompt) {
+        } message: {
+            Text(model.selectedTask.map { $0.isUntitled ? model.kind.untitledTitle : $0.subject } ?? "")
+        }
+        .alert("New project in \(model.newProjectCategory?.name ?? model.kind.sectionSingular)", isPresented: $model.showingNewProjectPrompt) {
             TextField("Name", text: $newProjectName)
             Button("Cancel", role: .cancel) { model.onFocusRequested?() }
             Button("Save") {
@@ -110,15 +113,15 @@ struct TaskManagerView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Label("Tasks", systemImage: "checklist").font(.system(size: 19, weight: .semibold))
+            Label(model.kind.headerTitle, systemImage: model.kind.headerIcon).font(.system(size: 19, weight: .semibold))
             Spacer()
-            Button { model.addTask() } label: { Label("New task", systemImage: "plus") }
+            Button { model.addTask() } label: { Label(model.kind.newItemButtonTitle, systemImage: "plus") }
                 .disabled(model.selectedProjectID == nil || model.busy || model.conflict)
             Menu {
-                Button("New category…") { prompt("New category", action: .category) }
-                Menu("Rename category") {
+                Button("\(model.kind.newSectionTitle)…") { prompt(model.kind.newSectionTitle, action: .category) }
+                Menu(model.kind.renameSectionTitle) {
                     ForEach(model.categories) { category in
-                        Button(category.name) { prompt("Rename category", action: .renameCategory(category.id), current: category.name) }
+                        Button(category.name) { prompt(model.kind.renameSectionTitle, action: .renameCategory(category.id), current: category.name) }
                     }
                 }
                 Divider()
@@ -186,7 +189,7 @@ struct TaskManagerView: View {
                 }
             }
             HStack {
-                Button("New category…") { prompt("New category", action: .category) }
+                Button("\(model.kind.newSectionTitle)…") { prompt(model.kind.newSectionTitle, action: .category) }
                 Spacer()
                 Button("Subproject…") {
                     if let project = model.selectedProject {
@@ -207,7 +210,7 @@ struct TaskManagerView: View {
     @ViewBuilder private func projectMenu(_ project: TaskProject) -> some View {
         Button("New subproject…") { prompt("New subproject", action: .project(categoryID: project.categoryID, parentID: project.id)) }
         Button("Rename…") { prompt("Rename project", action: .renameProject(project.id), current: project.name) }
-        Menu("Move to category") {
+        Menu("Move to \(model.kind.sectionSingular)") {
             ForEach(model.categories) { category in
                 Button(category.name) { model.moveProject(project.id, parentID: nil, categoryID: category.id) }
             }
@@ -227,7 +230,7 @@ struct TaskManagerView: View {
         let hasQuery = !model.search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Text(model.selectedProject?.name ?? "Tasks").font(.headline).lineLimit(1)
+                Text(model.selectedProject?.name ?? model.kind.headerTitle).font(.headline).lineLimit(1)
                 Spacer()
                 Button {
                     model.activatePane(.tasks, requestFocus: false)
@@ -251,15 +254,21 @@ struct TaskManagerView: View {
             ScrollViewReader { proxy in
                 List(selection: Binding(get: { model.selectedTaskID }, set: { model.selectTask($0) })) {
                     ForEach(filtered) { task in
+                        let title = task.isUntitled ? model.kind.untitledTitle : task.subject
                         HStack(alignment: .top, spacing: 8) {
-                            Button { model.toggleCompletion(task) } label: { Image(systemName: task.metadata.done ? "checkmark.circle.fill" : "circle") }
-                                .buttonStyle(.plain).help(task.metadata.done ? "Reopen task" : "Complete task with #done")
+                            if model.kind.supportsTaskMetadata {
+                                Button { model.toggleCompletion(task) } label: { Image(systemName: task.metadata.done ? "checkmark.circle.fill" : "circle") }
+                                    .buttonStyle(.plain).help(task.metadata.done ? "Reopen task" : "Complete task with #done")
+                            }
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(task.subject).fontWeight(.bold).lineLimit(2).strikethrough(task.metadata.done)
-                                HStack(spacing: 6) {
-                                    if let priority = task.metadata.priority { priorityBadge(priority) }
-                                    if let due = task.metadata.due { Text(due) }
-                                }.font(.system(size: 11)).foregroundStyle(.secondary)
+                                Text(title).fontWeight(.bold).lineLimit(2)
+                                    .strikethrough(model.kind.supportsTaskMetadata && task.metadata.done)
+                                if model.kind.supportsTaskMetadata, (task.metadata.priority != nil || task.metadata.due != nil) {
+                                    HStack(spacing: 6) {
+                                        if let priority = task.metadata.priority { priorityBadge(priority) }
+                                        if let due = task.metadata.due { Text(due) }
+                                    }.font(.system(size: 11)).foregroundStyle(.secondary)
+                                }
                             }
                         }.padding(.vertical, 4).tag(task.id).id(task.id)
                             .contextMenu {
@@ -275,7 +284,7 @@ struct TaskManagerView: View {
                         if filtered.isEmpty {
                             let message = model.selectedProjectID == nil
                                 ? "Create or select a project."
-                                : (hasQuery ? "No matching tasks." : "No tasks yet. Use New task.")
+                                : (hasQuery ? "No matching \(model.kind.itemPlural)." : "No \(model.kind.itemPlural) yet. Use \(model.kind.newItemButtonTitle).")
                             Text(message)
                                 .font(.callout).foregroundStyle(.secondary).padding()
                         }
@@ -293,7 +302,9 @@ struct TaskManagerView: View {
                         }
                     }
             }
-            Toggle("Show completed", isOn: $model.showCompleted).font(.system(size: 12)).padding(12)
+            if model.kind.supportsTaskMetadata {
+                Toggle("Show completed", isOn: $model.showCompleted).font(.system(size: 12)).padding(12)
+            }
         }.disabled(model.busy || model.conflict)
     }
 
@@ -305,6 +316,7 @@ struct TaskManagerView: View {
                     .foregroundStyle(.secondary)
                 TaskSearchField(
                     text: Binding(get: { model.search }, set: { model.updateSearch($0) }),
+                    placeholder: "Filter \(model.kind.itemPlural)…",
                     onMove: { model.moveSelection($0) },
                     onCommit: { model.commitTaskSearch() },
                     onCancel: { model.cancelTaskSearch() }
@@ -342,14 +354,14 @@ struct TaskManagerView: View {
     private var editorPane: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Text("Description").font(.headline)
+                Text(model.kind.editorHeading).font(.headline)
                 Spacer()
                 Text(model.editorMode.rawValue).font(.system(size: 11, weight: .semibold, design: .monospaced)).foregroundStyle(.secondary)
                 Button("Type") { model.editor?.setMode(.insert); model.activatePane(.description) }
                     .disabled(model.selectedTaskID == nil || model.editorMode == .dictation || model.busy)
                 Button { model.beginDictation() } label: { Image(systemName: "mic") }.help("Dictate at cursor or replace selected text")
                     .disabled(model.selectedTaskID == nil || model.editorMode == .dictation || model.busy || model.conflict)
-                Button { showingDelete = true } label: { Image(systemName: "trash") }.help("Delete task")
+                Button { showingDelete = true } label: { Image(systemName: "trash") }.help("Delete \(model.kind.itemSingular)")
                     .disabled(model.selectedTaskID == nil || model.busy || model.conflict)
             }.padding(12).background(paneHighlight(.description))
             Divider()
@@ -359,7 +371,10 @@ struct TaskManagerView: View {
                 if model.editorMode == .dictation {
                     DictationView(controller: model.dictation, embedded: true)
                 } else if model.selectedTaskID == nil {
-                    ContentUnavailableView("Select a task", systemImage: "text.alignleft", description: Text("The first line of its description becomes the subject."))
+                    let subtitle = model.kind == .tasks
+                        ? "The first line of its description becomes the subject."
+                        : "The first line of a note becomes its title."
+                    ContentUnavailableView("Select a \(model.kind.itemSingular)", systemImage: "text.alignleft", description: Text(subtitle))
                 }
             }
         }
@@ -370,7 +385,7 @@ struct TaskManagerView: View {
             Image(systemName: "exclamationmark.triangle")
             Text(model.errorMessage).font(.callout).textSelection(.enabled)
             Spacer()
-            if model.conflict { Button("Save draft as new task") { model.saveConflictCopy() } }
+            if model.conflict { Button("Save draft as new \(model.kind.itemSingular)") { model.saveConflictCopy() } }
             else { Button("Retry save") { Task { await model.flush() } } }
             Button("Reload…") { showingDiscard = true }
         }.padding(12).background(Color.orange.opacity(0.13)).disabled(model.busy)
@@ -463,6 +478,7 @@ private final class TaskPaneHostingView: NSHostingView<AnyView> {
 
 private struct TaskSearchField: NSViewRepresentable {
     @Binding var text: String
+    var placeholder: String = "Filter tasks…"
     var onMove: (Int) -> Void
     var onCommit: () -> Void
     var onCancel: () -> Void
@@ -472,7 +488,7 @@ private struct TaskSearchField: NSViewRepresentable {
     func makeNSView(context: Context) -> NSTextField {
         let field = NSTextField()
         field.identifier = NSUserInterfaceItemIdentifier("tasks.search.field")
-        field.placeholderString = "Filter tasks…"
+        field.placeholderString = placeholder
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
@@ -544,10 +560,10 @@ final class TaskManagerWindow: NSWindowController, NSWindowDelegate {
         self.model = model
         let window = TaskNavigationWindow(contentRect: NSRect(x: 0, y: 0, width: 1240, height: 720),
                               styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
-        window.title = "PA3 Tasks"
+        window.title = model.kind.windowTitle
         window.minSize = NSSize(width: 900, height: 480)
         window.isReleasedWhenClosed = false
-        window.setFrameAutosaveName("PA3Tasks")
+        window.setFrameAutosaveName(model.kind.frameAutosaveName)
         window.contentView = NSHostingView(rootView: TaskManagerView(model: model))
         super.init(window: window)
         window.model = model

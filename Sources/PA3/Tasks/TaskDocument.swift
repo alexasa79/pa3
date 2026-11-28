@@ -23,6 +23,10 @@ struct PersonalTask: Identifiable, Equatable, Sendable {
     }
     private(set) var subject: String
     private(set) var metadata: TaskMetadata
+    var isUntitled: Bool {
+        let first = body.components(separatedBy: .newlines).first ?? ""
+        return first.trimmingCharacters(in: .whitespaces).isEmpty
+    }
 
     init(id: String, projectID: String, body: String) {
         self.id = id

@@ -197,6 +197,7 @@ func runTaskManagerTests() async -> [String] {
     failures += await runTaskNavigationTests()
     failures += await runTaskListScrollingTests()
     failures += await runTaskSearchInteractionTests()
+    failures += await runNoteManagerTests()
     return failures
 }
 
@@ -952,14 +953,21 @@ private func runTaskNavigationTests() async -> [String] {
                 : (window.firstResponder as? NSView)?.identifier?.rawValue == "tasks.pane.\(pane.rawValue)"
             check(model.activePane == pane && responderMatches && model.editorMode != .dictation, "reopening restores native focus in \(pane) without dictation")
         }
+        let beforeDiscardedDictation = model.draft
         model.beginDictation(); await settle()
         controller.handleTranscription(TranscriptionUpdate(text: "More speech.", language: "en"))
-        press("q"); await waitForClose()
-        let closedDictation = try await store.load()
-        check(!window.isVisible && model.activePane == .description && model.editorMode == .normal
-              && closedDictation.tasks.first { $0.id == model.selectedTaskID }?.body == model.draft
-              && model.draft.contains("More speech."), "plain q drains and saves dictation without changing the remembered pane (visible: \(window.isVisible), pane: \(model.activePane), mode: \(model.editorMode), draft: \(model.draft), error: \(model.errorMessage))")
-        manager.present(); await settle()
+        check(model.draft.contains("More speech."), "live dictation previews into the draft before discard")
+        check(!window.handleTaskKey(event("q", code: 12)), "plain q passes through to Dictation instead of closing the window")
+        window.sendEvent(event("q", code: 12))
+        for _ in 0..<200 where model.editorMode == .dictation || model.dirty { try? await Task.sleep(for: .milliseconds(10)) }
+        await settle()
+        let savedDictation = try await store.load()
+        let savedBody = savedDictation.tasks.first { $0.id == model.selectedTaskID }?.body
+        check(window.isVisible && model.activePane == .description && model.editorMode == .normal
+              && window.firstResponder === model.editor
+              && model.draft == beforeDiscardedDictation
+              && savedBody == beforeDiscardedDictation
+              && !model.draft.contains("More speech."), "plain q in Dictation discards dictated text and returns to Normal without closing the window (visible: \(window.isVisible), pane: \(model.activePane), mode: \(model.editorMode), responderMatches: \(window.firstResponder === model.editor), savedMatches: \(savedBody == beforeDiscardedDictation), draft: \(model.draft), error: \(model.errorMessage))")
         model.collapsedCategories.insert(work)
         let restored = TaskManagerModel(dictation: DictationController(transcriber: TranscriberService(), preferences: preferences), databaseURL: url, preferences: preferences)
         await restored.open()

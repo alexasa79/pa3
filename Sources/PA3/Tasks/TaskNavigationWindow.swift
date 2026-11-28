@@ -136,7 +136,7 @@ final class TaskNavigationWindow: NSWindow {
             return true
         }
         if key == "q", flags.isEmpty || flags == .shift,
-           model.activePane != .description || model.editorMode != .insert {
+           model.activePane != .description || model.editorMode == .normal {
             performClose(nil)
             return true
         }

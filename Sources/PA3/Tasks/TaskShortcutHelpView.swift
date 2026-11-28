@@ -5,7 +5,7 @@ struct TaskShortcutHelpView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Task manager shortcuts").font(.title2)
+            Text(model.kind == .tasks ? "Task manager shortcuts" : "Note manager shortcuts").font(.title2)
             Text("Space starts dictation from Normal mode. Close this reference with ? or Escape.")
                 .font(.callout).foregroundStyle(.secondary)
             Divider()
@@ -28,15 +28,19 @@ struct TaskShortcutHelpView: View {
                         }
                     }
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Saving and text tags").font(.headline)
-                        Text("Insert and Dictation keep edits in memory. Returning to Normal saves. Switching tasks or closing the window finishes and saves first. Normal-mode edits save automatically.")
-                        Text("The first line is the subject. Metadata stays in the text:")
-                        Text("#due:2026-11-15   #due:11/15/2026   #due:tomorrow   #due:+2w3d")
-                            .font(.system(size: 12, design: .monospaced))
-                        Text("#pri:p1   #prio:2   #priority:0   #done")
-                            .font(.system(size: 12, design: .monospaced))
-                        Text("Relative #due: keywords and formulas (today, tomorrow, today+1w, +2w3d, +1m) expand to YYYY-MM-DD when leaving Insert mode.")
-                        Text("In the projects list, n creates a project in the selected project's category. Subprojects and categories use the mouse controls.")
+                        Text(model.kind.supportsTaskMetadata ? "Saving and text tags" : "Saving and files").font(.headline)
+                        Text("Insert and Dictation keep edits in memory. Returning to Normal saves. Switching \(model.kind.itemPlural) or closing the window finishes and saves first. Normal-mode edits save automatically.")
+                        if model.kind.supportsTaskMetadata {
+                            Text("The first line is the subject. Metadata stays in the text:")
+                            Text("#due:2026-11-15   #due:11/15/2026   #due:tomorrow   #due:+2w3d")
+                                .font(.system(size: 12, design: .monospaced))
+                            Text("#pri:p1   #prio:2   #priority:0   #done")
+                                .font(.system(size: 12, design: .monospaced))
+                            Text("Relative #due: keywords and formulas (today, tomorrow, today+1w, +2w3d, +1m) expand to YYYY-MM-DD when leaving Insert mode.")
+                        } else {
+                            Text("The first line is the note title. Each note is stored as a plain markdown file (`YYYY-MM-DDTHH-MM-SS.md`) inside `iCloud Drive/PA3/<Section>/<Project>/`.")
+                        }
+                        Text("In the projects list, n creates a project in the selected project's \(model.kind.sectionSingular). Subprojects and \(model.kind.sectionPlural) use the mouse controls.")
                     }.font(.system(size: 13)).foregroundStyle(.secondary)
                 }.padding(.vertical, 4).frame(maxWidth: .infinity, alignment: .leading)
             }.scrollIndicators(.visible)
@@ -50,28 +54,33 @@ struct TaskShortcutHelpView: View {
     }
 
     private var sections: [(title: String, bindings: [String])] {
+        let item = model.kind.itemSingular
+        let items = model.kind.itemPlural
+        let editor = model.kind.editorHeading
+        let editorLower = editor.lowercased()
+        let windowName = model.kind.headerTitle
         let taskSections: [(title: String, bindings: [String])] = [
             ("Lists and window", [
-                "?: show / hide shortcuts", "j/k or Up/Down: select a project or task",
-                "/: fuzzy-search tasks in the current project", "Command-F: also opens task search from the task list",
-                "Return or Right: projects → tasks → description", "Left: tasks → projects",
-                "Escape: close search, or description in Normal → tasks → projects", "n: new task in tasks, new project in projects",
-                "Command-N: also creates a task from the task list",
-                "q / Q: save and close Tasks outside text entry", "Command-Q / W: save and close Tasks, keeping PA3 running"
+                "?: show / hide shortcuts", "j/k or Up/Down: select a project or \(item)",
+                "/: fuzzy-search \(items) in the current project", "Command-F: also opens \(item) search from the \(item) list",
+                "Return or Right: projects → \(items) → \(editorLower)", "Left: \(items) → projects",
+                "Escape: close search, or \(editorLower) in Normal → \(items) → projects", "n: new \(item) in \(items), new project in projects",
+                "Command-N: also creates a \(item) from the \(item) list",
+                "q / Q: save and close \(windowName) from lists or Normal mode", "Command-Q / W: save and close \(windowName), keeping PA3 running"
             ]),
-            ("Description · navigation in Normal and Insert", [
+            ("\(editor) · navigation in Normal and Insert", [
                 "arrows: move the cursor", "Home / End: beginning / end of line",
                 "Ctrl/Option + ←/→: move by words", "⌘← / ⌘→: beginning / end of line",
-                "Ctrl-Home/End: beginning / end of description", "⌘↑ / ⌘↓: beginning / end of description",
+                "Ctrl-Home/End: beginning / end of \(editorLower)", "⌘↑ / ⌘↓: beginning / end of \(editorLower)",
                 "Ctrl/Option + ↑/↓: beginning / end of paragraph", "Page Up / Down: move by a page",
                 "Shift + navigation: extend the text selection", "Control-A / E: beginning / end of line",
                 "Control-B / F: move left / right", "Control-P / N: move up / down", "Control-V: page down"
             ]),
-            ("Description · Normal mode", [
+            ("\(editor) · Normal mode", [
                 "Space: start dictation at the cursor or replace selected text", "i / a: type before / after the cursor",
                 "I / A: type at the beginning / end of the line", "o / O: insert a line below / above",
                 "h/j/k/l or arrows: move the cursor", "w/b: next / previous word; W/B also split at underscores", "0 / $: beginning / last character of logical line",
-                "gg / G: beginning / end of description", "number + motion: repeat a movement or edit",
+                "gg / G: beginning / end of \(editorLower)", "number + motion: repeat a movement or edit",
                 "x / D / C: delete character / delete to line end / change to line end",
                 "dd: delete a line", "cc / yy: change / copy a line",
                 "dw / cw: delete / change the whole word under the cursor",
@@ -81,8 +90,8 @@ struct TaskShortcutHelpView: View {
                 "J: join lines", ".: repeat the last change", "u / U / Control-R: undo / redo / redo", "/ or Command-F: find text",
                 "Command-S: retry saving in Normal mode"
             ]),
-            ("Description · Insert mode", [
-                "Escape: save and return to Normal, keeping the description focused",
+            ("\(editor) · Insert mode", [
+                "Escape: save and return to Normal, keeping the \(editorLower) focused",
                 "Control-Space: switch to Dictation without saving yet", "arrows: move the text cursor",
                 "Command-A/C/X/V: select all / copy / cut / paste", "⌘Z / ⇧⌘Z: undo / redo"
             ])
