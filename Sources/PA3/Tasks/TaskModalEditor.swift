@@ -37,6 +37,7 @@ struct TaskEditorView: NSViewRepresentable {
         editor.onDictation = { [weak model] in model?.beginDictation() }
         editor.onSave = { [weak model] in Task { await model?.flush() } }
         editor.expandsDueFormulas = model.kind.supportsTaskMetadata
+        editor.highlightTaskTags = model.kind.supportsTaskMetadata
         editor.setAccessibilityLabel(model.kind == .tasks ? "Task description" : "Note")
         scroll.documentView = editor
         model.editor = editor
@@ -97,6 +98,7 @@ final class TaskModalTextView: NSTextView {
     var onDictation: (() -> Void)?
     var onSave: (() -> Void)?
     var expandsDueFormulas = true
+    var highlightTaskTags = true
     override var undoManager: UndoManager? { documentID.flatMap { histories[$0] } }
 
     func display(documentID id: String?, body: String) {
@@ -168,32 +170,9 @@ final class TaskModalTextView: NSTextView {
         onChange?(string)
     }
 
-    /// Presentation only: task contents and clipboard operations remain plain text.
+    /// Presentation only: task/note contents and clipboard operations remain plain text.
     private func applySubjectStyle() {
-        guard let storage = textStorage else { return }
-        let source = string as NSString
-        let newline = source.rangeOfCharacter(from: .newlines)
-        let subjectLength = newline.location == NSNotFound ? source.length : newline.location
-        let regular = NSFont.monospacedSystemFont(ofSize: 16, weight: .regular)
-        let bold = NSFont.monospacedSystemFont(ofSize: 16, weight: .bold)
-        textGrid.update(body: string)
-        let paragraph = textGrid.paragraphStyle
-        layoutManager?.delegate = textGrid
-        textContainer?.lineFragmentPadding = 0
-        textContainerInset = NSSize(width: 0, height: textGrid.rowHeight)
-        defaultParagraphStyle = paragraph
-        let history = undoManager
-        let registering = history?.isUndoRegistrationEnabled == true
-        if registering { history?.disableUndoRegistration() }
-        storage.beginEditing()
-        storage.addAttribute(.font, value: regular, range: NSRange(location: 0, length: source.length))
-        storage.addAttribute(.font, value: bold, range: NSRange(location: 0, length: subjectLength))
-        storage.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: source.length))
-        storage.endEditing()
-        if registering { history?.enableUndoRegistration() }
-        typingAttributes[.font] = selectedRange().location <= subjectLength ? bold : regular
-        typingAttributes[.paragraphStyle] = paragraph
-        needsDisplay = true
+        TaskMarkdownHighlighter.apply(to: self, textGrid: textGrid, highlightTaskTags: highlightTaskTags)
     }
 
     override var shouldDrawInsertionPoint: Bool {

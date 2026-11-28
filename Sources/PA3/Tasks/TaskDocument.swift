@@ -233,6 +233,57 @@ struct TaskMetadata: Equatable, Sendable {
         return String(format: "%04d-%02d-%02d", year, month, day)
     }
 
+    enum TagKind: Equatable, Sendable {
+        case due
+        case priority(Int)
+        case done
+        case open
+    }
+
+    struct TagMatch: Equatable, Sendable {
+        let range: NSRange
+        let kind: TagKind
+    }
+
+    static func validTagMatches(in text: String, referenceDate: Date = Date(), calendar: Calendar = .current) -> [TagMatch] {
+        let source = text as NSString
+        var matches: [TagMatch] = []
+        for match in Self.tags.matches(in: text, range: NSRange(location: 0, length: source.length)) {
+            if match.range(at: 1).location == NSNotFound {
+                matches.append(TagMatch(range: match.range, kind: .done))
+                continue
+            }
+            var key = source.substring(with: match.range(at: 1)).lowercased()
+            if key == "prio" || key == "pri" { key = "priority" }
+            let rawRange = match.range(at: 2)
+            let rawValue = source.substring(with: rawRange)
+            var trimmed = rawValue
+            while let last = trimmed.unicodeScalars.last, trailingPunctuation.contains(last) {
+                trimmed.unicodeScalars.removeLast()
+            }
+            guard !trimmed.isEmpty else { continue }
+            let end = rawRange.location + (trimmed as NSString).length
+            let tagRange = NSRange(location: match.range.location, length: end - match.range.location)
+            switch key {
+            case "due":
+                if parseDueDate(trimmed, referenceDate: referenceDate, calendar: calendar) != nil {
+                    matches.append(TagMatch(range: tagRange, kind: .due))
+                }
+            case "priority":
+                if let level = parsePriority(trimmed) {
+                    matches.append(TagMatch(range: tagRange, kind: .priority(level)))
+                }
+            case "status":
+                let status = trimmed.lowercased()
+                if status == "done" { matches.append(TagMatch(range: tagRange, kind: .done)) }
+                else if status == "open" { matches.append(TagMatch(range: tagRange, kind: .open)) }
+            default:
+                break
+            }
+        }
+        return matches
+    }
+
     static func togglingCompletion(in text: String) -> String {
         if !TaskMetadata(text).done {
             return text + (text.isEmpty || text.hasSuffix("\n") ? "" : "\n") + "#done"

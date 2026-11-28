@@ -191,6 +191,7 @@ func runTaskManagerTests() async -> [String] {
     failures += runTaskEditorParityTests()
     failures += runTaskTextNavigationTests()
     failures += runTaskLineNumberTests()
+    failures += runMarkdownHighlighterTests()
     failures += runTaskSearchRankingTests()
     failures += runTaskDueDateTests()
     failures += runTaskTagPrecedenceTests()
